@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sprint NDI (aprovada em 2026-08-09): 4º dos 7 projetos definitivos. Alvo net8.0 puro (nao
+    net8.0-windows) — mesmo raciocinio do Engine: nao amarra este projeto a WPF, so ao P/Invoke
+    contra a NDI SDK nativa. SEM PackageReference nenhum de proposito: a decisao de arquitetura
+    (ja tomada antes desta sprint) foi falar direto com a NDI SDK oficial via P/Invoke, em vez de
+    depender de um wrapper NuGet de terceiros — controle total sobre marshaling de struct/delegate,
+    sem depender da manutencao de um pacote comunitario.
+
+    Sem ProjectReference para CartucheiraVideo.Core ou Engine de proposito: fala so o vocabulario
+    puro da NDI SDK (frames como IntPtr+largura+altura+stride) — quem traduz "isto e o frame do
+    Deck X" pra "manda pro NdiSender do Deck X" e a Presentation (DeckViewModel), que ja e quem liga
+    Engine a Core hoje.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sprint Config Geral, parte 1 (aprovada em 2026-08-09): 5º dos 7 projetos definitivos. net8.0
+    puro (não net8.0-windows), sem WPF — persistência e hash de senha não dependem de UI, e podem
+    ser reutilizados por qualquer host futuro (Api, testes, etc.), mesmo racional do Engine/Ndi.
+
+    Sem ProjectReference pro Core de propósito: os DTOs de persistência (AppSettingsSnapshot etc.)
+    são tipos PRÓPRIOS deste projeto, não os do Core direto — guardam enums do Core como string
+    (ex.: "VMix", "Fade") em vez de importar os tipos, pelo mesmo motivo que o Engine fala seu
+    próprio vocabulário de eventos em vez de importar DeckPlaybackState: mantém os dois lados
+    desacoplados, e evita que o Core precise de atributos de serialização só para existir um
+    formato de arquivo em disco. Quem traduz entre isto e Core.Deck/etc. é a Presentation.
+
+    Sem pacote NuGet nenhum: System.Text.Json e Rfc2898DeriveBytes/CryptographicOperations são
+    parte da BCL do .NET 8 — nenhuma dependência externa precisa ser adicionada.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

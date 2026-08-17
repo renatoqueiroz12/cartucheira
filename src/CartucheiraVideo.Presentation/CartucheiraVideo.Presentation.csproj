@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!--
+      Sprint Cartucheira 2, parte 2 - correção (2026-08-10): habilitado só pro
+      System.Windows.Forms.ColorDialog (seletor de cor nativo do Windows, "Cores básicas") usado na
+      escolha de cor de um cartucho (MainWindow.xaml.cs, ColorMenuItem_Click) — pedido do usuário
+      ("janela de cores basicas"), no lugar do submenu de 7 swatches que não renderizava certo (ver
+      Theme.xaml). UseWPF + UseWindowsForms juntos são suportados no SDK-style project; nenhum
+      PackageReference novo — os dois vêm do mesmo Microsoft.WindowsDesktop.App já usado por UseWPF,
+      então não depende de baixar nada (nuget.org continua bloqueado neste sandbox, sem efeito aqui).
+    -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>CartucheiraVideo</AssemblyName>
+    <RootNamespace>CartucheiraVideo.Presentation</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Correção pós-entrega (2026-08-10) — erro real de compilação no Visual Studio: ligar
+    UseWindowsForms (acima) não só disponibiliza o tipo ColorDialog — com ImplicitUsings=enable
+    (Directory.Build.props, global no projeto), o SDK também injeta "global using
+    System.Windows.Forms;" e "global using System.Drawing;" pra TODO o projeto, não só pro arquivo
+    novo. Isso tornou ambíguo, no projeto inteiro, todo tipo que existe nos dois mundos com o mesmo
+    nome — Application, UserControl, Point, MouseEventArgs, DragEventArgs — mesmo em arquivos que
+    nunca tocaram em WinForms e usam esses nomes desde muito antes desta sprint (App.xaml.cs,
+    qualquer UserControl.xaml.cs, os handlers de drag&drop do MainWindow.xaml.cs). Qualificar só o
+    código novo (ColorMenuItem_Click, já sempre com System.Windows.Forms.*/System.Drawing.* por
+    extenso) não resolve isso — o problema não é o código novo, é o "using" global que o próprio SDK
+    adicionou sozinho. Correção: remover explicitamente essas duas entradas do item "Using"
+    implícito, técnica documentada da própria Microsoft pra apps híbridos WPF+WinForms — devolve o
+    projeto pro mesmo conjunto de usings implícitos de antes desta sprint (System/Collections.Generic/
+    Linq/Threading.Tasks, nunca System.Windows.Forms/System.Drawing), enquanto UseWindowsForms
+    continua ligado (a montagem/tipo ColorDialog continuam disponíveis, só não "de graça"/sem
+    qualificar em lugar nenhum — que é exatamente como ColorMenuItem_Click já usa).
+  -->
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CartucheiraVideo.Core\CartucheiraVideo.Core.csproj" />
+    <ProjectReference Include="..\CartucheiraVideo.Engine\CartucheiraVideo.Engine.csproj" />
+    <ProjectReference Include="..\CartucheiraVideo.Ndi\CartucheiraVideo.Ndi.csproj" />
+    <ProjectReference Include="..\CartucheiraVideo.Configuration\CartucheiraVideo.Configuration.csproj" />
+    <!-- Sprint Comando Externo (2026-08-10): atalho global de teclado (Infrastructure) e servidor HTTP local pro Stream Deck/Companion (Api) — os dois novos, 6º e 7º dos 7 projetos definitivos, consumidos pelo MainViewModel. -->
+    <ProjectReference Include="..\CartucheiraVideo.Infrastructure\CartucheiraVideo.Infrastructure.csproj" />
+    <ProjectReference Include="..\CartucheiraVideo.Api\CartucheiraVideo.Api.csproj" />
+  </ItemGroup>
+
+  <!--
+    Sprint Engine (2026-08-08): render de video em tela (VideoView) e responsabilidade da
+    Presentation, nao do Engine — por isso o pacote WPF-specific fica aqui, nao no projeto Engine.
+    VideoLAN.LibVLC.Windows traz os binarios nativos do libvlc pro Windows (o unico SO que este
+    projeto roda, ja que e WPF/net8.0-windows) — sem ele o LibVLC nao acha o runtime nativo em
+    tempo de execucao.
+  -->
+  <!-- Sem Version aqui de proposito: o projeto usa gerenciamento central de pacotes (Directory.Packages.props na raiz). -->
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp.WPF" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" />
+  </ItemGroup>
+
+</Project>

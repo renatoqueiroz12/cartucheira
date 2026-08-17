@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sprint Comando Externo (aprovada em 2026-08-10): 7º e último dos projetos definitivos — previsto
+    desde o início da arquitetura ("Api: HTTP... /play, /pause, /stop, /next (entrada, pra Stream
+    Deck/Companion)"), só nunca tinha entrado em nenhuma sprint até agora. Alvo net8.0 puro — nenhuma
+    dependência de WPF: só `System.Net.HttpListener`, parte da BCL (nenhum PackageReference).
+    HttpListener é multiplataforma desde o .NET Core (implementação gerenciada fora do Windows, sem
+    depender de Http.sys) — por isso, diferente de Engine/Presentation/Ndi, este projeto RODA de
+    verdade neste sandbox Linux, não só compila: dá pra subir o servidor e testar um POST de verdade
+    contra ele antes de entregar (ver status-implementacao.md pra o resultado desse teste).
+
+    Sem ProjectReference nenhum de propósito, mesmo racional do Ndi/Infrastructure: só fala HTTP puro
+    (rota + "aconteceu ou não", via Func&lt;bool&gt;) — quem liga uma rota a um AudioBankViewModel
+    específico é a Presentation (MainViewModel).
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

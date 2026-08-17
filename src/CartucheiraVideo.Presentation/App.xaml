@@ -1,0 +1,32 @@
+<Application x:Class="CartucheiraVideo.Presentation.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        Sem StartupUri de proposito: a MainWindow e construida em App.xaml.cs (OnStartup),
+        onde a composicao (hoje simples: so o MainViewModel) acontece.
+    -->
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!--
+                    Icons.xaml PRIMEIRO, Theme.xaml depois — ordem obrigatória, não estética.
+
+                    Corrigido nesta rodada: a ordem antiga (Theme.xaml, depois Icons.xaml) causava
+                    XamlParseException em runtime ("O valor fornecido em
+                    System.Windows.Markup.StaticResourceHolder iniciou uma exceção") assim que a
+                    MainWindow era criada. Causa raiz: dentro de Theme.xaml, os templates de
+                    CheckBox e do expander da árvore (Theme.TreeExpanderToggle) usam
+                    {StaticResource Icon.Check} / {StaticResource Icon.ChevronRight}; StaticResource
+                    é resolvido no momento em que CADA dicionário da lista é carregado, olhando só
+                    pros dicionários já carregados antes dele na mesma MergedDictionaries — como
+                    Theme.xaml carregava antes de Icons.xaml, essas chaves ainda não existiam e a
+                    resolução falhava. Icons.xaml não referencia nada de Theme.xaml (é só Geometry
+                    pura), então invertendo a ordem os dois lados ficam resolvidos: Icons.xaml não
+                    depende de nada, e Theme.xaml passa a encontrar Icon.* já carregado.
+                -->
+                <ResourceDictionary Source="Resources/Icons.xaml" />
+                <ResourceDictionary Source="Resources/Theme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

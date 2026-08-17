@@ -1,0 +1,395 @@
+<UserControl x:Class="CartucheiraVideo.Presentation.Views.FileExplorerPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:CartucheiraVideo.Presentation.ViewModels"
+             xmlns:conv="clr-namespace:CartucheiraVideo.Presentation.Converters"
+             mc:Ignorable="d"
+             d:DesignHeight="700" d:DesignWidth="900">
+
+    <!--
+        Painel de midia — conversao pro mockup v8 (2026-08-08). Antes um Explorer so; agora duas
+        abas dividindo o mesmo painel (mockup v8, nota #11): Explorer (pastas no disco, como antes)
+        e Playlist (sequencia montada por um programa externo — Fila Rapida saiu da coluna dos
+        Decks e virou esta aba). So uma fica visivel por vez (FileExplorerViewModel.IsExplorerTabSelected/
+        IsPlaylistTabSelected).
+
+        A barra lateral (rail) do Explorer ganhou tres trilhas sempre visiveis (mockup v8, nota #4):
+        FAVORITOS (gerenciamento de favoritos ainda nao implementado — fica honestamente vazia),
+        PASTAS (a arvore que ja existia, so realocada pra dentro do rail) e RECENTES (real: populada
+        por FileExplorerViewModel.PushRecent toda vez que MainViewModel.LoadIntoDeck carrega um
+        arquivo de verdade — nao e dado de exemplo).
+
+        A lista de arquivos do Explorer voltou a ter colunas de tabela reais (Nome | Duracao |
+        Resolucao | Codec | Tamanho | Tipo) em vez do padrao "nome + metadados numa segunda linha"
+        das Sprints 6/7/8 — decisao do mockup v8 (nota #3): agora que o painel de midia ocupa metade
+        da largura da janela, sobra espaco pra colunas lado a lado, mais rapidas de escanear.
+
+        Espera que o DataContext seja um FileExplorerViewModel (ex.: DataContext="{Binding FileExplorer}"
+        na MainWindow).
+    -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis" />
+
+        <!-- Botao "achatado" (sem caixa/hover em bloco do Button padrao) usado nos itens de FAVORITOS/RECENTES do rail — mesmo visual de um TreeViewItem, mas clicavel via Command. -->
+        <Style x:Key="Theme.RailItemButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextMid}" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="Padding" Value="16,6" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Small}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Bg3}" />
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Theme.RailSectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Micro}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
+            <Setter Property="Margin" Value="16,0,16,6" />
+        </Style>
+
+        <!-- Aba (Explorer/Playlist): sublinhado azul quando ativa, sem caixa/fundo — mesmo padrao do mockup (.tab-btn). -->
+        <Style x:Key="Theme.TabButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Padding" Value="0,0,0,8" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" BorderThickness="0,0,0,2" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                            </Trigger>
+                            <Trigger Property="Tag" Value="Active">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Blue}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel Background="{DynamicResource Brush.Bg2}">
+
+        <!-- Cabecalho: abas Explorer/Playlist + acoes da aba ativa + linha de caminho/nome. -->
+        <Border DockPanel.Dock="Top" Padding="18,12,18,0" Background="{DynamicResource Brush.Bg3}">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                    <Button Content="Explorer" Command="{Binding SelectExplorerTabCommand}" Margin="0,0,22,0">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Theme.TabButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsExplorerTabSelected}" Value="True">
+                                        <Setter Property="Tag" Value="Active" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="Playlist" Command="{Binding SelectPlaylistTabCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Theme.TabButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPlaylistTabSelected}" Value="True">
+                                        <Setter Property="Tag" Value="Active" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </StackPanel>
+
+                <!-- Acoes da aba Explorer -->
+                <Grid Margin="0,0,0,8" Visibility="{Binding IsExplorerTabSelected, Converter={StaticResource BoolToVis}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Content="Escolher pasta..." Command="{Binding ChooseFolderCommand}" Margin="0,0,8,0" />
+                    <Grid Grid.Column="1" Background="{DynamicResource Brush.Bg2}">
+                        <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Tag="Buscar por nome..." Padding="8,8,28,8" />
+                        <Path Data="{StaticResource Icon.Search}" Stroke="{DynamicResource Brush.TextLow}" StrokeThickness="1.6"
+                              Width="14" Height="14" Margin="0,0,10,0" HorizontalAlignment="Right" VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Grid>
+                </Grid>
+                <TextBlock Margin="0,0,0,10" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}"
+                           TextTrimming="CharacterEllipsis" Visibility="{Binding IsExplorerTabSelected, Converter={StaticResource BoolToVis}}">
+                    <Run Text="Pasta atual: " /><Run Text="{Binding FolderPath, Mode=OneWay}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" />
+                </TextBlock>
+
+                <!-- Acoes da aba Playlist (mockup v8, nota #11/#12) — sem busca (a Playlist e uma sequencia externa curta,
+                     filtro de texto nao foi implementado nesta sprint). -->
+                <Grid Margin="0,0,0,8" Visibility="{Binding IsPlaylistTabSelected, Converter={StaticResource BoolToVis}}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0" Content="Carregar Playlist..." Command="{Binding Playlist.LoadPlaylistCommand}" Margin="0,0,8,0" />
+                    <Button Grid.Column="2" Content="⏻ Auto" Command="{Binding Playlist.ToggleAutoModeCommand}" Padding="12,7">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Playlist.AutoModeEnabled}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource Brush.Green}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource Brush.Bg0}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </Grid>
+                <TextBlock Margin="0,0,0,10" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}"
+                           TextTrimming="CharacterEllipsis" Visibility="{Binding IsPlaylistTabSelected, Converter={StaticResource BoolToVis}}">
+                    <Run Text="Playlist atual: " /><Run Text="{Binding Playlist.Name, Mode=OneWay}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" />
+                    <Run Text=" · gerada por sistema externo · " /><Run Text="{Binding Playlist.Items.Count, Mode=OneWay}" /><Run Text=" itens" />
+                </TextBlock>
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Padding="16,8" Background="{DynamicResource Brush.Bg3}">
+            <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}" TextWrapping="Wrap" />
+        </Border>
+
+        <!--
+            Envolve os dois corpos (Explorer/Playlist) num unico Grid, que e o filho REALMENTE
+            "sem Dock" do DockPanel (LastChildFillEnabled): os dois Grids internos ficam
+            sobrepostos na mesma celula (0,0) e a Visibility de cada um decide qual aparece. Sem
+            este wrapper, o DockPanel trataria o primeiro dos dois como "Dock=Left" (o padrao pra
+            qualquer filho que nao seja o ultimo) em vez de preencher o espaco — só o ultimo filho
+            ganha o preenchimento automatico.
+        -->
+        <Grid>
+        <!-- ===== Corpo da aba Explorer ===== -->
+        <Grid Visibility="{Binding IsExplorerTabSelected, Converter={StaticResource BoolToVis}}">
+            <Grid.ColumnDefinitions>
+                <!-- Largura fixa nesta sprint, como antes (GridLength nao aceita StaticResource de um double — excecao ja documentada em Theme.xaml). -->
+                <ColumnDefinition Width="210" MinWidth="150" MaxWidth="320" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Rail: FAVORITOS + PASTAS (arvore) + RECENTES, sempre visiveis (mockup v8, nota #4). -->
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,12,0,12">
+                <StackPanel>
+                    <StackPanel Margin="0,0,0,16">
+                        <TextBlock Text="FAVORITOS" Style="{StaticResource Theme.RailSectionTitle}" />
+                        <TextBlock Text="Nenhum favorito ainda" Margin="16,2,16,0" FontSize="{StaticResource FontSize.Small}"
+                                   Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="Wrap"
+                                   Visibility="{Binding HasFavorites, Converter={StaticResource InverseBoolToVis}}" />
+                        <ItemsControl ItemsSource="{Binding FavoriteFolders}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:FolderNodeViewModel}">
+                                    <Button Content="{Binding Name}" Style="{StaticResource Theme.RailItemButton}" Command="{Binding SelectCommand}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <StackPanel Margin="0,0,0,16">
+                        <TextBlock Text="PASTAS" Style="{StaticResource Theme.RailSectionTitle}" />
+                        <TreeView x:Name="FoldersTreeView" ItemsSource="{Binding RootFolders}"
+                                  Background="Transparent" BorderThickness="0" Padding="10,0"
+                                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                            <TreeView.Resources>
+                                <HierarchicalDataTemplate DataType="{x:Type vm:FolderNodeViewModel}" ItemsSource="{Binding Children}">
+                                    <StackPanel Orientation="Horizontal" Margin="0,3">
+                                        <Path Data="{StaticResource Icon.Folder}" Stroke="{DynamicResource Brush.TextLow}"
+                                              StrokeThickness="1.4" Width="13" Height="13" Stretch="Uniform" Margin="0,0,6,0" />
+                                        <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Brush.TextMid}"
+                                                   FontSize="{StaticResource FontSize.Small}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                </HierarchicalDataTemplate>
+                            </TreeView.Resources>
+                            <TreeView.ItemContainerStyle>
+                                <Style TargetType="{x:Type TreeViewItem}" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                    <EventSetter Event="Selected" Handler="TreeViewItem_Selected" />
+                                </Style>
+                            </TreeView.ItemContainerStyle>
+                        </TreeView>
+                    </StackPanel>
+
+                    <StackPanel>
+                        <TextBlock Text="RECENTES" Style="{StaticResource Theme.RailSectionTitle}" />
+                        <TextBlock Text="Nenhum arquivo recente ainda" Margin="16,2,16,0" FontSize="{StaticResource FontSize.Small}"
+                                   Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="Wrap"
+                                   Visibility="{Binding HasRecentFiles, Converter={StaticResource InverseBoolToVis}}" />
+                        <ItemsControl ItemsSource="{Binding RecentFiles}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:FileSystemItemViewModel}">
+                                    <Button Content="{Binding FileName}" Style="{StaticResource Theme.RailItemButton}"
+                                            Command="{Binding DataContext.ActivateRecentCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" ToolTip="{Binding FullPath}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Border Grid.Column="1" Width="1" Background="{DynamicResource Brush.LineSoft}" Margin="4,8" />
+
+            <!-- Lista de arquivos: colunas de tabela reais (mockup v8, nota #3). -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Background="{DynamicResource Brush.Bg3}" Margin="0,0,0,1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="76" />
+                        <ColumnDefinition Width="88" />
+                        <ColumnDefinition Width="74" />
+                        <ColumnDefinition Width="78" />
+                        <ColumnDefinition Width="60" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="NOME" Margin="18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="1" Text="DURAÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="2" Text="RESOLUÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="3" Text="CODEC" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="4" Text="TAMANHO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="5" Text="TIPO" Margin="4,9,18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                </Grid>
+
+                <ListBox Grid.Row="1" x:Name="FilesListBox"
+                         ItemsSource="{Binding Files}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                         VirtualizingPanel.ScrollUnit="Pixel"
+                         MouseDoubleClick="FilesListBox_MouseDoubleClick"
+                         PreviewMouseLeftButtonDown="FilesListBox_PreviewMouseLeftButtonDown"
+                         PreviewMouseMove="FilesListBox_PreviewMouseMove">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ToolTip="Duplo clique ou arraste pra um Deck para carregar" Margin="0,2">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="76" />
+                                    <ColumnDefinition Width="88" />
+                                    <ColumnDefinition Width="74" />
+                                    <ColumnDefinition Width="78" />
+                                    <ColumnDefinition Width="60" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="18,7">
+                                    <Border Width="40" Height="26" Background="{DynamicResource Brush.Bg0}" CornerRadius="3" Margin="0,0,12,0">
+                                        <Path Data="{StaticResource Icon.Film}" Stroke="{DynamicResource Brush.TextLow}" StrokeThickness="1.3"
+                                              Width="14" Height="14" Stretch="Uniform" />
+                                    </Border>
+                                    <TextBlock Text="{Binding FileName}" Foreground="{DynamicResource Brush.TextHi}"
+                                               FontSize="{StaticResource FontSize.ListName}" FontWeight="Bold" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" Text="{Binding DurationDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                                <TextBlock Grid.Column="2" Text="{Binding ResolutionDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                                <TextBlock Grid.Column="3" Text="{Binding CodecDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                                <TextBlock Grid.Column="4" Text="{Binding SizeDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                                <TextBlock Grid.Column="5" Text="{Binding Extension}" Margin="4,0,18,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Grid>
+
+        <!-- ===== Corpo da aba Playlist (mockup v8, nota #11) — lista plana, sem arvore de pastas. ===== -->
+        <Grid Visibility="{Binding IsPlaylistTabSelected, Converter={StaticResource BoolToVis}}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0" Background="{DynamicResource Brush.Bg3}" Margin="0,0,0,1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="40" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="130" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="#" Margin="18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                <TextBlock Grid.Column="1" Text="NOME" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                <TextBlock Grid.Column="2" Text="DURAÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                <TextBlock Grid.Column="3" Text="STATUS" Margin="4,9,18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+            </Grid>
+
+            <ListBox Grid.Row="1" x:Name="PlaylistListBox"
+                     ItemsSource="{Binding Playlist.Items}"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                     VirtualizingPanel.ScrollUnit="Pixel"
+                     MouseDoubleClick="PlaylistListBox_MouseDoubleClick">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                <Setter Property="Background" Value="#173257" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:PlaylistItemViewModel}">
+                        <Grid ToolTip="Duplo clique para carregar num Deck" Margin="0,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="130" />
+                            </Grid.ColumnDefinitions>
+                            <Border Grid.Column="0" Margin="18,0,0,0" Width="2" Height="18" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Background="{DynamicResource Brush.Blue}" Visibility="{Binding IsNext, Converter={StaticResource BoolToVis}}" />
+                            <TextBlock Grid.Column="0" Text="{Binding Index}" Margin="24,7,4,7" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="4,7">
+                                <Border Width="40" Height="26" Background="{DynamicResource Brush.Bg0}" CornerRadius="3" Margin="0,0,12,0">
+                                    <Path Data="{StaticResource Icon.Film}" Stroke="{DynamicResource Brush.TextLow}" StrokeThickness="1.3"
+                                          Width="14" Height="14" Stretch="Uniform" />
+                                </Border>
+                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Brush.TextHi}"
+                                           FontSize="{StaticResource FontSize.ListName}" FontWeight="Bold" VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="2" Text="{Binding DurationDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                            <Border Grid.Column="3" Background="{DynamicResource Brush.Red}" CornerRadius="3" Padding="9,3" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding StatusLabel}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" />
+                            </Border>
+                            <Border Grid.Column="3" Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="9,3" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Visibility="{Binding IsNext, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{Binding StatusLabel}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" />
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Grid>
+        </Grid>
+
+    </DockPanel>
+</UserControl>

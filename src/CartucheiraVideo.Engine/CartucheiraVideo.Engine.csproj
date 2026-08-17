@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sprint Engine (aprovada em 2026-08-08): 3º dos 7 projetos definitivos. Alvo net8.0 puro (NAO
+    net8.0-windows) e SEM qualquer referencia a WPF — o motor de reproducao precisa continuar
+    utilizavel por qualquer app cliente futura (Api, testes de automacao, etc.), nao so a
+    Presentation de hoje. Quem hospeda a saida de video na tela (LibVLCSharp.WPF/VideoView) e a
+    Presentation; este projeto so expoe o MediaPlayer do LibVLCSharp.Shared para quem quiser
+    hospeda-lo.
+
+    Sem ProjectReference para CartucheiraVideo.Core de proposito: o Engine fala seu proprio
+    vocabulario de eventos brutos (Playing/Paused/Stopped/Ended/Error, posicao/duracao) — quem
+    traduz isso para o vocabulario de playout do Core (DeckPlaybackState) e a Presentation
+    (DeckViewModel), do mesmo jeito que ja traduz hoje. Mantem os dois lados desacoplados.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- Sem Version aqui de proposito: o projeto usa gerenciamento central de pacotes (Directory.Packages.props na raiz). -->
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp" />
+
+    <!--
+      Sprint Crossfade v2 (2026-08-11): NAudio, usado só por AudioEngine.cs (Cartucheiras). O
+      PlaybackEngine do Deck continua 100% LibVLCSharp — ver comentário completo em AudioEngine.cs.
+    -->
+    <PackageReference Include="NAudio" />
+  </ItemGroup>
+
+</Project>

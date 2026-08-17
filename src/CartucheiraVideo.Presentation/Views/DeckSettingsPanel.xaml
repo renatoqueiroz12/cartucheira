@@ -1,0 +1,345 @@
+<UserControl x:Class="CartucheiraVideo.Presentation.Views.DeckSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:CartucheiraVideo.Presentation.ViewModels">
+
+    <!--
+        Sprint Config Geral, parte 1 (2026-08-09): extraído do antigo DeckSettingsWindow (Sprint
+        Config, 2026-08-08) — mesmo XAML de conteúdo (4 abas, arquitetura §10), agora um UserControl
+        reutilizável hospedado dentro do SettingsWindow (uma instância por Deck), sem o rodapé
+        Salvar/Cancelar (que agora é ÚNICO, global, no SettingsWindow — não faz mais sentido cada
+        painel de Deck ter o seu).
+
+        Diferença importante em relação ao arquivo original: os bindings dentro dos DataTemplate das
+        listas de Automação usavam "RelativeSource={RelativeSource AncestorType=Window}" pra achar
+        o DataContext da tela (DeckSettingsViewModel) — isso funcionava porque a Window INTEIRA
+        tinha esse DataContext. Agora o Window que hospeda isto (SettingsWindow) tem um DataContext
+        DIFERENTE (SettingsViewModel, com dois DeckSettingsViewModel dentro) — então os mesmos
+        bindings precisam mirar "AncestorType=UserControl" (este mesmo controle, cujo DataContext É
+        o DeckSettingsViewModel de um Deck especifico), não mais o Window.
+    -->
+    <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <Style x:Key="Theme.SettingsTabButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Padding" Value="0,0,0,8" />
+            <Setter Property="Margin" Value="0,0,22,0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" BorderThickness="0,0,0,2" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                            </Trigger>
+                            <Trigger Property="Tag" Value="Active">
+                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Blue}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="Theme.FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Small}" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+
+        <Style x:Key="Theme.FieldGroup" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+    </UserControl.Resources>
+
+    <DockPanel>
+
+        <!--
+            Abas — cada Button usa SÓ <Button.Style> (BasedOn Theme.SettingsTabButton + o
+            DataTrigger que ativa o sublinhado azul), nunca também o atributo Style="..." no mesmo
+            elemento — essa combinação foi exatamente o MC3024 ("propriedade Style já definida")
+            achado e corrigido na Sprint UI (FileExplorerPanel.xaml, abas Explorer/Playlist).
+        -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,20">
+            <Button Content="Geral" Command="{Binding SelectGeneralTabCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsTabButton}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsGeneralTabSelected}" Value="True">
+                                <Setter Property="Tag" Value="Active" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <Button Content="vMix" Command="{Binding SelectVMixTabCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsTabButton}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsVMixTabSelected}" Value="True">
+                                <Setter Property="Tag" Value="Active" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <Button Content="Resolume" Command="{Binding SelectResolumeTabCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsTabButton}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsResolumeTabSelected}" Value="True">
+                                <Setter Property="Tag" Value="Active" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+            <Button Content="Automação" Command="{Binding SelectAutomationTabCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsTabButton}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsAutomationTabSelected}" Value="True">
+                                <Setter Property="Tag" Value="Active" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+        </StackPanel>
+
+        <Grid>
+            <ScrollViewer Visibility="{Binding IsGeneralTabSelected, Converter={StaticResource BoolToVis}}" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                    <TextBlock Text="Nome do Deck" Style="{StaticResource Theme.FieldLabel}" />
+                    <TextBlock Text="{Binding DeckName}" Foreground="{DynamicResource Brush.TextHi}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" />
+                </StackPanel>
+                <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                    <TextBlock Text="Nome do canal NDI de saída" Style="{StaticResource Theme.FieldLabel}" />
+                    <TextBox Text="{Binding NdiChannelName, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: Cartucheira - Deck 1" />
+                    <TextBlock Text="Usado pelo NDI Sender pra registrar a fonte deste Deck."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                    <TextBlock Text="Dispositivo de áudio (Play)" Style="{StaticResource Theme.FieldLabel}" />
+                    <ComboBox ItemsSource="{Binding AudioDevices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding AudioDeviceId}" />
+                    <TextBlock Text="Saída do áudio embutido no vídeo deste Deck quando ele dá Play de verdade — não afeta o áudio já enviado pelo NDI, que continua chegando normalmente em qualquer dispositivo escolhido aqui. Trocar de volta pra &quot;Padrão do sistema&quot; depois de escolher um dispositivo específico só tem efeito reiniciando o programa."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+                <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                    <TextBlock Text="Dispositivo de áudio (Preview)" Style="{StaticResource Theme.FieldLabel}" />
+                    <ComboBox ItemsSource="{Binding AudioDevices}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding PreviewAudioDeviceId}" />
+                    <TextBlock Text="Sprint Preview-Isolado (2026-08-15): saída separada, só usada quando o operador clica Preview pra conferir um arquivo — nunca a mesma placa do Play/transmissão, e o Preview nunca alimenta o NDI nem dispara nenhum comando (mesa de áudio, Cartucheira). Vazio = padrão do sistema."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                </StackPanel>
+
+                <!--
+                    Sprint Comando Externo Decks (2026-08-12, arquitetura §15), consolidado em
+                    2026-08-13: mesa de áudio própria do usuário, via UDP. A porta é UMA só,
+                    compartilhada por TUDO (Cartucheira e os dois Decks) — SharedUdpPort é a MESMA
+                    instância de UdpPortSettingsViewModel injetada nos três painéis por
+                    SettingsViewModel, exposta como propriedade normal deste DeckSettingsViewModel
+                    (Binding local de dois níveis, "SharedUdpPort.Port"). Correção de bug
+                    2026-08-13: a primeira versão tentava alcançar a porta via
+                    RelativeSource AncestorType=Window (pra pegar a ViewModel da JANELA) — não
+                    resolvia em tempo de execução, campo ficava vazio e nada disparava. Os campos
+                    de Play/Pause são só deste Deck, então usam o Binding normal (implícito, local).
+                -->
+                <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                    <TextBlock Text="Comando externo (mesa de áudio, UDP)" Foreground="{DynamicResource Brush.TextHi}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Margin="0,8,0,12" />
+                    <CheckBox Content="Receber comando externo por UDP (Play/Pause)" IsChecked="{Binding ExternalTriggerEnabled}" Margin="0,0,0,12" />
+                    <TextBlock Text="Porta UDP (compartilhada com a Cartucheira e o outro Deck)" Style="{StaticResource Theme.FieldLabel}" />
+                    <TextBox Text="{Binding SharedUdpPort.Port, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 8888" HorizontalAlignment="Left" Width="120" />
+                    <TextBlock Text="{Binding SharedUdpPort.EndpointDisplay}"
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,12" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Texto que dá Play neste Deck" Style="{StaticResource Theme.FieldLabel}" />
+                            <TextBox Text="{Binding UdpTriggerPlayCommand, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: DECK1_PLAY" IsEnabled="{Binding ExternalTriggerEnabled}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Texto que dá Pause neste Deck" Style="{StaticResource Theme.FieldLabel}" />
+                            <TextBox Text="{Binding UdpTriggerPauseCommand, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: DECK1_PAUSE" IsEnabled="{Binding ExternalTriggerEnabled}" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="Play só dispara se este Deck tiver vídeo carregado e não estiver tocando; Pause só se estiver tocando — comando fora desse estado é ignorado, sem erro. Use um texto DIFERENTE em cada elemento (a porta é a mesma pra tudo — Cartucheira e os dois Decks — quem diferencia é sempre o texto). Stop/Next ainda não têm comando externo."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                </StackPanel>
+
+                <!--
+                    Sprint Comando Externo Deck→Mesa (2026-08-13, arquitetura §15): direção CONTRÁRIA
+                    do grupo acima — este Deck AVISA um destino externo (a mesa/console que o usuário
+                    está desenvolvendo) quando dá Play e quando termina, em vez de receber comando.
+                    IP:porta INDEPENDENTE por Deck (decisão explícita do usuário — cada Deck pode
+                    apontar pra um lugar diferente), diferente da porta única de entrada acima
+                    (compartilhada). Um toggle só liga os dois disparos juntos (Play + Fim, decisão
+                    explícita do usuário). Todos os campos são locais deste DeckSettingsViewModel —
+                    sem RelativeSource nenhum, já que aqui não há nada compartilhado entre os Decks.
+                -->
+                <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                    <TextBlock Text="Aviso pra mesa/console externo (UDP)" Foreground="{DynamicResource Brush.TextHi}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Margin="0,8,0,12" />
+                    <CheckBox Content="Avisar por UDP quando der Play e quando terminar" IsChecked="{Binding OutboundUdpEnabled}" Margin="0,0,0,12" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="100" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="IP de destino" Style="{StaticResource Theme.FieldLabel}" />
+                            <TextBox Text="{Binding OutboundUdpHost, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 192.168.0.10" IsEnabled="{Binding OutboundUdpEnabled}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Porta" Style="{StaticResource Theme.FieldLabel}" />
+                            <TextBox Text="{Binding OutboundUdpPort, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 9000" IsEnabled="{Binding OutboundUdpEnabled}" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="12" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Texto mandado ao dar Play" Style="{StaticResource Theme.FieldLabel}" />
+                            <TextBox Text="{Binding OutboundUdpOnPlayCommand, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: DECK1_STARTED" IsEnabled="{Binding OutboundUdpEnabled}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Texto mandado ao terminar" Style="{StaticResource Theme.FieldLabel}" />
+                            <TextBox Text="{Binding OutboundUdpOnEndCommand, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: DECK1_ENDED" IsEnabled="{Binding OutboundUdpEnabled}" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="Dispara ao dar Play (assim que o vídeo começa) e ao terminar — fim natural (sem loop) OU Stop manual, os dois convergem no mesmo texto de &quot;terminou&quot;. Campo de texto vazio = aquele aviso específico fica sem efeito. IP:porta são independentes deste Deck — o outro Deck pode apontar pra um destino diferente."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" Margin="0,10,0,0" />
+                </StackPanel>
+            </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer Visibility="{Binding IsVMixTabSelected, Converter={StaticResource BoolToVis}}" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <CheckBox Content="Enviar para vMix" IsChecked="{Binding VMixEnabled}" Margin="0,0,0,16" />
+                    <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                        <TextBlock Text="Host" Style="{StaticResource Theme.FieldLabel}" />
+                        <TextBox Text="{Binding VMixHost, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 127.0.0.1" />
+                    </StackPanel>
+                    <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                        <TextBlock Text="Porta (TCP API)" Style="{StaticResource Theme.FieldLabel}" />
+                        <TextBox Text="{Binding VMixPort, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 8099" />
+                    </StackPanel>
+                    <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                        <TextBlock Text="Input" Style="{StaticResource Theme.FieldLabel}" />
+                        <TextBox Text="{Binding VMixInput, UpdateSourceTrigger=PropertyChanged}" Tag="número ou nome do input no vMix" />
+                    </StackPanel>
+                    <TextBlock Text="Nenhuma conexão real ainda — o vMix Controller (Infrastructure) entra numa sprint futura. Estes valores só ficam salvos, prontos pra quando ele existir."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer Visibility="{Binding IsResolumeTabSelected, Converter={StaticResource BoolToVis}}" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <CheckBox Content="Enviar para Resolume" IsChecked="{Binding ResolumeEnabled}" Margin="0,0,0,16" />
+                    <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                        <TextBlock Text="Host" Style="{StaticResource Theme.FieldLabel}" />
+                        <TextBox Text="{Binding ResolumeHost, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 127.0.0.1" />
+                    </StackPanel>
+                    <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                        <TextBlock Text="Porta (REST/WebSocket)" Style="{StaticResource Theme.FieldLabel}" />
+                        <TextBox Text="{Binding ResolumePort, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 8080" />
+                    </StackPanel>
+                    <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                        <TextBlock Text="Layer" Style="{StaticResource Theme.FieldLabel}" />
+                        <TextBox Text="{Binding ResolumeLayer, UpdateSourceTrigger=PropertyChanged}" Tag="número ou nome do layer no Resolume" />
+                    </StackPanel>
+                    <TextBlock Text="Nenhuma conexão real ainda — o Resolume Controller (Infrastructure) entra numa sprint futura. Estes valores só ficam salvos, prontos pra quando ele existir."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Visibility="{Binding IsAutomationTabSelected, Converter={StaticResource BoolToVis}}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="Ações &quot;Ao dar Play&quot;" Foreground="{DynamicResource Brush.TextHi}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Margin="0,0,0,8" />
+                        <ItemsControl ItemsSource="{Binding OnPlayActions}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:AutomationActionViewModel}">
+                                    <Border Background="{DynamicResource Brush.Bg2}" CornerRadius="4" Padding="10" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="80" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ComboBox Grid.Column="0" Margin="0,0,6,0"
+                                                      ItemsSource="{Binding DataContext.OnPlayDestinationOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                      DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Destination}" />
+                                            <ComboBox Grid.Column="1" Margin="0,0,6,0"
+                                                      IsEnabled="{Binding IsTransitionEditable}"
+                                                      ItemsSource="{Binding DataContext.TransitionOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                      DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Transition}" />
+                                            <TextBox Grid.Column="2" Margin="0,0,6,0" Tag="ms"
+                                                      IsEnabled="{Binding IsDurationEditable}"
+                                                      Text="{Binding TransitionDurationMs, UpdateSourceTrigger=PropertyChanged}" />
+                                            <Button Grid.Column="3" Content="Remover" Padding="8,6"
+                                                    Command="{Binding DataContext.RemoveOnPlayActionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button Content="+ Adicionar ação" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,20" Command="{Binding AddOnPlayActionCommand}" />
+
+                        <TextBlock Text="Ações &quot;Ao terminar&quot;" Foreground="{DynamicResource Brush.TextHi}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Margin="0,0,0,8" />
+                        <ItemsControl ItemsSource="{Binding OnEndActions}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:AutomationActionViewModel}">
+                                    <Border Background="{DynamicResource Brush.Bg2}" CornerRadius="4" Padding="10" Margin="0,0,0,8">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="80" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ComboBox Grid.Column="0" Margin="0,0,6,0"
+                                                      ItemsSource="{Binding DataContext.DestinationOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                      DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Destination}" />
+                                            <ComboBox Grid.Column="1" Margin="0,0,6,0"
+                                                      IsEnabled="{Binding IsTransitionEditable}"
+                                                      ItemsSource="{Binding DataContext.TransitionOptions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                      DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding Transition}" />
+                                            <TextBox Grid.Column="2" Margin="0,0,6,0" Tag="ms"
+                                                      IsEnabled="{Binding IsDurationEditable}"
+                                                      Text="{Binding TransitionDurationMs, UpdateSourceTrigger=PropertyChanged}" />
+                                            <Button Grid.Column="3" Content="Remover" Padding="8,6"
+                                                    Command="{Binding DataContext.RemoveOnEndActionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Button Content="+ Adicionar ação" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,8" Command="{Binding AddOnEndActionCommand}" />
+
+                        <TextBlock Text="Destino vMix/Resolume: nenhum disparo real ainda — o vMix/Resolume Controller (Infrastructure) entra numa sprint futura, estas ações só ficam salvas no Deck. Destino Cartucheira (só em &quot;Ao dar Play&quot;): já funciona de verdade — pausa as duas Cartucheiras (Vinhetas/Trilhas), que retomam sozinhas do mesmo ponto assim que este vídeo terminar ou for parado. O campo Tempo (ms) dessa linha vira o fade da pausa/retomada (0 = corte seco; o mesmo tempo é usado pra pausar e pra retomar)."
+                                   Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </DockPanel>
+</UserControl>

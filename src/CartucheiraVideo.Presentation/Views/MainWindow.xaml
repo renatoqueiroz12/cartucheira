@@ -1,0 +1,898 @@
+<Window x:Class="CartucheiraVideo.Presentation.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:conv="clr-namespace:CartucheiraVideo.Presentation.Converters"
+        xmlns:views="clr-namespace:CartucheiraVideo.Presentation.Views"
+        xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
+        mc:Ignorable="d"
+        Title="{Binding Title}"
+        Height="900" Width="1600"
+        MinHeight="700" MinWidth="1200"
+        WindowStartupLocation="CenterScreen">
+
+    <!--
+        Conversao visual pro mockup v8 (2026-08-08, "CartucheiraVideo_MockupV8_Redesign.html") —
+        substitui integralmente o layout da Sprint 8 ("ajustes finais"). Mudancas estruturais:
+
+        1. Decks/Explorer agora dividem a largura da janela meio a meio (1*/1*, MinWidth 440 cada —
+           mockup v8, nota #7), nao mais "Decks estreitos, Explorer dominante" da Sprint 8.
+        2. Fila Rapida SAIU da coluna dos Decks — virou a aba Playlist do Explorer (mockup v8, nota
+           #11; ver FileExplorerViewModel.Playlist/PlaylistViewModel). Os dois Decks agora dividem
+           toda a altura da coluna esquerda (UniformGrid Rows="2"), cada um bem mais alto que antes.
+        3. Cada Deck foi reestruturado em 3 faixas (mockup v8, nota #9): cabecalho fino (nome, ON
+           AIR, toggle Auto/Manual, pills de destino vMix/Resolume somente-leitura, engrenagem);
+           uma linha central com o preview a esquerda e 6 botoes quadrados de transporte a direita
+           (Play/Pause/Stop/Loop/Next/Preview — mockup v8, notas #8/#10/#17); uma faixa inferior com
+           nome do arquivo, barra de progresso e tempos.
+        4. Botoneira: dropdown de "banco selecionado" (Sprint 8) virou dois bancos FIXOS lado a lado
+           (Vinhetas | Trilhas — mockup v8, nota #15), sempre visiveis, sem trocar. Grade de 10
+           colunas por banco unico virou 5 colunas por metade (mesma densidade visual de pad, ver
+           Theme.xaml/pad-grid do mockup).
+
+        Adaptacoes de WPF em relacao ao HTML/CSS do mockup (documentadas aqui por serem excecoes
+        deliberadas, nao esquecimento):
+          - CSS "aspect-ratio:1/1" nos botoes grandes e "height:100%;aspect-ratio:16/9" no preview
+            nao tem equivalente direto e simples em WPF sem Viewbox complexo. Em vez disso: o
+            preview tem Width fixa (220) e altura "*" (estica pra preencher a linha, que already
+            aproxima bem o "height:100%"); os 6 botoes ficam num UniformGrid dentro da mesma linha
+            "*", entao tambem esticam em altura — a largura de cada um e so aproximadamente quadrada
+            (nao exatamente 1:1), mas o efeito visual (botoes grandes, lado a lado do preview) e
+            equivalente.
+          - GridLength de coluna nao aceita StaticResource de um double (excecao ja documentada em
+            Theme.xaml) — larguras fixas abaixo sao valores literais.
+
+        Toda cor continua via DynamicResource (regra da Sprint 7). FontSize.*/Size.* continuam
+        StaticResource.
+
+        Sprint Cartucheira (2026-08-09): a grade de pads de cada metade da Botoneira ganhou
+        Visibility condicional a HasButtons (AudioBankViewModel) — mostra os cartuchos reais lidos
+        da pasta configurada, ou uma mensagem honesta "Nenhuma pasta configurada" no lugar de uma
+        grade vazia sem explicação; o botão "Editar Banco" virou "Recarregar" (recarrega a mesma
+        pasta); o pad em si ganhou um destaque visual (borda verde) quando é o cartucho tocando
+        agora (Theme.PadButton, IsPlaying).
+
+        Sprint Cartucheira 2, parte 1 (2026-08-10): a Botoneira ganhou navegação por subpasta —
+        pedido direto do usuário ("trabalhar com subpasta... seleção de vinhetas de cada programa
+        sem precisar de um banco de cadastro"). Cada metade agora alterna entre DUAS grades
+        (Visibility condicional a IsInsideProgram): a lista de programas (subpastas da raiz
+        configurada, Theme.ProgramCard) e, ao abrir um programa, os cartuchos dele (grade de
+        sempre) — com um botão "Voltar" pra retornar à lista de programas. O botão "Novo Banco"
+        saiu (o cadastro manual de banco não faz mais sentido com pastas reais). O cartucho
+        (Theme.PadButton) também ganhou duração real/contagem regressiva nesta sprint — sem
+        mudança de template aqui, só o texto que DurationDisplay já mostrava muda de significado
+        (ver VtButtonViewModel).
+
+        Sprint Cartucheira 2, parte 2 (2026-08-10): quatro ajustes pedidos pelo usuário. (1) O pad
+        fica vermelho (Brush.OnAir) enquanto toca, em vez de só borda verde. (2) Cada metade da
+        Botoneira ganhou uma barra de execução (nome + progresso + regressiva do cartucho tocando
+        agora, AudioBankViewModel.NowPlaying) acima da grade de cartuchos/programas. (3) O slider de
+        Volume mestre saiu da metade Trilhas (nunca teve motor de áudio por trás mesmo). (4) Cada
+        cartucho ganhou um menu de contexto (Ctrl+clique direito) com Cor (7 cores já aprovadas,
+        Brush.Pad.*) e Loop, mais seleção por clique direito simples (destaque azul, prepara o
+        disparo por comando externo da parte 3, arquitetura §14.2) — a disambiguação Ctrl/sem-Ctrl
+        é feita em PreviewMouseRightButtonDown (MainWindow.xaml.cs): sem Ctrl, marca/desmarca seleção
+        e cancela a abertura do menu (e.Handled=true); com Ctrl, deixa o WPF abrir o ContextMenu
+        normalmente.
+    -->
+
+    <Window.Resources>
+        <conv:HexColorToBrushConverter x:Key="HexColorToBrushConverter" />
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis" />
+
+        <!-- Botao quadrado de transporte do Deck (Play/Pause/Stop/Loop/Next/Preview) — base compartilhada; cada instancia sobrescreve Background/BorderBrush/BorderThickness/Foreground. -->
+        <Style x:Key="Theme.DeckBigButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="0" />
+        </Style>
+
+        <!--
+            Pad da Botoneira — extraido pra Style compartilhado nesta conversao (antes vivia inline
+            no ItemsControl.ItemTemplate unico da Sprint 8; agora e usado duas vezes, uma por metade
+            Vinhetas/Trilhas). Visual identico ao da Sprint 8 (estilo de equipamento de playout:
+            borda discreta, hover, estado pressionado, sombra leve) — so virou reutilizavel.
+        -->
+        <Style x:Key="Theme.PadButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PadBorder"
+                                Background="{Binding Color, Converter={StaticResource HexColorToBrushConverter}}"
+                                CornerRadius="6" Opacity="0.92" BorderThickness="1" BorderBrush="Transparent">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.25" Color="Black" Direction="270" />
+                            </Border.Effect>
+                            <!--
+                                Sprint Cartucheira 2, parte 2 - correção (2026-08-10): o número do
+                                cartucho (badge no canto) saiu a pedido do usuário. O canto onde ele
+                                ficava agora mostra, no lugar, um selo pequeno "LOOP" (só quando
+                                IsLoopEnabled) — o mesmo canto, indicador diferente.
+                            -->
+                            <Grid Margin="6">
+                                <!-- Sprint Cartucheira 2, parte 2, ajuste (2026-08-10): texto de dentro do cartucho trocado de Brush.TextHi (quase branco) pra Brush.PadText (preto), pedido explícito do usuário — o selo LOOP abaixo continua branco de propósito (fundo azul próprio, fora do pedido). -->
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <TextBlock Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.PadDuration}" FontWeight="Black"
+                                               Foreground="{DynamicResource Brush.PadText}" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="Bold"
+                                               Foreground="{DynamicResource Brush.PadText}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               TextWrapping="Wrap" TextAlignment="Center" Margin="4,2,4,0" />
+                                </StackPanel>
+                                <Border Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="4,1"
+                                        HorizontalAlignment="Left" VerticalAlignment="Top"
+                                        Visibility="{Binding IsLoopEnabled, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="LOOP" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
+                                </Border>
+                                <!--
+                                    Sprint Cartucheira 2, parte 2 - correção (2026-08-10): selo com a
+                                    posição do cartucho na fila de seleção (SelectionNumber — 1º
+                                    selecionado = "1", 2º = "2"...), pedido explícito do usuário. Canto
+                                    oposto ao selo LOOP (direita, não esquerda) pra nunca sobrepor os
+                                    dois ao mesmo tempo num cartucho selecionado E em loop. Visibilidade
+                                    segue IsSelected (mesmo binding do anel azul abaixo) — SelectionNumber
+                                    só é não-nulo quando IsSelected é verdadeiro (garantido por
+                                    VtButtonViewModel.SetSelectionState), então não precisa de conversor
+                                    próprio pro número em si.
+                                -->
+                                <Border Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="5,1"
+                                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                                        Visibility="{Binding IsSelected, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="{Binding SelectionNumber}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
+                                </Border>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PadBorder" Property="Opacity" Value="1" />
+                                <Setter TargetName="PadBorder" Property="BorderBrush" Value="{DynamicResource Brush.PadHoverOutline}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PadBorder" Property="Opacity" Value="0.75" />
+                            </Trigger>
+                            <!--
+                                Sprint Cartucheira 2, parte 2 (2026-08-10): cartucho tocando agora
+                                (IsPlaying, controlado pelo AudioBankViewModel dono do banco — nunca
+                                pelo cartucho sozinho) muda de cor pra vermelho (Brush.OnAir, mesma
+                                cor já usada no indicador ON AIR do Deck) — pedido do usuário. Antes
+                                (Sprint Cartucheira) era só uma borda verde.
+                            -->
+                            <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                <Setter TargetName="PadBorder" Property="Background" Value="{DynamicResource Brush.OnAir}" />
+                                <Setter TargetName="PadBorder" Property="Opacity" Value="1" />
+                            </DataTrigger>
+                            <!--
+                                Sprint Cartucheira 2, parte 2 (2026-08-10): destaque de seleção
+                                (IsSelected, clique direito simples sem Ctrl) — prepara o cartucho
+                                pra receber o disparo por comando externo da próxima parte
+                                (arquitetura §14.2). Depois do IsPlaying de propósito: se o cartucho
+                                selecionado também estiver tocando, o anel azul de seleção continua
+                                visível por cima do fundo vermelho.
+                            -->
+                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter TargetName="PadBorder" Property="BorderThickness" Value="2" />
+                                <Setter TargetName="PadBorder" Property="BorderBrush" Value="{DynamicResource Brush.Blue}" />
+                                <Setter TargetName="PadBorder" Property="Opacity" Value="1" />
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!--
+            Card de programa (subpasta) na lista de programas da Botoneira — Sprint Cartucheira 2,
+            parte 1 (2026-08-10). Visual mais simples que Theme.PadButton de propósito (sem número/
+            duração — um programa não é um cartucho, é uma pasta): ícone de pasta + nome, mesma
+            altura/grade de 5 colunas dos cartuchos pra não saltar o layout ao trocar de nível.
+        -->
+        <Style x:Key="Theme.ProgramCard" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource Brush.Bg4}" />
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="CardBorder" Background="{TemplateBinding Background}" CornerRadius="6"
+                                BorderThickness="1" BorderBrush="Transparent">
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="6">
+                                <Path Data="{StaticResource Icon.Folder}" Fill="{DynamicResource Brush.TextMid}"
+                                      Width="20" Height="20" Stretch="Uniform" Margin="0,0,0,6" />
+                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="Bold"
+                                           Foreground="{DynamicResource Brush.TextHi}" HorizontalAlignment="Center"
+                                           TextWrapping="Wrap" TextAlignment="Center" />
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CardBorder" Property="Background" Value="{DynamicResource Brush.Bg5}" />
+                                <Setter TargetName="CardBorder" Property="BorderBrush" Value="{DynamicResource Brush.PadHoverOutline}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+
+        <!-- Barra superior: identidade + status NDI/vMix/Resolume + acoes de configuracao (inalterada desde a Sprint 8). -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Brush.Bg3}" Padding="16,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{DynamicResource Brush.Blue}" CornerRadius="4" Width="26" Height="26" Margin="0,0,12,0">
+                        <TextBlock Text="C" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="{Binding Title}" FontSize="{StaticResource FontSize.Title}" FontWeight="Bold"
+                                Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding VersionLabel}" FontSize="{StaticResource FontSize.Small}"
+                               Foreground="{DynamicResource Brush.TextFaint}" VerticalAlignment="Center" Margin="8,4,0,0" />
+                </StackPanel>
+
+                <ItemsControl Grid.Column="1" ItemsSource="{Binding NdiOutputs}" Margin="0,0,16,0" VerticalAlignment="Center">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{DynamicResource Brush.Bg4}" CornerRadius="10" Padding="8,4" Margin="0,0,8,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse Width="7" Height="7" Fill="{DynamicResource Brush.TextFaint}" VerticalAlignment="Center" Margin="0,0,6,0">
+                                        <Ellipse.Style>
+                                            <Style TargetType="Ellipse">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                                        <Setter Property="Fill" Value="{DynamicResource Brush.Green}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Ellipse.Style>
+                                    </Ellipse>
+                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Button Grid.Column="2" Content="Bancos de Botões" Command="{Binding OpenBanksManagerCommand}" Margin="0,0,8,0" />
+                <Button Grid.Column="3" Content="Logs" Command="{Binding OpenLogsCommand}" Margin="0,0,8,0" />
+                <Button Grid.Column="4" Content="Configurações" Command="{Binding OpenSettingsCommand}" Margin="0,0,8,0" />
+                <Button Grid.Column="5" Content="Sobre" Command="{Binding OpenAboutCommand}" />
+            </Grid>
+        </Border>
+
+        <!-- Barra inferior de status (inalterada desde a Sprint 8). -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Brush.Bg3}" Padding="16,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" FontSize="{StaticResource FontSize.Body}" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center">
+                    <Run Text="Pasta atual: " /><Run Text="{Binding FileExplorer.FolderPath, Mode=OneWay}" />
+                </TextBlock>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="CPU" FontSize="{StaticResource FontSize.Micro}" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" Margin="0,0,4,0" />
+                    <ProgressBar Value="22" Minimum="0" Maximum="100" Width="60" Height="6" VerticalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,16,0">
+                    <TextBlock Text="RAM" FontSize="{StaticResource FontSize.Micro}" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" Margin="0,0,4,0" />
+                    <ProgressBar Value="31" Minimum="0" Maximum="100" Width="60" Height="6" VerticalAlignment="Center" Foreground="{DynamicResource Brush.Amber}" />
+                </StackPanel>
+
+                <Button Grid.Column="3" Content="Recarregar Mídia" Command="{Binding FileExplorer.ReloadCommand}" />
+            </Grid>
+        </Border>
+
+        <!--
+            Botoneira — mockup v8, nota #15: dois bancos fixos lado a lado (Vinhetas | Trilhas),
+            separados por uma linha vertical central, cada um com seu proprio cabecalho (titulo,
+            contagem, Renomear/Recarregar[/Voltar]) e grade de 5 colunas. O Volume mestre mora so
+            na metade direita (Trilhas), como no mockup. Sprint Cartucheira 2, parte 1 (2026-08-10):
+            cada metade alterna entre a lista de programas (raiz) e os cartuchos do programa aberto
+            — ver comentário de topo do arquivo.
+        -->
+        <Border DockPanel.Dock="Bottom" Margin="16,0,16,16" Background="{DynamicResource Brush.Bg3}"
+                BorderBrush="{DynamicResource Brush.LineSoft}" BorderThickness="1" CornerRadius="8" Padding="16,12,16,14">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- Metade esquerda: Vinhetas -->
+                <StackPanel Grid.Column="0" DataContext="{Binding VinhetasBank}">
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding HeaderTitle}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{Binding CountLabel}" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" />
+                        <Button Grid.Column="3" Content="Voltar" Command="{Binding BackCommand}" Margin="0,0,6,0"
+                                Visibility="{Binding IsInsideProgram, Converter={StaticResource BoolToVis}}" />
+                        <Button Grid.Column="4" Content="Renomear" Command="{Binding RenameCommand}" Margin="0,0,6,0" />
+                        <Button Grid.Column="5" Content="Recarregar" Command="{Binding ReloadCommand}" />
+                    </Grid>
+                    <!--
+                        Barra de execução (Sprint Cartucheira 2, parte 2, 2026-08-10) — nome +
+                        progresso + regressiva do cartucho tocando agora nesta metade. Só visível
+                        enquanto algo toca (HasNowPlaying); some sozinha ao parar.
+                    -->
+                    <Border Background="{DynamicResource Brush.Bg4}" CornerRadius="6" Padding="10,8" Margin="0,0,0,8"
+                            Visibility="{Binding HasNowPlaying, Converter={StaticResource BoolToVis}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding NowPlaying.Name}" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold"
+                                           Foreground="{DynamicResource Brush.TextHi}" TextTrimming="CharacterEllipsis" />
+                                <ProgressBar Value="{Binding NowPlaying.Progress, Mode=OneWay}" Minimum="0" Maximum="100"
+                                             Height="6" Margin="0,4,0,0" Foreground="{DynamicResource Brush.OnAir}" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" Text="{Binding NowPlaying.DurationDisplay}" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold"
+                                       Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                        </Grid>
+                    </Border>
+                    <!--
+                        Grid MinHeight="164" (mesmo valor do MaxHeight dos ScrollViewer abaixo) —
+                        correção pós-entrega (2026-08-10): sem isso, o bloco colapsa pra uma tira
+                        fina de texto quando a mensagem honesta é a única coisa visível, encolhendo
+                        a Botoneira e desequilibrando a proporção da tela toda. Duas grades por
+                        dentro, alternando por IsInsideProgram: lista de programas (raiz) e
+                        cartuchos do programa aberto (Sprint Cartucheira 2, parte 1).
+                    -->
+                    <Grid MinHeight="164">
+                        <!-- Nível raiz: lista de programas. -->
+                        <Grid Visibility="{Binding IsInsideProgram, Converter={StaticResource InverseBoolToVis}}">
+                            <TextBlock Text="Nenhum programa encontrado — verifique a pasta raiz em Configurações → Cartucheira."
+                                       Visibility="{Binding HasPrograms, Converter={StaticResource InverseBoolToVis}}"
+                                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" />
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="164" Background="Transparent"
+                                          Visibility="{Binding HasPrograms, Converter={StaticResource BoolToVis}}">
+                                <ItemsControl ItemsSource="{Binding Programs}"
+                                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="5" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Command="{Binding OpenCommand}" Margin="5" Height="74" Style="{StaticResource Theme.ProgramCard}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                        <!-- Dentro de um programa: cartuchos dele. -->
+                        <Grid Visibility="{Binding IsInsideProgram, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="Nenhum cartucho de áudio encontrado nesta pasta."
+                                       Visibility="{Binding HasButtons, Converter={StaticResource InverseBoolToVis}}"
+                                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" />
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="164" Background="Transparent"
+                                          Visibility="{Binding HasButtons, Converter={StaticResource BoolToVis}}">
+                                <ItemsControl ItemsSource="{Binding Buttons}"
+                                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="5" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <!--
+                                                Sprint Cartucheira 2, parte 2 (2026-08-10): clique
+                                                esquerdo continua tocando/parando (PlayAudioCommand,
+                                                inalterado). Clique direito é interceptado em
+                                                PreviewMouseRightButtonDown (MainWindow.xaml.cs) —
+                                                sem Ctrl vira seleção (IsSelected, e.Handled=true,
+                                                cancela o menu); com Ctrl deixa o ContextMenu abrir
+                                                normalmente (Cor/Loop).
+
+                                                Correção pós-entrega (2026-08-10): usuário reportou
+                                                clique ESQUERDO (sem Ctrl) também selecionando E
+                                                abrindo a janela de Cor/Loop ao mesmo tempo, rodando
+                                                de verdade no Windows — não bate com nenhum caminho
+                                                de código deste arquivo (só o botão direito do mouse,
+                                                interceptado acima, abre esse ContextMenu). Trava
+                                                defensiva adicionada, cobrindo QUALQUER gesto que
+                                                possa abrir o ContextMenu (clique direito, tecla
+                                                Aplicativos/Shift+F10, gesto de "pressionar e segurar"
+                                                de touchpad/touchscreen promovido a clique direito
+                                                pelo Windows, etc.): ContextMenuOpening
+                                                (PadButton_ContextMenuOpening) cancela a abertura
+                                                sempre que Ctrl não está pressionado naquele instante
+                                                — última trava, depois de qualquer outra lógica.
+                                            -->
+                                            <Button Command="{Binding PlayAudioCommand}" Margin="5" Height="74" Style="{StaticResource Theme.PadButton}"
+                                                    PreviewMouseRightButtonDown="PadButton_PreviewMouseRightButtonDown"
+                                                    ContextMenuOpening="PadButton_ContextMenuOpening">
+                                                <Button.ContextMenu>
+                                                    <!--
+                                                        Sprint Cartucheira 2, parte 2 - correção
+                                                        (2026-08-10): o antigo submenu "Cor" (7
+                                                        swatches, um MenuItem dentro do outro) saiu —
+                                                        era o menu "cortado" que o usuário reportou.
+                                                        Causa raiz: o ControlTemplate de MenuItem em
+                                                        Theme.xaml é deliberadamente simples (Border +
+                                                        ContentPresenter só do Header, ver comentário
+                                                        lá) — sem Popup/ItemsPresenter pra submenu,
+                                                        então um MenuItem com filhos não tinha onde
+                                                        renderizar o flyout, e o WPF tentava desenhar
+                                                        um popup degenerado. "Cor..." agora abre um
+                                                        seletor de cor nativo do Windows
+                                                        (System.Windows.Forms.ColorDialog, cores
+                                                        básicas) via ColorMenuItem_Click no
+                                                        code-behind — pedido explícito do usuário.
+                                                    -->
+                                                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                        <MenuItem Header="Cor..." Click="ColorMenuItem_Click" />
+                                                        <Separator />
+                                                        <MenuItem Header="Loop" IsCheckable="True" IsChecked="{Binding IsLoopEnabled, Mode=OneWay}" Command="{Binding ToggleLoopCommand}" />
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Grid>
+                </StackPanel>
+
+                <Border Grid.Column="1" Width="1" Background="{DynamicResource Brush.LineSoft}" Margin="18,0" />
+
+                <!-- Metade direita: Trilhas -->
+                <StackPanel Grid.Column="2" DataContext="{Binding TrilhasBank}">
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="{Binding HeaderTitle}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1" Text="{Binding CountLabel}" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" />
+                        <Button Grid.Column="3" Content="Voltar" Command="{Binding BackCommand}" Margin="0,0,6,0"
+                                Visibility="{Binding IsInsideProgram, Converter={StaticResource BoolToVis}}" />
+                        <Button Grid.Column="4" Content="Renomear" Command="{Binding RenameCommand}" Margin="0,0,6,0" />
+                        <Button Grid.Column="5" Content="Recarregar" Command="{Binding ReloadCommand}" />
+                    </Grid>
+                    <!--
+                        Barra de execução (Sprint Cartucheira 2, parte 2, 2026-08-10) — mesma
+                        estrutura da metade Vinhetas, ver comentário lá.
+                    -->
+                    <Border Background="{DynamicResource Brush.Bg4}" CornerRadius="6" Padding="10,8" Margin="0,0,0,8"
+                            Visibility="{Binding HasNowPlaying, Converter={StaticResource BoolToVis}}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding NowPlaying.Name}" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold"
+                                           Foreground="{DynamicResource Brush.TextHi}" TextTrimming="CharacterEllipsis" />
+                                <ProgressBar Value="{Binding NowPlaying.Progress, Mode=OneWay}" Minimum="0" Maximum="100"
+                                             Height="6" Margin="0,4,0,0" Foreground="{DynamicResource Brush.OnAir}" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" Text="{Binding NowPlaying.DurationDisplay}" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold"
+                                       Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" Margin="10,0,0,0" />
+                        </Grid>
+                    </Border>
+                    <!-- Mesma estrutura de duas grades (programas/cartuchos) da metade Vinhetas — ver comentário lá. -->
+                    <Grid MinHeight="164">
+                        <Grid Visibility="{Binding IsInsideProgram, Converter={StaticResource InverseBoolToVis}}">
+                            <TextBlock Text="Nenhum programa encontrado — verifique a pasta raiz em Configurações → Cartucheira."
+                                       Visibility="{Binding HasPrograms, Converter={StaticResource InverseBoolToVis}}"
+                                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" />
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="164" Background="Transparent"
+                                          Visibility="{Binding HasPrograms, Converter={StaticResource BoolToVis}}">
+                                <ItemsControl ItemsSource="{Binding Programs}"
+                                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="5" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Command="{Binding OpenCommand}" Margin="5" Height="74" Style="{StaticResource Theme.ProgramCard}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                        <Grid Visibility="{Binding IsInsideProgram, Converter={StaticResource BoolToVis}}">
+                            <TextBlock Text="Nenhum cartucho de áudio encontrado nesta pasta."
+                                       Visibility="{Binding HasButtons, Converter={StaticResource InverseBoolToVis}}"
+                                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
+                                       TextWrapping="Wrap" VerticalAlignment="Top" />
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="164" Background="Transparent"
+                                          Visibility="{Binding HasButtons, Converter={StaticResource BoolToVis}}">
+                                <ItemsControl ItemsSource="{Binding Buttons}"
+                                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Columns="5" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <!--
+                                                Sprint Cartucheira 2, parte 2 (2026-08-10): clique
+                                                esquerdo continua tocando/parando (PlayAudioCommand,
+                                                inalterado). Clique direito é interceptado em
+                                                PreviewMouseRightButtonDown (MainWindow.xaml.cs) —
+                                                sem Ctrl vira seleção (IsSelected, e.Handled=true,
+                                                cancela o menu); com Ctrl deixa o ContextMenu abrir
+                                                normalmente (Cor/Loop).
+
+                                                Correção pós-entrega (2026-08-10): usuário reportou
+                                                clique ESQUERDO (sem Ctrl) também selecionando E
+                                                abrindo a janela de Cor/Loop ao mesmo tempo, rodando
+                                                de verdade no Windows — não bate com nenhum caminho
+                                                de código deste arquivo (só o botão direito do mouse,
+                                                interceptado acima, abre esse ContextMenu). Trava
+                                                defensiva adicionada, cobrindo QUALQUER gesto que
+                                                possa abrir o ContextMenu (clique direito, tecla
+                                                Aplicativos/Shift+F10, gesto de "pressionar e segurar"
+                                                de touchpad/touchscreen promovido a clique direito
+                                                pelo Windows, etc.): ContextMenuOpening
+                                                (PadButton_ContextMenuOpening) cancela a abertura
+                                                sempre que Ctrl não está pressionado naquele instante
+                                                — última trava, depois de qualquer outra lógica.
+                                            -->
+                                            <Button Command="{Binding PlayAudioCommand}" Margin="5" Height="74" Style="{StaticResource Theme.PadButton}"
+                                                    PreviewMouseRightButtonDown="PadButton_PreviewMouseRightButtonDown"
+                                                    ContextMenuOpening="PadButton_ContextMenuOpening">
+                                                <Button.ContextMenu>
+                                                    <!--
+                                                        Sprint Cartucheira 2, parte 2 - correção
+                                                        (2026-08-10): o antigo submenu "Cor" (7
+                                                        swatches, um MenuItem dentro do outro) saiu —
+                                                        era o menu "cortado" que o usuário reportou.
+                                                        Causa raiz: o ControlTemplate de MenuItem em
+                                                        Theme.xaml é deliberadamente simples (Border +
+                                                        ContentPresenter só do Header, ver comentário
+                                                        lá) — sem Popup/ItemsPresenter pra submenu,
+                                                        então um MenuItem com filhos não tinha onde
+                                                        renderizar o flyout, e o WPF tentava desenhar
+                                                        um popup degenerado. "Cor..." agora abre um
+                                                        seletor de cor nativo do Windows
+                                                        (System.Windows.Forms.ColorDialog, cores
+                                                        básicas) via ColorMenuItem_Click no
+                                                        code-behind — pedido explícito do usuário.
+                                                    -->
+                                                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                                        <MenuItem Header="Cor..." Click="ColorMenuItem_Click" />
+                                                        <Separator />
+                                                        <MenuItem Header="Loop" IsCheckable="True" IsChecked="{Binding IsLoopEnabled, Mode=OneWay}" Command="{Binding ToggleLoopCommand}" />
+                                                    </ContextMenu>
+                                                </Button.ContextMenu>
+                                            </Button>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </Grid>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Conteudo: Decks (esquerda) | Explorer (direita) — 50/50 (mockup v8, nota #7). -->
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1*" MinWidth="440" />
+                <ColumnDefinition Width="1*" MinWidth="440" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Deck 1 / Deck 2 — dividem toda a altura da coluna (mockup v8, nota #14: sem mais a Fila Rapida competindo por espaco). -->
+            <ItemsControl Grid.Column="0" Margin="16,16,8,8" ItemsSource="{Binding Decks}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <UniformGrid Rows="2" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Margin="0,0,0,10" Background="{DynamicResource Brush.Bg3}" CornerRadius="8" Padding="18,14"
+                                BorderThickness="2" BorderBrush="{DynamicResource Brush.Line}"
+                                AllowDrop="True"
+                                DragEnter="DeckBorder_DragEnter"
+                                DragLeave="DeckBorder_DragLeave"
+                                Drop="DeckBorder_Drop">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsOnAir}" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource Brush.OnAir}" />
+                                            <Setter Property="Background" Value="{DynamicResource Brush.OnAirBg}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsLocalOnly}" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Blue}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Amber}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsError}" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource Brush.ErrorDark}" />
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsDragOver}" Value="True">
+                                            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Green}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" MinHeight="120" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!--
+                                    Cabecalho fino: nome, ON AIR, Auto/Manual, pills de destino
+                                    (somente leitura) — mockup v8, nota #9. Sprint Config Geral,
+                                    parte 1 (2026-08-09): a engrenagem por Deck que existia aqui
+                                    foi REMOVIDA — configuração de Deck agora é só pelo botão
+                                    "Configurações" da barra superior (janela única, protegida por
+                                    senha de admin), não mais um atalho por card.
+                                -->
+                                <Grid Grid.Row="0" Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold"
+                                               Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" Margin="0,0,10,0" />
+
+                                    <Border Grid.Column="1" Background="{DynamicResource Brush.OnAir}" CornerRadius="3" Padding="8,4" Margin="0,0,10,0"
+                                            Visibility="{Binding IsOnAir, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="ON AIR" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" />
+                                    </Border>
+
+                                    <!-- Auto/Manual (mockup v8, nota #13). -->
+                                    <Border Grid.Column="2" Background="{DynamicResource Brush.Bg4}" CornerRadius="14" Padding="2">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="Auto" Command="{Binding SetAutoModeCommand}" Padding="12,5" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                        <Setter Property="Background" Value="Transparent" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsAutoMode}" Value="True">
+                                                                <Setter Property="Background" Value="{DynamicResource Brush.Blue}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                            <Button Content="Manual" Command="{Binding SetManualModeCommand}" Padding="12,5" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                                        <Setter Property="Background" Value="Transparent" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsAutoMode}" Value="False">
+                                                                <Setter Property="Background" Value="{DynamicResource Brush.Blue}" />
+                                                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- Pills de destino vMix/Resolume — somente leitura (mockup v8, nota #8: configuracao real fica a cargo da engrenagem, quando existir). -->
+                                    <StackPanel Grid.Column="4" Orientation="Horizontal" Margin="10,0">
+                                        <Border Background="{DynamicResource Brush.Bg4}" CornerRadius="10" Padding="8,4" Margin="0,0,6,0">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,6,0">
+                                                    <Ellipse.Style>
+                                                        <Style TargetType="Ellipse">
+                                                            <Setter Property="Fill" Value="{DynamicResource Brush.TextFaint}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding SendToVMix}" Value="True">
+                                                                    <Setter Property="Fill" Value="{DynamicResource Brush.Green}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Ellipse.Style>
+                                                </Ellipse>
+                                                <TextBlock Text="vMix" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Border>
+                                        <Border Background="{DynamicResource Brush.Bg4}" CornerRadius="10" Padding="8,4">
+                                            <StackPanel Orientation="Horizontal">
+                                                <Ellipse Width="7" Height="7" VerticalAlignment="Center" Margin="0,0,6,0">
+                                                    <Ellipse.Style>
+                                                        <Style TargetType="Ellipse">
+                                                            <Setter Property="Fill" Value="{DynamicResource Brush.TextFaint}" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding SendToResolume}" Value="True">
+                                                                    <Setter Property="Fill" Value="{DynamicResource Brush.Green}" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Ellipse.Style>
+                                                </Ellipse>
+                                                <TextBlock Text="Resolume" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
+
+                                <!-- Linha central: preview a esquerda, 6 botoes de transporte quadrados a direita (mockup v8, notas #9/#10/#17). -->
+                                <Grid Grid.Row="1" Margin="0,0,0,12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="220" />
+                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Grid.Column="0" Background="{DynamicResource Brush.Bg0}" CornerRadius="5" ClipToBounds="True">
+                                        <Grid>
+                                            <vlc:VideoView MediaPlayer="{Binding VideoPlayer}" />
+                                            <TextBlock Text="{Binding StatusLabel}" Foreground="{Binding StatusColorHex, Converter={StaticResource HexColorToBrushConverter}}"
+                                                       FontSize="{StaticResource FontSize.Body}" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                       Visibility="{Binding ShowStatusOverlay, Converter={StaticResource BoolToVis}}" />
+                                        </Grid>
+                                    </Border>
+
+                                    <UniformGrid Grid.Column="2" Columns="7">
+                                        <Button Command="{Binding PlayCommand}" Style="{StaticResource Theme.DeckBigButton}" Margin="0,0,8,0"
+                                                Background="{DynamicResource Brush.Green}">
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Path Data="{StaticResource Icon.Play}" Fill="White" Width="20" Height="20" Stretch="Uniform" Margin="0,0,0,6" />
+                                                <TextBlock Text="Play" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Command="{Binding PauseCommand}" Style="{StaticResource Theme.DeckBigButton}" Margin="0,0,8,0"
+                                                Background="{DynamicResource Brush.Amber}">
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Path Data="{StaticResource Icon.Pause}" Fill="#FF241A05" Width="20" Height="20" Stretch="Uniform" Margin="0,0,0,6" />
+                                                <TextBlock Text="Pause" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="#FF241A05" HorizontalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Command="{Binding StopCommand}" Style="{StaticResource Theme.DeckBigButton}" Margin="0,0,8,0"
+                                                Background="{DynamicResource Brush.Bg5}">
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Path Data="{StaticResource Icon.Stop}" Fill="{DynamicResource Brush.TextMid}" Width="18" Height="18" Stretch="Uniform" Margin="0,0,0,6" />
+                                                <TextBlock Text="Stop" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" HorizontalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                        <!-- Clear (ajustes de Deck, 2026-08-09): esvazia o Deck de vez, tira a midia do Engine tambem (diferente do Stop, que so volta a posicao pro inicio). -->
+                                        <Button Command="{Binding ClearCommand}" Margin="0,0,8,0"
+                                                Background="{DynamicResource Brush.Bg4}" BorderBrush="{DynamicResource Brush.Line}" BorderThickness="1"
+                                                Style="{StaticResource Theme.DeckBigButton}">
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Path Data="{StaticResource Icon.X}" Stroke="{DynamicResource Brush.TextMid}" StrokeThickness="1.8" Width="18" Height="18" Stretch="Uniform" Margin="0,0,0,6" />
+                                                <TextBlock Text="Clear" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" HorizontalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Command="{Binding ToggleLoopCommand}" Margin="0,0,8,0" BorderThickness="1">
+                                            <Button.Style>
+                                                <Style TargetType="Button" BasedOn="{StaticResource Theme.DeckBigButton}">
+                                                    <Setter Property="Background" Value="{DynamicResource Brush.Bg4}" />
+                                                    <Setter Property="BorderBrush" Value="{DynamicResource Brush.Line}" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextMid}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding LoopEnabled}" Value="True">
+                                                            <Setter Property="Background" Value="{DynamicResource Brush.Blue}" />
+                                                            <Setter Property="BorderBrush" Value="{DynamicResource Brush.Blue}" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Button.Style>
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Path Data="{StaticResource Icon.Repeat}" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                      StrokeThickness="1.8" Width="18" Height="18" Stretch="Uniform" Margin="0,0,0,6" />
+                                                <TextBlock Text="Loop" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold"
+                                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Command="{Binding NextCommand}" Margin="0,0,8,0"
+                                                Background="{DynamicResource Brush.Bg4}" BorderBrush="{DynamicResource Brush.Line}" BorderThickness="1"
+                                                Style="{StaticResource Theme.DeckBigButton}">
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Path Data="{StaticResource Icon.SkipForward}" Fill="{DynamicResource Brush.TextHi}" Width="18" Height="18" Stretch="Uniform" Margin="0,0,0,6" />
+                                                <TextBlock Text="Next" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" HorizontalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Command="{Binding PreviewCommand}"
+                                                Background="Transparent" BorderBrush="{DynamicResource Brush.Line}" BorderThickness="2"
+                                                Style="{StaticResource Theme.DeckBigButton}">
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Path Data="{StaticResource Icon.Eye}" Stroke="{DynamicResource Brush.TextMid}" StrokeThickness="1.6" Width="18" Height="18" Stretch="Uniform" Margin="0,0,0,6" />
+                                                <TextBlock Text="Preview" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" HorizontalAlignment="Center" />
+                                            </StackPanel>
+                                        </Button>
+                                    </UniformGrid>
+                                </Grid>
+
+                                <!-- Faixa inferior: nome do arquivo, progresso, tempos (mockup v8, nota #9). -->
+                                <StackPanel Grid.Row="2">
+                                    <TextBlock TextTrimming="CharacterEllipsis">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="{Binding LoadedFileName}" />
+                                                <Setter Property="FontSize" Value="{StaticResource FontSize.DeckFileName}" />
+                                                <Setter Property="FontWeight" Value="Bold" />
+                                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding HasVideo}" Value="False">
+                                                        <Setter Property="Text" Value="Vazio — arraste um vídeo aqui" />
+                                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <ProgressBar Value="{Binding Progress, Mode=OneWay}" Minimum="0" Maximum="100"
+                                                 Height="7" Margin="0,8,0,5" Foreground="{DynamicResource Brush.Green}" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextLow}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding RemainingTime}" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextLow}" />
+                                    </Grid>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <!-- Explorer / Playlist -->
+            <Border Grid.Column="1" Margin="8,16,16,8" Background="{DynamicResource Brush.Bg2}" CornerRadius="6" ClipToBounds="True">
+                <views:FileExplorerPanel DataContext="{Binding FileExplorer}" />
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Sprint Comando Externo (aprovada em 2026-08-10): 6º dos 7 projetos definitivos — previsto desde
+    a Sprint arquitetura inicial ("Infrastructure: Hotkey global (Win32)..."), só nunca tinha
+    entrado em nenhuma sprint até agora. Alvo net8.0 puro (não net8.0-windows) — mesmo raciocínio já
+    usado no CartucheiraVideo.Ndi: P/Invoke direto contra user32.dll/kernel32.dll, sem depender de
+    WPF (System.Windows.Interop.HwndSource) nem de WinForms — a janela "de mensagem apenas"
+    (HWND_MESSAGE) usada pra registrar o hotkey global é criada por P/Invoke puro dentro deste
+    projeto (GlobalHotkeyService), não emprestada da janela principal da Presentation. Isso mantém a
+    regra de camadas do projeto (Infrastructure não depende de Presentation) e faz este projeto
+    compilar em qualquer SO (embora RegisterHotKey/user32.dll só funcionem de verdade rodando no
+    Windows — os P/Invoke em si compilam em qualquer lugar, só falham em runtime fora do Windows,
+    igual o CartucheiraVideo.Ndi já faz com a NDI SDK).
+
+    Sem ProjectReference nenhum de propósito, mesma razão do Ndi: fala só o vocabulário puro de
+    "tecla registrada, callback chamado" — quem liga isso a um AudioBankViewModel específico é a
+    Presentation (MainViewModel), que já é quem liga Engine/Ndi a Core hoje.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+</Project>

@@ -1,11 +1,12 @@
-name: Build instalador CartucheiraVideo
+﻿name: Build instalador CartucheiraVideo
 
-# Roda automaticamente a cada push na branch main, e também pode ser disparado
-# manualmente na aba "Actions" do GitHub (botão "Run workflow").
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -18,11 +19,9 @@ jobs:
       - name: Instalar .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          # AJUSTE aqui se o projeto usar outra versão do .NET (ex.: '9.0.x')
           dotnet-version: '8.0.x'
 
       - name: Restaurar pacotes
-        # AJUSTE o nome do .sln se for diferente
         run: dotnet restore CartucheiraVideo.sln
 
       - name: Publicar o app (self-contained, não precisa .NET instalado na máquina do usuário)

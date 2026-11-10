@@ -1,13 +1,13 @@
-; Script do Inno Setup para gerar o instalador (Setup.exe) do CartucheiraVideo.
+﻿; Script do Inno Setup para gerar o instalador (Setup.exe) do CartucheiraVideo.
 ; Compilado automaticamente pelo GitHub Actions (.github/workflows/build-installer.yml)
 ; a partir da pasta "publish" gerada pelo "dotnet publish".
 ;
-; AJUSTE o nome do .exe principal (MyAppExeName) se o executável gerado tiver outro nome
-; (normalmente é "CartucheiraVideo.Presentation.exe" ou "CartucheiraVideo.exe" —
+; AJUSTE o nome do .exe principal (MyAppExeName) se o executÃ¡vel gerado tiver outro nome
+; (normalmente Ã© "CartucheiraVideo.exe" ou "CartucheiraVideo.exe" â€”
 ;  confira dentro da pasta "publish" depois do primeiro build).
 
-#define MyAppName "Cartucheira Vídeo"
-#define MyAppExeName "CartucheiraVideo.Presentation.exe"
+#define MyAppName "Cartucheira VÃ­deo"
+#define MyAppExeName "CartucheiraVideo.exe"
 #define MyAppPublisher "Metropolitana"
 #define MyPublishDir "publish"
 
@@ -30,7 +30,7 @@ WizardStyle=modern
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "Criar ícone na área de trabalho"; GroupDescription: "Ícones adicionais:"
+Name: "desktopicon"; Description: "Criar Ã­cone na Ã¡rea de trabalho"; GroupDescription: "Ãcones adicionais:"
 
 [Files]
 Source: "{#MyPublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -40,4 +40,4 @@ Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Cartucheira Vídeo"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Cartucheira VÃ­deo"; Flags: nowait postinstall skipifsilent

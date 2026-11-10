@@ -1,8 +1,29 @@
-bin/
-obj/
+# CartucheiraVideo — .gitignore padrão para projeto .NET/WPF
+
+# Pastas de build
+**/bin/
+**/obj/
+publish/
+Output/
+
+# Visual Studio
+.vs/
 *.user
 *.suo
-.vs/
+*.userosscache
+*.sln.docstates
+
+# Rider / VS Code (se algum dia usar)
 .idea/
 .vscode/
+
+# Logs e temporários
 *.log
+*.tmp
+
+# Pacotes NuGet restaurados localmente (ficam fora do repo, são restaurados pelo `dotnet restore`)
+*.nupkg
+packages/
+
+# Arquivos de usuário/máquina específicos
+*.DotSettings.user

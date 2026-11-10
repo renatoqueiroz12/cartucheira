@@ -1,0 +1,61 @@
+name: Build instalador CartucheiraVideo
+
+# Roda automaticamente a cada push na branch main, e também pode ser disparado
+# manualmente na aba "Actions" do GitHub (botão "Run workflow").
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          # AJUSTE aqui se o projeto usar outra versão do .NET (ex.: '9.0.x')
+          dotnet-version: '8.0.x'
+
+      - name: Restaurar pacotes
+        # AJUSTE o nome do .sln se for diferente
+        run: dotnet restore CartucheiraVideo.sln
+
+      - name: Publicar o app (self-contained, não precisa .NET instalado na máquina do usuário)
+        run: >
+          dotnet publish
+          src/CartucheiraVideo.Presentation/CartucheiraVideo.Presentation.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=false
+          -o publish
+
+      - name: Instalar o Inno Setup
+        run: choco install innosetup -y
+        shell: pwsh
+
+      - name: Compilar o instalador (.exe)
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+        shell: pwsh
+
+      - name: Publicar o instalador como artefato desta execução
+        uses: actions/upload-artifact@v4
+        with:
+          name: CartucheiraVideo-Setup
+          path: Output/*.exe
+
+      - name: Atualizar o Release "latest" com o instalador mais novo
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Última versão"
+          prerelease: false
+          make_latest: true
+          files: Output/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

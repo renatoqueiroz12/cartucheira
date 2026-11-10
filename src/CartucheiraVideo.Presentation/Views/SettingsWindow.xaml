@@ -16,6 +16,9 @@
         Sprint Cartucheira (2026-08-09, parte 2 do item 2 do roteiro): terceira entrada na sidebar —
         "Cartucheira", ao lado de "Deck 1"/"Deck 2" — mesmo padrão de Visibility por Border externo.
 
+        Sprint Livewire-2 (2026-09-13): quarta entrada — "Saídas Livewire". Sprint NDI-Placa-de-Rede
+        (2026-09-13, mesmo dia): quinta entrada — "Rede NDI" — mesmo padrão de Visibility.
+
         Rodapé único (Salvar/Fechar) — diferente do antigo diálogo por Deck, Salvar aqui NÃO fecha a
         janela: aplica e persiste os três painéis de uma vez (SettingsViewModel.SaveCommand) e deixa
         o operador continuar ajustando. Fechar (code-behind) só fecha, sem desfazer nada que já
@@ -90,11 +93,33 @@
                             </Style>
                         </Button.Style>
                     </Button>
-                    <Button Content="Cartucheira" Command="{Binding SelectCartridgesCommand}">
+                    <Button Content="Cartucheira" Command="{Binding SelectCartridgesCommand}" Margin="0,0,0,4">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsCartridgesSelected}" Value="True">
+                                        <Setter Property="Tag" Value="Active" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="Saídas Livewire" Command="{Binding SelectLivewireOutputsCommand}" Margin="0,0,0,4">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLivewireOutputsSelected}" Value="True">
+                                        <Setter Property="Tag" Value="Active" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="Rede NDI" Command="{Binding SelectNdiNetworkCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsNdiNetworkSelected}" Value="True">
                                         <Setter Property="Tag" Value="Active" />
                                     </DataTrigger>
                                 </Style.Triggers>
@@ -119,6 +144,12 @@
                 </Border>
                 <Border Visibility="{Binding IsCartridgesSelected, Converter={StaticResource BoolToVis}}">
                     <views:CartridgeSettingsPanel DataContext="{Binding CartridgeSettings}" />
+                </Border>
+                <Border Visibility="{Binding IsLivewireOutputsSelected, Converter={StaticResource BoolToVis}}">
+                    <views:LivewireOutputsSettingsPanel DataContext="{Binding LivewireOutputsSettings}" />
+                </Border>
+                <Border Visibility="{Binding IsNdiNetworkSelected, Converter={StaticResource BoolToVis}}">
+                    <views:NdiNetworkSettingsPanel DataContext="{Binding NdiNetworkSettings}" />
                 </Border>
             </Grid>
         </Grid>

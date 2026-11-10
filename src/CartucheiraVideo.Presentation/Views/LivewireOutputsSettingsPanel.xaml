@@ -1,0 +1,74 @@
+<UserControl x:Class="CartucheiraVideo.Presentation.Views.LivewireOutputsSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:CartucheiraVideo.Presentation.ViewModels">
+
+    <!--
+        Sprint Livewire-2 (2026-09-13): quarta seção da janela de Configurações, ao lado de Deck 1/
+        Deck 2/Cartucheira — gerencia as "Saídas Livewire" (nome + canal) que passam a aparecer no
+        seletor de "Dispositivo de saída de áudio" de Vinhetas/Trilhas (CartridgeSettingsPanel),
+        prefixadas "Livewire: ...". Mesmo padrão de Style.FieldLabel/FieldGroup/SectionTitle
+        redefinidos localmente já usado pelos outros painéis desta janela (ver comentário equivalente
+        em CartridgeSettingsPanel.xaml).
+    -->
+    <UserControl.Resources>
+        <Style x:Key="Theme.FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Small}" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+
+        <Style x:Key="Theme.FieldGroup" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+
+        <Style x:Key="Theme.SectionTitle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Label}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <TextBlock Text="Saídas Livewire" Style="{StaticResource Theme.SectionTitle}" />
+            <TextBlock Text="Cada Saída criada aqui vira uma opção selecionável no &quot;Dispositivo de saída de áudio&quot; de Vinhetas e Trilhas (aba Cartucheira), ao lado dos dispositivos do Windows. Disponível hoje só para a Cartucheira — os Decks ainda não recebem Saída Livewire (etapa futura do roteiro)."
+                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,0,0,14" TextWrapping="Wrap" />
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Placa de rede usada para transmitir" Style="{StaticResource Theme.FieldLabel}" />
+                <ComboBox ItemsSource="{Binding NetworkInterfaces}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                          SelectedValue="{Binding NetworkInterfaceIp}" />
+                <TextBlock Text="Numa máquina com mais de uma placa de rede, escolha explicitamente a que está na mesma rede Livewire/Axia — deixar o sistema escolher pode silenciosamente sair pela placa errada (o pacote &quot;é enviado&quot; e ninguém na rede Livewire recebe)."
+                           Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Saídas configuradas" Style="{StaticResource Theme.FieldLabel}" />
+                <ListBox ItemsSource="{Binding Outputs}" SelectedItem="{Binding SelectedOutput}" MaxHeight="280"
+                         BorderThickness="1" BorderBrush="{DynamicResource Brush.LineSoft}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:LivewireOutputItemViewModel}">
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="110" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Tag="nome da Saída" />
+                                <TextBox Grid.Column="2" Text="{Binding Channel, UpdateSourceTrigger=PropertyChanged}" Tag="canal" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Text="Canal Livewire de 1 a 32767 — determina o endereço multicast usado para transmitir. Duas Saídas com o MESMO canal, se as duas forem selecionadas ao mesmo tempo (ex.: uma em Vinhetas e outra em Trilhas), transmitem para o mesmo grupo de rede — evite repetir canal entre Saídas diferentes. Renomear uma Saída já criada só atualiza o rótulo dela na aba Cartucheira depois de fechar e reabrir esta janela."
+                           Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <Button Content="Nova Saída" Padding="10,6" Margin="0,0,8,0" Command="{Binding AddCommand}" />
+                    <Button Content="Remover selecionada" Padding="10,6" Command="{Binding RemoveCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Windows.Input;
 using CartucheiraVideo.Api;
@@ -61,21 +63,34 @@ public sealed class CartridgeSettingsViewModel : ViewModelBase
     private string _trilhasUdpTriggerOffCommand;
     private int _vinhetasCrossfadeMs;
     private int _trilhasCrossfadeMs;
+    private readonly ObservableCollection<LivewireOutputItemViewModel> _livewireOutputs;
+    private readonly ObservableCollection<ComboOption<string?>> _audioDevices = new();
 
-    public CartridgeSettingsViewModel(CartridgeSettingsSnapshot snapshot, UdpPortSettingsViewModel sharedUdpPort)
+    /// <summary>
+    /// Sprint Livewire-2 (2026-09-13): <paramref name="livewireOutputs"/> é a MESMA instância (por
+    /// referência) que <see cref="LivewireOutputsSettingsViewModel.Outputs"/> usa — injetada pelo
+    /// <see cref="SettingsViewModel"/> pra esta lista de dispositivos (<see cref="AudioDevices"/>)
+    /// incluir as Saídas Livewire configuradas, além dos dispositivos Windows de sempre. Ver
+    /// <see cref="RebuildAudioDevices"/> pra limitação honesta sobre renomear.
+    /// </summary>
+    public CartridgeSettingsViewModel(
+        CartridgeSettingsSnapshot snapshot,
+        UdpPortSettingsViewModel sharedUdpPort,
+        ObservableCollection<LivewireOutputItemViewModel> livewireOutputs)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(sharedUdpPort);
+        ArgumentNullException.ThrowIfNull(livewireOutputs);
 
         SharedUdpPort = sharedUdpPort;
+        _livewireOutputs = livewireOutputs;
 
-        var devices = new List<ComboOption<string?>>
-        {
-            new() { Value = null, Label = "Padrão do sistema" }
-        };
-        devices.AddRange(AudioEngine.EnumerateOutputDevices()
-            .Select(d => new ComboOption<string?> { Value = d.DeviceId, Label = d.Description }));
-        AudioDevices = devices;
+        AudioDevices = _audioDevices;
+        RebuildAudioDevices();
+        // Sprint Livewire-2: só Add/Remove disparam recálculo (ver comentário completo em
+        // RebuildAudioDevices) — renomear uma Saída já existente não atualiza o rótulo aqui até a
+        // janela de Configurações ser fechada e reaberta.
+        _livewireOutputs.CollectionChanged += OnLivewireOutputsChanged;
 
         var shortcuts = new List<ComboOption<string?>>
         {
@@ -120,7 +135,15 @@ public sealed class CartridgeSettingsViewModel : ViewModelBase
     /// </summary>
     public UdpPortSettingsViewModel SharedUdpPort { get; }
 
-    /// <summary>Dispositivos de saída de áudio do Windows (mmdevice) + a opção "Padrão do sistema" (Value nulo) no topo.</summary>
+    /// <summary>
+    /// Dispositivos de saída de áudio do Windows (mmdevice) + a opção "Padrão do sistema" (Value
+    /// nulo) no topo + (Sprint Livewire-2) as Saídas Livewire configuradas em Configurações →
+    /// Saídas Livewire, cada uma com valor prefixado <c>"livewire:{Id}"</c> (ver
+    /// <see cref="Engine.AudioEngine.ExternalOutputPrefix"/>). Tipo concreto é
+    /// <see cref="ObservableCollection{T}"/> (embora exposto aqui como <see cref="IReadOnlyList{T}"/>)
+    /// de propósito — o WPF enxerga o objeto real em runtime e reage a Add/Remove de Saídas
+    /// Livewire sem precisar trocar o Binding, ver <see cref="RebuildAudioDevices"/>.
+    /// </summary>
     public IReadOnlyList<ComboOption<string?>> AudioDevices { get; }
 
     /// <summary>Teclas de atalho disponíveis (Tab, F1–F24, ver <see cref="GlobalHotkeyKey"/>) + a opção "Nenhuma" (Value nulo) no topo — mesma lista pra Vinhetas e Trilhas.</summary>
@@ -255,6 +278,41 @@ public sealed class CartridgeSettingsViewModel : ViewModelBase
         snapshot.VinhetasCrossfadeMs = VinhetasCrossfadeMs;
         snapshot.TrilhasCrossfadeMs = TrilhasCrossfadeMs;
     }
+
+    /// <summary>
+    /// Sprint Livewire-2 (2026-09-13): (re)monta <see cref="_audioDevices"/> do zero — dispositivos
+    /// Windows (mmdevice, enumerados de novo a cada chamada) + Saídas Livewire configuradas agora
+    /// em <see cref="_livewireOutputs"/>. Chamado uma vez na construção e sempre que
+    /// <see cref="_livewireOutputs"/> ganha ou perde um item (<see cref="OnLivewireOutputsChanged"/>)
+    /// — RENOMEAR uma Saída já existente (só o texto do nome) não chama isto: o
+    /// <see cref="ObservableCollection{T}.CollectionChanged"/> da lista não dispara nesse caso (o
+    /// item continua o mesmo, só uma propriedade dele mudou), então o rótulo já visível neste combo
+    /// só atualiza depois de fechar e reabrir a janela de Configurações — limitação aceita de
+    /// propósito nesta sprint (documentada também em <see cref="LivewireOutputsSettingsViewModel"/>
+    /// e no plano do projeto), observar PropertyChanged de cada item individual não pareceu valer a
+    /// complexidade pra um caso raro (renomear é bem mais raro que criar/remover).
+    /// </summary>
+    private void RebuildAudioDevices()
+    {
+        _audioDevices.Clear();
+        _audioDevices.Add(new ComboOption<string?> { Value = null, Label = "Padrão do sistema" });
+
+        foreach (var device in AudioEngine.EnumerateOutputDevices())
+        {
+            _audioDevices.Add(new ComboOption<string?> { Value = device.DeviceId, Label = device.Description });
+        }
+
+        foreach (var output in _livewireOutputs)
+        {
+            _audioDevices.Add(new ComboOption<string?>
+            {
+                Value = AudioEngine.ExternalOutputPrefix + output.Id,
+                Label = $"Livewire: {output.Name} (canal {output.Channel})"
+            });
+        }
+    }
+
+    private void OnLivewireOutputsChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildAudioDevices();
 
     /// <summary>OpenFolderDialog (Microsoft.Win32, novo no .NET 8) — nenhum pacote extra necessário, já que o projeto é net8.0-windows/WPF.</summary>
     private static void BrowseFolder(string title, Action<string> onSelected)

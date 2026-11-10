@@ -83,6 +83,30 @@ public sealed class AudioEngine : IDisposable
     private const int ReportIntervalMs = 100;
     private const int OutputLatencyMs = 40;
 
+    /// <summary>
+    /// Prefixo que marca <see cref="SetOutputDevice"/> como uma "Saída Livewire" em vez de um
+    /// dispositivo Windows de verdade — Sprint Livewire-2 (2026-09-13). Valor completo gravado nos
+    /// campos existentes (ex.: <c>CartridgeSettingsSnapshot.VinhetasAudioDeviceId</c>) fica
+    /// <c>"livewire:{Id}"</c>, onde <c>Id</c> é o <c>LivewireOutputSettings.Id</c> configurado em
+    /// Configurações — escolhido de propósito pra não precisar mudar o tipo (<c>string?</c>) nem o
+    /// schema já persistido desses campos. Quando detectado, <see cref="EnsureOutputReady"/> NÃO cria
+    /// um <see cref="WasapiOut"/> — em vez disso dispara <see cref="ExternalAudioBlockReady"/> no
+    /// ritmo do Livewire (240 quadros/5ms), pra quem estiver ouvindo (normalmente
+    /// <c>Presentation.AudioBankViewModel</c>, ligando num <c>Infrastructure.Livewire.LivewireSender</c>
+    /// — Engine não pode referenciar Infrastructure diretamente, regra permanente do projeto, mesmo
+    /// padrão já usado pro NDI) mandar pela rede.
+    /// </summary>
+    public const string ExternalOutputPrefix = "livewire:";
+
+    /// <summary>
+    /// Quantos quadros (amostras por canal) tem cada bloco entregue via
+    /// <see cref="ExternalAudioBlockReady"/> — mesmo tamanho de um pacote RTP/L24 Livewire (240
+    /// quadros = 5ms a 48kHz, ver <c>Infrastructure.Livewire.LivewireRtpFraming.FramesPerPacket</c>).
+    /// Repetido aqui como constante própria (não referenciado direto do Infrastructure) porque Engine
+    /// não pode referenciar Infrastructure — regra permanente do projeto.
+    /// </summary>
+    public const int ExternalOutputFrameCount = 240;
+
     private readonly object _gate = new();
     private readonly MixingSampleProvider _mixer;
     private readonly Timer _reportTimer;
@@ -91,6 +115,8 @@ public sealed class AudioEngine : IDisposable
     private MMDevice? _currentDevice;
     private string? _outputDeviceId;
     private string? _initializedDeviceId;
+    private Thread? _externalOutputThread;
+    private CancellationTokenSource? _externalOutputCts;
 
     private PlayingItem? _active;
     private PlayingItem? _fadingOut;
@@ -134,6 +160,16 @@ public sealed class AudioEngine : IDisposable
 
     /// <summary>Disparado a cada <see cref="ReportIntervalMs"/> enquanto algo está tocando, com o tempo decorrido do cartucho em primeiro plano — alimenta a contagem regressiva (<see cref="GetDurationAsync"/> dá a duração total).</summary>
     public event EventHandler<TimeSpan>? PositionChanged;
+
+    /// <summary>
+    /// Sprint Livewire-2 (2026-09-13): disparado a cada <see cref="ExternalOutputFrameCount"/> quadros
+    /// (5ms) enquanto <see cref="SetOutputDevice"/> aponta pra uma Saída Livewire (<see cref="ExternalOutputPrefix"/>)
+    /// — SÓ nesse caso; enquanto o destino for um dispositivo Windows normal (<see cref="WasapiOut"/>)
+    /// este evento nunca dispara. Disparado na thread dedicada de ritmo Livewire desta instância (ver
+    /// <see cref="ExternalOutputThreadLoop"/>), nunca na UI thread — mesma responsabilidade de sempre
+    /// de marshalar pra quem ouvir precisar.
+    /// </summary>
+    public event EventHandler<ExternalAudioBlockEventArgs>? ExternalAudioBlockReady;
 
     /// <summary>Verdadeiro enquanto há um cartucho em primeiro plano tocando (não conta o cartucho saindo de um crossfade em andamento).</summary>
     public bool IsPlaying
@@ -473,7 +509,10 @@ public sealed class AudioEngine : IDisposable
         string? wantedDeviceId;
         lock (_gate)
         {
-            if (_wasapiOut is not null && _initializedDeviceId == _outputDeviceId)
+            var alreadyReady = _initializedDeviceId == _outputDeviceId
+                && (_wasapiOut is not null || _externalOutputThread is not null);
+
+            if (alreadyReady)
             {
                 return;
             }
@@ -481,6 +520,22 @@ public sealed class AudioEngine : IDisposable
             wantedDeviceId = _outputDeviceId;
         }
 
+        // Sprint Livewire-2: valor prefixado ("livewire:{Id}") significa Saída Livewire — não é um
+        // dispositivo Windows de verdade, então nunca passa pelo caminho MMDevice/WasapiOut abaixo.
+        // Ver comentário de ExternalOutputPrefix.
+        if (wantedDeviceId is not null && wantedDeviceId.StartsWith(ExternalOutputPrefix, StringComparison.Ordinal))
+        {
+            StartExternalOutput(wantedDeviceId);
+        }
+        else
+        {
+            StartWasapiOutput(wantedDeviceId);
+        }
+    }
+
+    /// <summary>Caminho normal (dispositivo Windows de verdade) — comportamento idêntico ao de antes da Sprint Livewire-2, só extraído pra um método próprio pra caber ao lado do novo caminho <see cref="StartExternalOutput"/>.</summary>
+    private void StartWasapiOutput(string? wantedDeviceId)
+    {
         using var enumerator = new MMDeviceEnumerator();
         MMDevice device;
         try
@@ -502,20 +557,131 @@ public sealed class AudioEngine : IDisposable
 
         WasapiOut? previousOut;
         MMDevice? previousDevice;
+        Thread? previousExternalThread;
+        CancellationTokenSource? previousExternalCts;
 
         lock (_gate)
         {
             previousOut = _wasapiOut;
             previousDevice = _currentDevice;
+            previousExternalThread = _externalOutputThread;
+            previousExternalCts = _externalOutputCts;
 
             _wasapiOut = wasapiOut;
             _currentDevice = device;
+            _externalOutputThread = null;
+            _externalOutputCts = null;
             _initializedDeviceId = wantedDeviceId;
         }
 
         previousOut?.Stop();
         previousOut?.Dispose();
         previousDevice?.Dispose();
+        StopExternalOutputThread(previousExternalThread, previousExternalCts);
+    }
+
+    /// <summary>
+    /// Sprint Livewire-2: caminho novo pra quando <see cref="SetOutputDevice"/> aponta pra uma Saída
+    /// Livewire — NÃO cria <see cref="WasapiOut"/> nenhum. Em vez disso sobe uma thread dedicada
+    /// (<see cref="ExternalOutputThreadLoop"/>) que lê o MESMO <see cref="_mixer"/> permanente desta
+    /// Cartucheira no ritmo do Livewire (240 quadros/5ms, relógio de parede — mesma técnica de
+    /// <c>Engine.NdiAudioCapture.AudioThreadLoop</c>, só sem correção de deriva porque aqui não existe
+    /// nenhum vídeo pra sincronizar) e dispara <see cref="ExternalAudioBlockReady"/> a cada bloco.
+    /// </summary>
+    private void StartExternalOutput(string wantedDeviceId)
+    {
+        var outputId = wantedDeviceId.Substring(ExternalOutputPrefix.Length);
+        var cts = new CancellationTokenSource();
+        var thread = new Thread(() => ExternalOutputThreadLoop(outputId, cts.Token))
+        {
+            IsBackground = true,
+            Name = "AudioEngine-Livewire-" + outputId,
+        };
+
+        WasapiOut? previousOut;
+        MMDevice? previousDevice;
+        Thread? previousExternalThread;
+        CancellationTokenSource? previousExternalCts;
+
+        lock (_gate)
+        {
+            previousOut = _wasapiOut;
+            previousDevice = _currentDevice;
+            previousExternalThread = _externalOutputThread;
+            previousExternalCts = _externalOutputCts;
+
+            _wasapiOut = null;
+            _currentDevice = null;
+            _externalOutputThread = thread;
+            _externalOutputCts = cts;
+            _initializedDeviceId = wantedDeviceId;
+        }
+
+        previousOut?.Stop();
+        previousOut?.Dispose();
+        previousDevice?.Dispose();
+        StopExternalOutputThread(previousExternalThread, previousExternalCts);
+
+        thread.Start();
+    }
+
+    /// <summary>Pra sempre — pede cancelamento e espera a thread terminar sozinha (nunca <c>Abort</c>) antes de descartar o <see cref="CancellationTokenSource"/>. Seguro chamar com <paramref name="thread"/> nulo (nenhuma Saída Livewire estava ativa).</summary>
+    private static void StopExternalOutputThread(Thread? thread, CancellationTokenSource? cts)
+    {
+        if (thread is null)
+        {
+            return;
+        }
+
+        cts?.Cancel();
+        thread.Join(500);
+        cts?.Dispose();
+    }
+
+    /// <summary>
+    /// Roda inteira numa thread própria (uma por Saída Livewire ativa) até <paramref name="token"/>
+    /// ser cancelado. Ritmo por relógio de parede (mesma técnica de
+    /// <c>Engine.NdiAudioCapture.AudioThreadLoop</c>): calcula quantos quadros DEVERIAM ter saído até
+    /// agora e só lê/dispara mais um bloco quando alcança esse alvo — evita tanto acumular atraso
+    /// (nunca dorme além da conta) quanto rodar mais rápido que o relógio real (nunca manda áudio
+    /// "adiantado"). <see cref="_mixer"/> tem <c>ReadFully = true</c>, então <c>Read</c> sempre volta
+    /// com o bloco cheio (silêncio se nada estiver tocando) — nunca menos que <see cref="ExternalOutputFrameCount"/>.
+    /// </summary>
+    private void ExternalOutputThreadLoop(string outputId, CancellationToken token)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        long framesDelivered = 0;
+        var sampleRate = MixerWaveFormat.SampleRate;
+        var interleaved = new float[ExternalOutputFrameCount * 2];
+
+        while (!token.IsCancellationRequested)
+        {
+            var targetFrames = stopwatch.Elapsed.TotalSeconds * sampleRate;
+            if (framesDelivered >= targetFrames)
+            {
+                Thread.Sleep(1);
+                continue;
+            }
+
+            _mixer.Read(interleaved, 0, interleaved.Length);
+
+            var left = new float[ExternalOutputFrameCount];
+            var right = new float[ExternalOutputFrameCount];
+            for (var i = 0; i < ExternalOutputFrameCount; i++)
+            {
+                left[i] = interleaved[i * 2];
+                right[i] = interleaved[i * 2 + 1];
+            }
+
+            framesDelivered += ExternalOutputFrameCount;
+
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            ExternalAudioBlockReady?.Invoke(this, new ExternalAudioBlockEventArgs(outputId, left, right));
+        }
     }
 
     /// <summary>Adapta um cartucho recém-aberto pro formato fixo do mixer (<see cref="MixerWaveFormat"/>): mono vira estéreo, taxa de amostragem diferente é reamostrada (<see cref="WdlResamplingSampleProvider"/>, resampler 100% gerenciado do próprio NAudio, sem dependência do Windows). Mais de 2 canais não é suportado (nenhum cartucho real deste projeto até agora tem isso) — erro honesto em vez de tentar adivinhar um downmix.</summary>
@@ -705,6 +871,7 @@ public sealed class AudioEngine : IDisposable
         _wasapiOut?.Stop();
         _wasapiOut?.Dispose();
         _currentDevice?.Dispose();
+        StopExternalOutputThread(_externalOutputThread, _externalOutputCts);
     }
 
     private sealed class PlayingItem
@@ -781,4 +948,34 @@ public sealed class AudioEngine : IDisposable
             return read;
         }
     }
+}
+
+/// <summary>
+/// Sprint Livewire-2 (2026-09-13): um bloco de <see cref="AudioEngine.ExternalOutputFrameCount"/>
+/// quadros de áudio (48kHz, float -1..1, desintercalado em <see cref="Left"/>/<see cref="Right"/>)
+/// prontos pra virar um pacote Livewire — disparado por <see cref="AudioEngine.ExternalAudioBlockReady"/>.
+/// Público (não aninhado em <see cref="AudioEngine"/>) porque quem ouve fica em
+/// <c>CartucheiraVideo.Presentation</c> (Engine não pode referenciar Infrastructure diretamente pra
+/// já entregar isto como um tipo do próprio Livewire — regra permanente do projeto — então
+/// Presentation é quem faz a ponte: lê <see cref="OutputId"/>, decide qual
+/// <c>Infrastructure.Livewire.LivewireSender</c> corresponde, e chama
+/// <c>LivewireSender.SendFrame(Left, Right)</c>).
+/// </summary>
+public sealed class ExternalAudioBlockEventArgs : EventArgs
+{
+    public ExternalAudioBlockEventArgs(string outputId, float[] left, float[] right)
+    {
+        OutputId = outputId;
+        Left = left;
+        Right = right;
+    }
+
+    /// <summary>Id da Saída Livewire (a parte depois do prefixo "livewire:", ver <see cref="AudioEngine.ExternalOutputPrefix"/>) — igual ao <c>LivewireOutputSettings.Id</c> configurado.</summary>
+    public string OutputId { get; }
+
+    /// <summary><see cref="AudioEngine.ExternalOutputFrameCount"/> amostras do canal esquerdo, float -1..1.</summary>
+    public float[] Left { get; }
+
+    /// <summary><see cref="AudioEngine.ExternalOutputFrameCount"/> amostras do canal direito, float -1..1.</summary>
+    public float[] Right { get; }
 }

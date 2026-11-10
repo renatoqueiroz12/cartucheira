@@ -10,11 +10,8 @@ public sealed class DeckSettingsSnapshot
 {
     public string? NdiChannelName { get; set; }
 
-    /// <summary>Dispositivo de saída de áudio do Windows (mmdevice) usado pelo áudio principal deste Deck (Play real) — Sprint Áudio-Dispositivo-Deck (2026-08-11). Nulo = padrão do sistema.</summary>
+    /// <summary>Dispositivo de saída de áudio do Windows (mmdevice), ou uma Saída Livewire nativa — Sprint Áudio-Dispositivo-Deck (2026-08-11). Nulo = padrão do sistema. Sprint Áudio-Unificado (2026-09-15): usado tanto pelo Play quanto pelo Preview deste Deck — o campo separado <c>PreviewAudioDeviceId</c> foi removido (ver comentário completo em <c>Core.Deck.AudioDeviceId</c>).</summary>
     public string? AudioDeviceId { get; set; }
-
-    /// <summary>Dispositivo de saída de áudio do Windows (mmdevice) usado SÓ pelo botão Preview deste Deck — Sprint Preview-Isolado (2026-08-15), separado de <see cref="AudioDeviceId"/> de propósito (conferir um clipe sem que o áudio saia pela placa principal/transmissão). Nulo = padrão do sistema.</summary>
-    public string? PreviewAudioDeviceId { get; set; }
 
     public bool VMixEnabled { get; set; }
 
@@ -77,4 +74,19 @@ public sealed class DeckSettingsSnapshot
 
     /// <summary>Texto mandado pro destino acima quando este Deck termina — fim natural (sem loop) OU Stop manual, os dois convergem aqui (decisão explícita do usuário: mesmo critério de "terminar" já usado no resto do programa pra retomar a Cartucheira). Vazio = nenhum comando configurado ainda.</summary>
     public string OutboundUdpOnEndCommand { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Sprint Áudio-Unificado (2026-09-15): mesma ideia de <see cref="OutboundUdpOnPlayCommand"/>,
+    /// só que pro botão Preview deste Deck — usa o MESMO toggle/destino
+    /// (<see cref="OutboundUdpEnabled"/>/<see cref="OutboundUdpHost"/>/<see cref="OutboundUdpPort"/>)
+    /// já configurado pro Play/Fim, só o texto muda. Motivo de existir: agora que Play e Preview usam
+    /// a mesma placa de áudio (ver <c>Core.Deck.AudioDeviceId</c>), a mesa/console externa que o
+    /// usuário está desenvolvendo precisa de um jeito de saber QUAL dos dois está tocando, pra decidir
+    /// ela mesma a rota física do áudio (ex.: mandar pro ar ou só pro monitor). Vazio = nenhum aviso
+    /// configurado ainda.
+    /// </summary>
+    public string OutboundUdpOnPreviewCommand { get; set; } = string.Empty;
+
+    /// <summary>Texto mandado pro destino acima quando o Preview deste Deck termina — fim natural (sem loop) OU Stop manual, mesmo critério de "terminar" já usado por <see cref="OutboundUdpOnEndCommand"/>. Vazio = nenhum aviso configurado ainda.</summary>
+    public string OutboundUdpOnPreviewEndCommand { get; set; } = string.Empty;
 }

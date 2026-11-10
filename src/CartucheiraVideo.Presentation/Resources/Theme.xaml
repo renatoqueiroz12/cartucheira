@@ -70,6 +70,50 @@
          usuário quiser outro tom. -->
     <SolidColorBrush x:Key="Brush.ErrorDark" Color="#FF8C3A3A" />
 
+    <!-- ===================== Gradientes vívidos — Play/Pause/Stop do Deck (Sprint Mockup-v9-Deck-Buttons, 2026-09-21) =====================
+         Pedido explícito do usuário ("play, pause e stop são os principais botões, use cores mais
+         vivas") — validado ao longo de várias rodadas do mockup HTML v9 antes desta implementação
+         real. Em vez de tocar em Brush.Green/Brush.Red/Brush.Amber (usados em vários outros lugares —
+         status dots do vMix/Resolume, barra de RAM, borda de Deck pausado — e que NÃO fizeram parte
+         da aprovação deste mockup), estes são recursos novos, exclusivos dos três botões principais
+         de transporte. Cada um é um LinearGradientBrush (topo mais claro -> base mais escura, 180°),
+         igual ao efeito do mockup aprovado; DynamicResource como todo Brush.* do tema (regra da
+         Sprint 7), então continuam trocáveis num tema futuro sem mexer em XAML de tela. -->
+    <LinearGradientBrush x:Key="Brush.PlayGradient" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#FF1FDB6D" Offset="0" />
+        <GradientStop Color="#FF0FA855" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="Brush.PauseGradient" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#FFFFC229" Offset="0" />
+        <GradientStop Color="#FFF5A100" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="Brush.StopGradient" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#FFFF4557" Offset="0" />
+        <GradientStop Color="#FFE01F35" Offset="1" />
+    </LinearGradientBrush>
+
+    <!-- ===================== Cor nos botões secundários do Deck (Sprint Mockup-v9-Ajustes-Pós-Teste, 2026-09-21) =====================
+         Pedido explícito do usuário depois de rodar a v1.0.49 de verdade: "vamos colocar cor nos
+         outros botoes dos deck nao deixar preto" — Clear/Loop/Next/Preview estavam todos no mesmo
+         cinza neutro (Brush.Bg4), lendo como "preto". Cada um ganha uma cor de identidade própria,
+         sempre num tom SUAVE (fundo translúcido ~14% + borda ~40%, ícone/texto sólido) pra não
+         competir com o Play/Pause/Stop (que continuam sendo os três com preenchimento sólido/vívido
+         — "os principais botões", pedido original da rodada #1 do mockup). Violeta e ciano são cores
+         novas de uso geral (antes só existiam como Brush.Pad.Purple/Brush.Pad.Cyan, específicas da
+         Botoneira) — mesmos valores exatos, reaproveitados aqui pra manter a paleta consistente em
+         vez de inventar um tom novo. -->
+    <SolidColorBrush x:Key="Brush.Violet" Color="#FF8B5CF6" />
+    <SolidColorBrush x:Key="Brush.Cyan" Color="#FF06B6D4" />
+
+    <SolidColorBrush x:Key="Brush.RedSoft" Color="#24D84545" />
+    <SolidColorBrush x:Key="Brush.RedLine" Color="#66D84545" />
+    <SolidColorBrush x:Key="Brush.VioletSoft" Color="#248B5CF6" />
+    <SolidColorBrush x:Key="Brush.VioletLine" Color="#668B5CF6" />
+    <SolidColorBrush x:Key="Brush.BlueSoft" Color="#242D7DFF" />
+    <SolidColorBrush x:Key="Brush.BlueLine" Color="#662D7DFF" />
+    <SolidColorBrush x:Key="Brush.CyanSoft" Color="#2406B6D4" />
+    <SolidColorBrush x:Key="Brush.CyanLine" Color="#6606B6D4" />
+
     <!-- ===================== Cores da Botoneira (exceção à paleta reduzida — mockup v4/v5/v7) =====================
          Blue/Red/Green/Amber realinhados aos valores exatos da especificação visual (Sprint 7), pra a
          Botoneira usar a mesma base de cor do resto da aplicação. Purple/Pink/Cyan são só da Botoneira —
@@ -408,33 +452,64 @@
         </Setter>
     </Style>
 
-    <!-- Slider: trilho escuro, polegar simples. -->
+    <!-- Slider: trilho escuro, sem polegar visível.
+         Sprint Deck-Seek-Bar-Fix (2026-09-15): trilho 4px -> 6px e polegar 12px -> 16px, a pedido do
+         usuário ("aumentar um pouco essa barra").
+         Sprint Mockup-v9-Deck-Buttons (2026-09-21): trilho 6px -> 12px e o polegar (bolinha azul)
+         SAIU visualmente — pedido explícito do usuário no mockup aprovado ("barra ta muito fininha e
+         a bolinha redonda nela tb tira, deixa só barra e possibilidade de ir com o mouse andando").
+         O Thumb continua existindo no template (Fill Transparent, mesmo tamanho de antes) em vez de
+         virar Visibility="Collapsed": o WPF resolve clique-em-qualquer-ponto-do-Track
+         (IsMoveToPointEnabled) e o arraste contínuo capturando o mouse NO PRÓPRIO Thumb por baixo dos
+         panos — removê-lo da árvore visual (Collapsed) quebraria esse mecanismo; só ficar invisível
+         (Transparent) entrega exatamente o pedido (sem bolinha visível, arraste continua funcionando
+         em qualquer ponto da barra) sem mexer no code-behind de seek (MainWindow.xaml.cs,
+         inalterado). Único Slider do projeto (a barra de execução do Deck), então este estilo global
+         é seguro de ajustar sem afetar mais nada. -->
     <Style x:Key="Theme.SliderThumb" TargetType="{x:Type Thumb}">
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Thumb}">
-                    <Ellipse Width="12" Height="12" Fill="{DynamicResource Brush.Blue}" />
+                    <Ellipse Width="16" Height="16" Fill="Transparent" />
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
     </Style>
 
     <Style TargetType="{x:Type Slider}">
+        <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Slider}">
                     <Grid VerticalAlignment="Center">
-                        <Border Height="4" Background="{DynamicResource Brush.Bg5}" CornerRadius="2" />
+                        <Border Height="12" Background="{DynamicResource Brush.Bg5}" CornerRadius="6" />
                         <Track x:Name="PART_Track">
                             <Track.DecreaseRepeatButton>
-                                <RepeatButton Background="{DynamicResource Brush.Blue}" Height="4">
+                                <RepeatButton Background="{DynamicResource Brush.Blue}" Height="12">
                                     <RepeatButton.Template>
                                         <ControlTemplate TargetType="{x:Type RepeatButton}">
-                                            <Border Background="{DynamicResource Brush.Blue}" Height="4" CornerRadius="2" />
+                                            <Border Background="{DynamicResource Brush.Blue}" Height="12" CornerRadius="6" />
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
                             </Track.DecreaseRepeatButton>
+                            <!-- Sprint Deck-Seek-Bar (2026-09-12): faltava este lado — sem ele, o Track nao tinha
+                                 nenhum elemento clicavel a DIREITA do polegar (o Border de fundo, sozinho, nao conta
+                                 como parte do Track pra fins de clique-pra-mover/IsMoveToPointEnabled). So existia
+                                 problema agora porque nenhum Slider deste projeto era interativo antes desta sprint
+                                 (o unico uso ate aqui era puramente visual, decorativo, nunca clicado de verdade).
+                                 Background Transparent (nao ausente) de proposito: uma Brush transparente ainda
+                                 registra hit-test no WPF, a AUSENCIA de Background que nao registra — deixa o Border
+                                 cinza de fundo (Brush.Bg5) aparecer por baixo normalmente. -->
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Background="Transparent" Height="12">
+                                    <RepeatButton.Template>
+                                        <ControlTemplate TargetType="{x:Type RepeatButton}">
+                                            <Border Background="Transparent" Height="12" />
+                                        </ControlTemplate>
+                                    </RepeatButton.Template>
+                                </RepeatButton>
+                            </Track.IncreaseRepeatButton>
                             <Track.Thumb>
                                 <Thumb Style="{StaticResource Theme.SliderThumb}" />
                             </Track.Thumb>

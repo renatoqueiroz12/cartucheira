@@ -2,7 +2,9 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Input;
+using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Core;
+using CartucheiraVideo.Infrastructure.Livewire;
 using CartucheiraVideo.Ndi;
 using CartucheiraVideo.Presentation.Mvvm;
 using Engine = CartucheiraVideo.Engine;
@@ -57,6 +59,21 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// <c>Destination == OutputRouteType.Cartucheira</c> em <see cref="Core.Deck.AutomationActions"/>
 /// (aba Automacao, configurada via <c>DeckSettingsViewModel.OnPlayDestinationOptions</c>) — mesmo
 /// vocabulario ja usado pra vMix/Resolume, em vez de um bool novo e paralelo.
+///
+/// Sprint Livewire-4 (2026-09-14): <see cref="Core.Deck.AudioDeviceId"/> ("Dispositivo de áudio
+/// (Play)" em Configurações) passa a aceitar, além de um dispositivo Windows de verdade, uma Saída
+/// Livewire NATIVA da Cartucheira (valor prefixado <c>"livewire:{Id}"</c>, mesma convenção já usada
+/// por <see cref="AudioBankViewModel.SetOutputDevice"/> pra Vinhetas/Trilhas) — pedido direto do
+/// usuário depois que ligar o Firewall (Sprint NDI-Firewall-Livewire-fix-4, v1.0.27) quebrou o
+/// caminho antigo (Windows tocando pelo driver WDM da Axia IP-Driver, que o hardware Axia converte
+/// em Livewire de verdade por fora do programa). Quando essa opção é escolhida,
+/// <see cref="SetAudioOutputDevice"/> NÃO manda o texto prefixado pro LibVLC (que não saberia o que
+/// fazer com ele) — em vez disso abre/mantém um <see cref="LivewireSender"/> próprio deste Deck
+/// (<see cref="UpdateLivewireSender"/>) e passa a alimentá-lo, a cada bloco de áudio que o Engine já
+/// decodifica de forma independente pro NDI (<see cref="Engine.PlaybackEngine.AudioFrameReady"/>,
+/// mesmo pipeline NAudio da Sprint NDI-audio — nunca o áudio interno do LibVLC/MediaPlayer, que
+/// continua controlando só o monitor local deste computador). Ver
+/// <see cref="ForwardAudioToLivewire"/> pro reempacotamento de tamanho de bloco.
 /// </summary>
 public sealed class DeckViewModel : ViewModelBase, IDisposable
 {
@@ -64,17 +81,52 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     private readonly Action<DeckViewModel> _onPause;
     private readonly Action<DeckViewModel> _onStop;
     private readonly Action<DeckViewModel> _onMediaEnded;
+    private readonly Action<DeckViewModel> _onPreview;
+    private readonly Action<DeckViewModel> _onPreviewEnd;
     private readonly Action<DeckViewModel, string> _onError;
     private readonly Action<string> _onStatus;
     private readonly Engine.PlaybackEngine _engine;
     private readonly NdiSender? _ndiSender;
+    private readonly Func<string, LivewireOutputSettings?> _resolveLivewireOutput;
+    private readonly Func<string?> _getLivewireNetworkInterfaceIp;
+    private LivewireSender? _livewireSender;
+    private string? _livewireOutputId;
+    private string? _livewireNetworkInterfaceIp;
 
     private string _loadedFileName = "Vazio";
     private string? _loadedFilePath;
     private DeckPlaybackState _state = DeckPlaybackState.Cue;
     private double _progress;
     private string _currentTime = "00:00";
+
+    /// <summary>
+    /// Sprint Deck-Seek-Bar-Fix (2026-09-15): verdadeiro enquanto o operador estiver com o botão do
+    /// mouse pressionado sobre a barra de execução (<see cref="BeginSeekDrag"/>/
+    /// <see cref="EndSeekDrag"/>, chamados pelo code-behind em MainWindow.xaml.cs). Usado só por
+    /// <see cref="OnEnginePositionChanged"/> pra CONGELAR Progress/CurrentTime/RemainingTime enquanto
+    /// dura o arraste — causa raiz real do bug reportado ("a barra não deixa voltar"): o Value da
+    /// barra é ligado (Mode=OneWay) direto em Progress, e um tick real de posição chegando NO MEIO
+    /// do arraste sobrescrevia a posição que o operador estava escolhendo com a posição real de
+    /// reprodução (que só anda pra frente) — empurrando a barra de volta pra frente e brigando com
+    /// qualquer arrasto pra TRÁS especificamente (um arrasto pra frente era mascarado pelo mesmo
+    /// empurrão, por isso o sintoma só aparecia indo pra trás).
+    /// </summary>
+    private bool _isSeekDragging;
     private string _remainingTime = "--:--";
+
+    /// <summary>
+    /// Sprint Deck-Seek-Bar (2026-09-12): duracao total conhecida do arquivo carregado — vem do
+    /// MESMO <see cref="Engine.EnginePositionChangedEventArgs.Duration"/> que ja alimentava
+    /// <see cref="RemainingTime"/>, so que guardada aqui tambem (nao existia como campo antes desta
+    /// sprint) pra <see cref="SeekToProgress"/> poder converter um percentual (0-100, vindo do
+    /// controle deslizante da Presentation) de volta pra um <see cref="TimeSpan"/> concreto sem
+    /// precisar esperar o proximo evento do Engine. Nula enquanto a duracao real nao for conhecida
+    /// (arquivo ainda carregando, ou sem duracao valida) — mesmo estado "desconhecido" que
+    /// <see cref="RemainingTime"/> ja tratava como "--:--".
+    /// </summary>
+    private TimeSpan? _duration;
+
+    private string _durationDisplay = "--:--";
     private bool _loopEnabled;
     private bool _isDragOver;
 
@@ -100,6 +152,31 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     /// </summary>
     private bool _isPreviewOnly;
 
+    /// <summary>
+    /// Sprint Áudio-Livewire-Duplo-Fix (2026-09-15): guarda o último valor que ESTE ViewModel mandou
+    /// pra <see cref="Engine.PlaybackEngine.SetLocalAudioMuted"/>, pra <see cref="SetAudioOutputDevice"/>
+    /// e <see cref="Preview"/> só chamarem o Engine de novo quando o valor REALMENTE muda — nunca a
+    /// cada Play/Preview redundantemente. Motivo: o usuário reportou que o áudio local do Preview
+    /// passou a engasgar (corta e volta, umas 4 vezes) logo no começo depois da correção do mudo
+    /// (v1.0.30) — suspeita forte é que chamar <c>MediaPlayer.Mute = false</c> (mesmo quando já era
+    /// false, um no-op do ponto de vista do valor) bem no instante em que o LibVLC ainda está
+    /// inicializando o "aout" (mesma janela de instabilidade já documentada em
+    /// <see cref="Engine.PlaybackEngine.SetAudioOutputDevice"/>, pesquisa externa do issue #1119 do
+    /// vlcj) pode empurrar o subsistema de áudio a reconfigurar/reabrir o fluxo, causando esse
+    /// engasgo — mesmo sem NENHUMA mudança real de valor. Reduzir as chamadas ao estritamente
+    /// necessário (só quando o mudo precisa mesmo mudar) é a correção mais segura e conservadora,
+    /// sem tocar em nada mais do mecanismo já existente. Começa em falso (estado real do LibVLC antes
+    /// de qualquer Play/Preview desta instância).
+    /// </summary>
+    private bool _localAudioMuted;
+
+    /// <summary>
+    /// Sprint Livewire-4 (2026-09-14): <paramref name="resolveLivewireOutput"/> e
+    /// <paramref name="getLivewireNetworkInterfaceIp"/> são novos — o MainViewModel os passa (mesmas
+    /// duas funções já injetadas em cada <see cref="AudioBankViewModel"/>) pra este Deck poder
+    /// resolver uma Saída Livewire selecionada sem precisar conhecer a lista completa configurada em
+    /// Configurações nem a interface de rede escolhida; ver <see cref="UpdateLivewireSender"/>.
+    /// </summary>
     public DeckViewModel(
         string name,
         LibVLC libVlc,
@@ -108,7 +185,11 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         Action<DeckViewModel> onStop,
         Action<DeckViewModel> onMediaEnded,
         Action<DeckViewModel, string> onError,
-        Action<string> onStatus)
+        Action<string> onStatus,
+        Func<string, LivewireOutputSettings?> resolveLivewireOutput,
+        Func<string?> getLivewireNetworkInterfaceIp,
+        Action<DeckViewModel>? onPreview = null,
+        Action<DeckViewModel>? onPreviewEnd = null)
     {
         ArgumentNullException.ThrowIfNull(libVlc);
 
@@ -137,6 +218,15 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         _onError = onError ?? throw new ArgumentNullException(nameof(onError));
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
 
+        // Sprint Áudio-Unificado (2026-09-15): onPreview/onPreviewEnd são opcionais (default no-op)
+        // pra não quebrar nenhum outro lugar que ainda construa um DeckViewModel sem eles — o
+        // MainViewModel de verdade sempre passa os dois (ver construtor), pra mandar os avisos UDP
+        // novos de "Preview iniciou"/"Preview terminou" pra mesa/console externa.
+        _onPreview = onPreview ?? (_ => { });
+        _onPreviewEnd = onPreviewEnd ?? (_ => { });
+        _resolveLivewireOutput = resolveLivewireOutput ?? throw new ArgumentNullException(nameof(resolveLivewireOutput));
+        _getLivewireNetworkInterfaceIp = getLivewireNetworkInterfaceIp ?? throw new ArgumentNullException(nameof(getLivewireNetworkInterfaceIp));
+
         _engine = new Engine.PlaybackEngine(libVlc);
         _engine.StateChanged += OnEngineStateChanged;
         _engine.PositionChanged += OnEnginePositionChanged;
@@ -155,9 +245,6 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
             var ndiName = !string.IsNullOrWhiteSpace(DomainDeck.NdiChannelName) ? DomainDeck.NdiChannelName! : Name;
             _ndiSender = new NdiSender(ndiName);
             _engine.FrameReady += OnEngineFrameReady;
-            // Sprint NDI-audio (2026-08-11): mesmo canal NDI, agora tambem carregando audio — mesma
-            // ligacao direta (sem RunOnUiThread) do FrameReady acima, pelo mesmo motivo de latencia.
-            _engine.AudioFrameReady += OnEngineAudioFrameReady;
         }
         catch (Exception ex)
         {
@@ -168,6 +255,18 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
             _ndiSender = null;
             _onStatus($"{Name}: NDI indisponivel ({ex.Message})");
         }
+
+        // Sprint NDI-audio (2026-08-11): mesmo canal NDI, agora tambem carregando audio — mesma
+        // ligacao direta (sem RunOnUiThread) do FrameReady acima, pelo mesmo motivo de latencia.
+        //
+        // Sprint Livewire-4 (2026-09-14): esta assinatura SAIU do try/catch acima de proposito —
+        // AudioFrameReady agora tem DOIS consumidores possiveis dentro de OnEngineAudioFrameReady, o
+        // NdiSender (so quando NDI estiver disponivel, ver acima) e o LivewireSender deste Deck (so
+        // quando uma Saida Livewire estiver selecionada, ver UpdateLivewireSender) — os dois ja sao
+        // null-safe sozinhos ali dentro. Antes desta sprint, uma maquina sem NDI instalado tambem
+        // ficava sem Livewire nativo no Deck, sem nenhum aviso honesto sobre o motivo — bug real
+        // corrigido junto com esta sprint, nao so uma limpeza cosmetica.
+        _engine.AudioFrameReady += OnEngineAudioFrameReady;
 
         PlayCommand = new RelayCommand(_ => Play(), _ => HasVideo && State != DeckPlaybackState.Playing);
         PauseCommand = new RelayCommand(_ => Pause(), _ => State == DeckPlaybackState.Playing);
@@ -190,16 +289,17 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         // honesto sobre nao fazer nada ainda, igual ao OpenSettingsCommand.
         NextCommand = new RelayCommand(_ => _onStatus($"{Name}: avancar pra proxima midia da Playlist ainda nao implementado."));
 
-        // Preview (mockup v8, notas #8/#10; reescrito na Sprint Preview-Isolado, 2026-08-15): usa a
-        // MESMA area de video que ja existe neste card (a que o comentario original chamava de "tela
-        // cheia deste Deck") — nao existe janela separada, decisao confirmada com o usuario. O que
-        // mudou de verdade e o que acontece por tras: Preview agora e um metodo proprio (ver
-        // Preview()), NAO chama mais Play() — nao alimenta o player de captura NDI, nao dispara o
-        // callback onPlay (logo, nao pausa a Cartucheira, nao manda aviso UDP pro mesa, nao espelha
-        // pro Deck 2) e usa uma placa de audio propria (PreviewAudioDeviceId), separada da placa
-        // principal do Deck. E a distincao real "so conferir x ir ao ar" que o comentario antigo
-        // dizia so fazer sentido quando o NDI existisse — o NDI existe desde a Sprint NDI, e agora o
-        // Preview de fato fica de fora dele.
+        // Preview (mockup v8, notas #8/#10; reescrito na Sprint Preview-Isolado, 2026-08-15, e de
+        // novo na Sprint Áudio-Unificado, 2026-09-15): usa a MESMA area de video que ja existe neste
+        // card (a que o comentario original chamava de "tela cheia deste Deck") — nao existe janela
+        // separada, decisao confirmada com o usuario. O que mudou de verdade e o que acontece por
+        // tras: Preview agora e um metodo proprio (ver Preview()), NAO chama mais Play() — nao
+        // alimenta o player de captura NDI, nao dispara o callback onPlay (logo, nao pausa a
+        // Cartucheira, nao espelha pro Deck 2). Desde a Sprint Áudio-Unificado, Preview usa a MESMA
+        // placa de audio do Play (o campo separado PreviewAudioDeviceId foi removido) e manda seu
+        // proprio aviso UDP dedicado (onPreview/onPreviewEnd) pra mesa/console externa. E a distincao
+        // real "so conferir x ir ao ar" que o comentario antigo dizia so fazer sentido quando o NDI
+        // existisse — o NDI existe desde a Sprint NDI, e o Preview continua de fato fora dele.
         PreviewCommand = new RelayCommand(_ => Preview(), _ => HasVideo && State != DeckPlaybackState.Playing);
 
         // Auto/Manual (mockup v8, nota #13): cada Deck decide se aceita receber o proximo item da
@@ -406,6 +506,19 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         private set => SetProperty(ref _progress, value);
     }
 
+    /// <summary>
+    /// Sprint Deck-Seek-Bar (2026-09-12): duracao TOTAL do arquivo carregado, formatada "mm:ss" —
+    /// "--:--" enquanto desconhecida (mesmo padrao ja usado por <see cref="CurrentTime"/>/
+    /// <see cref="RemainingTime"/>). Usuario pediu explicitamente pra "mostrar tambem o timeframe"
+    /// junto com a barra de avanco nova — antes desta sprint so existia tempo decorrido e tempo
+    /// restante, nunca a duracao total do arquivo.
+    /// </summary>
+    public string DurationDisplay
+    {
+        get => _durationDisplay;
+        private set => SetProperty(ref _durationDisplay, value);
+    }
+
     /// <summary>Realce visual "solte aqui" durante um arraste do Explorer sobre este Deck.</summary>
     public bool IsDragOver
     {
@@ -459,6 +572,15 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         _loadedFilePath = filePath;
         LoadedFileName = Path.GetFileName(filePath);
         _engine.Load(filePath);
+
+        // Sprint NDI-Frame-Rate-Real (2026-09-16): repassa o frame rate REAL detectado pelo Engine
+        // (ComputeLetterboxSize, mesmo parse ja usado pra resolucao/orientacao) pro NdiSender deste
+        // Deck — antes desta sprint, TODO Load mandava pro NDI o metadado fixo 30000/1000 (30,000fps
+        // exatos), errado pra qualquer arquivo que nao fosse exatamente isso (a maioria do conteudo
+        // de transmissao real e 29,97/59,94fps). Sem efeito se este Deck nao tiver NdiSender (NDI
+        // indisponivel nesta maquina, ver construtor).
+        var (frameRateNum, frameRateDen) = _engine.VideoFrameRate;
+        _ndiSender?.SetFrameRate(frameRateNum, frameRateDen);
     }
 
     /// <summary>
@@ -468,8 +590,122 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     /// repassando pro Engine (<see cref="Engine.PlaybackEngine.SetAudioOutputDevice"/>, que também
     /// documenta a limitação honesta de reverter pro padrão do sistema). Nunca afeta o áudio que já
     /// vai pro NDI — caminho totalmente separado.
+    ///
+    /// Sprint Livewire-4 (2026-09-14): <paramref name="deviceId"/> agora também aceita o valor
+    /// prefixado <c>"livewire:{Id}"</c> de uma Saída Livewire nativa (ver comentário de classe) — esse
+    /// caso NUNCA chega no LibVLC (<see cref="Engine.PlaybackEngine.SetAudioOutputDevice"/> não sabe
+    /// interpretar o prefixo, e mandar pra lá arriscaria um comportamento não documentado da libvlc
+    /// com um id de dispositivo inexistente); em vez disso só abre/atualiza
+    /// <see cref="_livewireSender"/> via <see cref="UpdateLivewireSender"/>. Trocar de uma Saída
+    /// Livewire DE VOLTA pra um dispositivo Windows (ou "Padrão do sistema") tem a mesma limitação
+    /// honesta já documentada acima — só some de verdade reiniciando o programa, já que o pedido
+    /// Windows anterior (se houver) nunca chegou a ser desfeito no LibVLC.
     /// </summary>
-    public void SetAudioOutputDevice(string? deviceId) => _engine.SetAudioOutputDevice(deviceId);
+    public void SetAudioOutputDevice(string? deviceId)
+    {
+        var isLivewire = deviceId is not null && deviceId.StartsWith(Engine.AudioEngine.ExternalOutputPrefix, StringComparison.Ordinal);
+
+        UpdateLivewireSender(isLivewire ? deviceId : null);
+
+        // Sprint Áudio-Livewire-Duplo (2026-09-15): quando a saída escolhida é uma Saída Livewire
+        // nativa, o monitor local (alto-falantes/placa da própria máquina) precisa ficar MUDO — sem
+        // isto, o operador ouve a MESMA reprodução duas vezes ao mesmo tempo: uma vez pelos
+        // alto-falantes locais (o LibVLC nunca fica sabendo que devia ficar quieto, já que um id de
+        // Saída Livewire nunca chega até ele, ver bloco abaixo) e outra pela mesa/console via
+        // Livewire — o áudio de verdade, que deveria ser o único caminho. Ver
+        // Engine.PlaybackEngine.SetLocalAudioMuted pro diagnóstico completo. Voltar pra um
+        // dispositivo Windows normal (isLivewire = false) desliga o mudo de novo.
+        //
+        // Sprint Áudio-Livewire-Duplo-Fix (2026-09-15): SÓ chama o Engine quando o mudo REALMENTE
+        // precisa mudar (ver comentário de _localAudioMuted) — evita empurrar
+        // MediaPlayer.Mute a cada Play/Preview, mesmo quando o valor já é o mesmo de antes.
+        SetLocalAudioMutedIfChanged(isLivewire);
+
+        if (!isLivewire)
+        {
+            _engine.SetAudioOutputDevice(deviceId);
+        }
+    }
+
+    /// <summary>
+    /// Sprint Áudio-Livewire-Duplo-Fix (2026-09-15): ver comentário de <see cref="_localAudioMuted"/>
+    /// pro diagnóstico completo — só repassa pro Engine quando o valor pedido é diferente do último
+    /// que este ViewModel já mandou, pra nunca chamar <c>MediaPlayer.Mute</c> redundantemente durante
+    /// a janela de inicialização do "aout" do LibVLC (suspeita da causa do engasgo reportado no
+    /// Preview logo após a correção do mudo).
+    /// </summary>
+    private void SetLocalAudioMutedIfChanged(bool muted)
+    {
+        if (_localAudioMuted == muted)
+        {
+            return;
+        }
+
+        _localAudioMuted = muted;
+        _engine.SetLocalAudioMuted(muted);
+    }
+
+    /// <summary>
+    /// Sprint Livewire-4 (2026-09-14): cria/recria/desliga o <see cref="LivewireSender"/> deste Deck
+    /// conforme o dispositivo configurado agora — mesmo padrão (e mesma lógica) já usado por
+    /// <see cref="AudioBankViewModel.UpdateLivewireSender"/> pra Vinhetas/Trilhas. Só abre/fecha o
+    /// socket; quem decide QUANDO mandar cada bloco é sempre <see cref="ForwardAudioToLivewire"/>,
+    /// chamado de dentro de <see cref="OnEngineAudioFrameReady"/>.
+    /// </summary>
+    private void UpdateLivewireSender(string? livewireDeviceId)
+    {
+        if (livewireDeviceId is null)
+        {
+            DisposeLivewireSender();
+            return;
+        }
+
+        var outputId = livewireDeviceId.Substring(Engine.AudioEngine.ExternalOutputPrefix.Length);
+        var output = _resolveLivewireOutput(outputId);
+
+        if (output is null)
+        {
+            // Saída referenciada não existe mais (apagada em Configurações depois de já selecionada
+            // aqui) — fica honestamente sem transmitir nada em vez de adivinhar um canal.
+            DisposeLivewireSender();
+            _onStatus($"{Name}: a Saída Livewire selecionada não existe mais — nada será transmitido até escolher outra em Configurações.");
+            return;
+        }
+
+        var networkInterfaceIp = _getLivewireNetworkInterfaceIp();
+
+        if (_livewireSender is not null
+            && _livewireOutputId == outputId
+            && _livewireSender.Channel == output.Channel
+            && _livewireNetworkInterfaceIp == networkInterfaceIp)
+        {
+            // Nada mudou desde o último Start — não vale a pena derrubar e reabrir o socket à toa
+            // (ex.: Configurações salva de novo sem nenhuma edição real neste Deck).
+            return;
+        }
+
+        DisposeLivewireSender();
+
+        var sender = new LivewireSender(output.Channel);
+        if (!sender.Start(networkInterfaceIp))
+        {
+            _onStatus($"{Name}: não foi possível iniciar a Saída Livewire \"{output.Name}\" (canal {output.Channel}): {sender.LastError}.");
+            sender.Dispose();
+            return;
+        }
+
+        _livewireSender = sender;
+        _livewireOutputId = outputId;
+        _livewireNetworkInterfaceIp = networkInterfaceIp;
+    }
+
+    private void DisposeLivewireSender()
+    {
+        _livewireSender?.Dispose();
+        _livewireSender = null;
+        _livewireOutputId = null;
+        _livewireNetworkInterfaceIp = null;
+    }
 
     private void Play()
     {
@@ -479,29 +715,57 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         }
 
         _isPreviewOnly = false;
-
-        // Reafirma a placa PRINCIPAL antes de tocar (Sprint Preview-Isolado, 2026-08-15) — garante
-        // que um Play real nunca "herda" a placa configurada pro Preview, mesmo se um Preview tiver
-        // rodado neste Deck um instante antes. Necessario porque o LibVLC nao garante um jeito de
-        // "reverter" pro dispositivo padrao sozinho (mesma limitacao ja documentada em
-        // Engine.PlaybackEngine.SetAudioOutputDevice) — reafirmar explicitamente a cada Play/Preview
-        // e o jeito seguro e ja confirmado contra a API real.
-        _engine.SetAudioOutputDevice(DomainDeck.AudioDeviceId);
-
         _audioNdiDiagnosticShown = false;
         _engine.Play();
+
+        // Sprint Áudio-Dispositivo-Fix (2026-09-13): chamar SetAudioOutputDevice DEPOIS de Play()
+        // (nao antes, como era ate a v1.0.13) foi o primeiro passo — mas o usuario confirmou que
+        // resolvia so no PRIMEIRO Play da sessao; um Play seguinte (depois de um Stop) continuava
+        // caindo na placa padrao do Windows. Causa real: o LibVLC destroi/recria seu objeto interno
+        // de saida de audio ("aout") tambem no Stop, entao a mera ordem das chamadas aqui nunca foi
+        // garantia nenhuma, so timing favoravel no primeiro ciclo. Corrigido de forma robusta DENTRO
+        // de <see cref="Engine.PlaybackEngine.SetAudioOutputDevice"/> (Sprint Áudio-Dispositivo-Fix-2,
+        // mesmo dia): o Engine guarda o pedido e reaplica sozinho a cada vez que a reproducao REALMENTE
+        // comeca (evento <c>MediaPlayer.Playing</c>), nao importa quantos Stop/Play acontecerem. A
+        // chamada aqui continua reafirmando a placa PRINCIPAL a cada Play — mesma razao de sempre
+        // (Sprint Preview-Isolado, 2026-08-15): garantir que um Play real nunca "herda" a placa
+        // configurada pro Preview — so que agora a garantia de que ela realmente "pega" vem do Engine,
+        // nao da ordem desta chamada.
+        //
+        // Sprint Livewire-4 (2026-09-14): passou a chamar SetAudioOutputDevice (o wrapper deste
+        // ViewModel, de baixo) em vez de _engine.SetAudioOutputDevice direto — precisa passar pelo
+        // wrapper pra tambem reabrir/confirmar o LivewireSender a cada novo Play, quando
+        // DomainDeck.AudioDeviceId apontar pra uma Saida Livewire nativa (ver UpdateLivewireSender,
+        // que ja e barato/idempotente se nada mudou desde o Play anterior).
+        SetAudioOutputDevice(DomainDeck.AudioDeviceId);
+
         _onPlay(this);
     }
 
     /// <summary>
-    /// Sprint Preview-Isolado (2026-08-15): conferir um arquivo carregado sem nada sair da maquina —
-    /// toca SO no player de tela (<see cref="Engine.PlaybackEngine.PlayPreviewOnly"/>, nao alimenta o
-    /// NDI), usa a placa de audio propria do Preview (<see cref="Core.Deck.PreviewAudioDeviceId"/>,
-    /// separada da placa principal) e NUNCA chama <see cref="_onPlay"/> — logo nunca pausa a
-    /// Cartucheira, nunca manda aviso UDP pro mesa, nunca espelha pro Deck 2 (tudo isso mora dentro
-    /// do callback onPlay do MainViewModel). <see cref="_isPreviewOnly"/> registra que esta sessao
-    /// foi assim, pra <see cref="Stop"/>/<see cref="Clear"/>/<see cref="OnEngineMediaEnded"/> saberem
-    /// que tambem nao devem notificar nada quando ela acabar.
+    /// Sprint Preview-Isolado (2026-08-15), revisada na Sprint Áudio-Unificado (2026-09-15): conferir
+    /// um arquivo carregado sem alimentar o NDI — toca SO no player de tela
+    /// (<see cref="Engine.PlaybackEngine.PlayPreviewOnly"/>) e NUNCA chama <see cref="_onPlay"/> —
+    /// logo nunca pausa a Cartucheira nem espelha pro Deck 2 (isso mora dentro do callback onPlay do
+    /// MainViewModel). <see cref="_isPreviewOnly"/> registra que esta sessao foi assim, pra
+    /// <see cref="Stop"/>/<see cref="Clear"/>/<see cref="OnEngineMediaEnded"/> saberem que devem
+    /// notificar <see cref="_onPreviewEnd"/> (nao <see cref="_onStop"/>/<see cref="_onMediaEnded"/>)
+    /// quando ela acabar.
+    ///
+    /// Sprint Áudio-Unificado (2026-09-15): o campo separado <c>PreviewAudioDeviceId</c> foi REMOVIDO
+    /// (ver comentario completo em <see cref="Core.Deck.AudioDeviceId"/>) — Preview agora usa a MESMA
+    /// placa configurada pro Play, atraves do MESMO wrapper <see cref="SetAudioOutputDevice"/> que o
+    /// Play usa (antes chamava <c>_engine.SetAudioOutputDevice</c> direto, ignorando o wrapper de
+    /// proposito). Duas consequencias diretas da decisao do usuario: (1) se a placa unica configurada
+    /// for uma Saida Livewire nativa, o Preview agora sai por ela tambem — deixa de ser 100% isolado
+    /// do ar nesse caso especifico; (2) some a classe inteira de bugs de "toca nas duas placas ao
+    /// mesmo tempo" que motivou o revert de emergencia da v1.0.33 — Play e Preview nunca mais pedem
+    /// dispositivos DIFERENTES ao Engine, entao a tarefa de reforco assincrona
+    /// (Engine.PlaybackEngine.ReapplyAudioOutputDeviceAsync) nunca mais reaplica um id de dispositivo
+    /// "velho" de uma sessao anterior por cima da sessao atual (ela desiste sozinha quando o id pedido
+    /// muda — ver o guard <c>_pendingAudioDeviceId != deviceId</c> la dentro). <see cref="_onPreview"/>
+    /// (novo) avisa o MainViewModel que um Preview comecou, so pra mandar o aviso UDP dedicado pra
+    /// mesa/console externa (nunca pausa Cartucheira, nunca espelha Deck 2, nunca alimenta NDI).
     /// </summary>
     private void Preview()
     {
@@ -511,10 +775,16 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         }
 
         _isPreviewOnly = true;
-        _engine.SetAudioOutputDevice(DomainDeck.PreviewAudioDeviceId);
         _audioNdiDiagnosticShown = false;
         _engine.PlayPreviewOnly();
-        _onStatus($"{Name}: preview de \"{LoadedFileName}\" (local — sem NDI, sem comandos).");
+
+        // Sprint Áudio-Unificado (2026-09-15): passa pelo MESMO wrapper que Play() usa — decide mudo/
+        // Livewire/dispositivo Windows a partir da MESMA placa unica configurada (DomainDeck.AudioDeviceId),
+        // em vez de chamar _engine.SetAudioOutputDevice direto com uma placa separada de Preview.
+        SetAudioOutputDevice(DomainDeck.AudioDeviceId);
+
+        _onStatus($"{Name}: preview de \"{LoadedFileName}\" (local — sem NDI).");
+        _onPreview(this);
     }
 
     private void Pause()
@@ -534,8 +804,11 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         {
             // Sprint Preview-Isolado (2026-08-15): uma sessao que nunca foi "ao vivo" (Preview) nao
             // pode terminar mandando avisos de "ao vivo terminou" — ver _onStop em OnDeckStop
-            // (MainViewModel), que retoma a Cartucheira e manda o aviso UDP de Fim pra mesa.
+            // (MainViewModel), que retoma a Cartucheira e manda o aviso UDP de Fim pra mesa. Sprint
+            // Áudio-Unificado (2026-09-15): _onPreviewEnd (novo) manda so o aviso UDP dedicado de
+            // "Preview terminou" — nunca retoma Cartucheira, nunca e o mesmo aviso do Play/Fim.
             _onStatus($"{Name}: preview parado.");
+            _onPreviewEnd(this);
         }
         else
         {
@@ -572,6 +845,12 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         {
             _onStop(this);
         }
+        else
+        {
+            // Sprint Áudio-Unificado (2026-09-15): Clear no meio de um Preview tambem conta como
+            // "Preview terminou" pra mesa/console externa — mesma ressalva de Stop acima.
+            _onPreviewEnd(this);
+        }
 
         _onStatus($"{Name}: limpo.");
     }
@@ -602,6 +881,14 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         Progress = 0;
         CurrentTime = "00:00";
         RemainingTime = "--:--";
+
+        // Sprint Deck-Seek-Bar (2026-09-12): sem isso, um Deck que ja tocou e voltou pro Cue
+        // manteria a duracao do arquivo anterior guardada, permitindo um SeekToProgress "fantasma"
+        // (calculando uma posicao dentro de uma duracao que nao é mais a do que esta carregado agora
+        // — na pratica so importa entre um Stop e o proximo PositionChanged real, mas honesto reset
+        // por completo em vez de deixar estado obsoleto por ai).
+        _duration = null;
+        DurationDisplay = "--:--";
     }
 
     /// <summary>Notifica IsOnAir/IsLocalOnly sempre que State, SendToVMix ou SendToResolume mudam — são todos derivados dos três.</summary>
@@ -663,19 +950,92 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     {
         RunOnUiThread(() =>
         {
-            CurrentTime = e.Position.ToString(@"mm\:ss");
+            _duration = e.Duration;
 
-            if (e.Duration is { } duration && duration > TimeSpan.Zero)
+            if (_isSeekDragging)
             {
-                var remaining = duration - e.Position;
-                RemainingTime = (remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero).ToString(@"mm\:ss");
-                Progress = Math.Clamp(e.Position.TotalMilliseconds / duration.TotalMilliseconds * 100, 0, 100);
+                // Sprint Deck-Seek-Bar-Fix (2026-09-15): ignora a posição real enquanto o operador
+                // estiver arrastando a barra — ver comentário de _isSeekDragging. _duration acima
+                // continua atualizado normalmente (não muda com o arraste, e SeekToProgress precisa
+                // dele pra converter percentual em tempo assim que o arraste terminar).
+                return;
             }
-            else
-            {
-                RemainingTime = "--:--";
-            }
+
+            UpdatePositionDisplay(e.Position, e.Duration);
         });
+    }
+
+    /// <summary>
+    /// Sprint Deck-Seek-Bar-Fix (2026-09-15): chamado pelo code-behind quando o operador PRESSIONA o
+    /// botão do mouse sobre a barra de execução — começa a congelar as atualizações reais de posição
+    /// (ver <see cref="_isSeekDragging"/>) até <see cref="EndSeekDrag"/>.
+    /// </summary>
+    public void BeginSeekDrag() => _isSeekDragging = true;
+
+    /// <summary>
+    /// Encerra o congelamento iniciado por <see cref="BeginSeekDrag"/>. Chamado pelo code-behind
+    /// tanto no caminho normal (depois de <see cref="SeekToProgress"/> já ter aplicado o novo ponto
+    /// de forma otimista) quanto como rede de segurança se o arraste for interrompido de forma
+    /// anormal (ex.: a janela perde o foco no meio do arraste, <c>LostMouseCapture</c>) — nesse
+    /// segundo caso nenhum Seek é aplicado, a barra só volta a refletir a posição real de reprodução,
+    /// nunca fica presa congelada pra sempre.
+    /// </summary>
+    public void EndSeekDrag() => _isSeekDragging = false;
+
+    /// <summary>
+    /// Sprint Deck-Seek-Bar (2026-09-12): logica de formatacao/calculo compartilhada entre
+    /// <see cref="OnEnginePositionChanged"/> (posicao real, reportada pelo Engine) e
+    /// <see cref="SeekToProgress"/> (posicao OTIMISTA, calculada localmente logo apos um Seek — ver
+    /// comentario la sobre por que nao esperar o proximo evento do Engine). Sempre chamada na UI
+    /// thread (responsabilidade de quem chama).
+    /// </summary>
+    private void UpdatePositionDisplay(TimeSpan position, TimeSpan? duration)
+    {
+        CurrentTime = position.ToString(@"mm\:ss");
+
+        if (duration is { } d && d > TimeSpan.Zero)
+        {
+            var remaining = d - position;
+            RemainingTime = (remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero).ToString(@"mm\:ss");
+            DurationDisplay = d.ToString(@"mm\:ss");
+            Progress = Math.Clamp(position.TotalMilliseconds / d.TotalMilliseconds * 100, 0, 100);
+        }
+        else
+        {
+            RemainingTime = "--:--";
+            DurationDisplay = "--:--";
+        }
+    }
+
+    /// <summary>
+    /// Sprint Deck-Seek-Bar (2026-09-12): avanca/retrocede a reproducao pra um ponto do arquivo,
+    /// dado como PERCENTUAL (0-100) — o controle deslizante novo na Presentation (MainWindow.xaml,
+    /// code-behind em MainWindow.xaml.cs) le sua propria posicao apos o usuario clicar/arrastar e
+    /// chama este metodo direto (mesmo padrao ja usado por IsDragOver/Load: code-behind chamando a
+    /// ViewModel do Deck certo, resolvido via DataContext). Sem efeito honesto se nao houver video
+    /// carregado ou a duracao ainda for desconhecida (mesma guarda ja usada por
+    /// <see cref="Engine.PlaybackEngine.Seek"/>, reforcada aqui pra nao tentar calcular uma posicao
+    /// sem duracao valida pra converter percentual em tempo).
+    ///
+    /// Atualiza <see cref="Progress"/>/<see cref="CurrentTime"/>/<see cref="RemainingTime"/> de forma
+    /// OTIMISTA, na hora, em vez de esperar o proximo <see cref="Engine.PlaybackEngine.PositionChanged"/>
+    /// (que so chega no proximo tick do LibVLC, alguns quadros depois) — sem isso, a barra ficaria
+    /// visualmente "voltando" pro ponto antigo por um instante ate o Engine confirmar o novo, um
+    /// piscar perceptivel que a prioridade #1 do projeto (Latencia, inclusive percebida na UI) pede
+    /// pra evitar.
+    /// </summary>
+    public void SeekToProgress(double percent)
+    {
+        if (!HasVideo || _duration is not { } duration || duration <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var clampedPercent = Math.Clamp(percent, 0, 100);
+        var target = TimeSpan.FromMilliseconds(duration.TotalMilliseconds * clampedPercent / 100);
+
+        _engine.Seek(target);
+        UpdatePositionDisplay(target, duration);
     }
 
     private void OnEngineMediaEnded(object? sender, EventArgs e)
@@ -692,7 +1052,10 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
 
             if (wasPreviewOnly)
             {
+                // Sprint Áudio-Unificado (2026-09-15): fim natural de um Preview tambem manda o aviso
+                // UDP dedicado (_onPreviewEnd) — mesma ressalva de Stop/Clear acima.
                 _onStatus($"{Name}: preview terminou.");
+                _onPreviewEnd(this);
             }
             else
             {
@@ -714,9 +1077,16 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     /// Repassa o quadro direto pro NdiSender, na MESMA thread do LibVLC que o disparou (SEM
     /// RunOnUiThread) — decisao deliberada: NdiSender.SendFrame nunca toca em estado ligado a
     /// binding do WPF, e marshalar pra UI thread aqui so acrescentaria latencia sem necessidade,
-    /// contra a prioridade #1 do projeto. NDIlib_send_send_video_v2 (variante nao-async usada pelo
-    /// NdiSender) copia o buffer antes de retornar, entao e seguro o Engine reusar o buffer fixo
-    /// assim que este handler retornar.
+    /// contra a prioridade #1 do projeto.
+    ///
+    /// Sprint NDI-video-async (2026-09-11): NdiSender.SendFrame agora usa a variante ASSINCRONA da
+    /// NDI SDK (NDIlib_send_send_video_async_v2) — ela retorna antes de terminar de processar/enviar
+    /// o quadro, entao NAO copia o buffer de forma sincrona como a variante antiga fazia. A
+    /// seguranca aqui vem do Engine, nao mais desta chamada: <see cref="Engine.PlaybackEngine"/>
+    /// alterna entre dois buffers a cada quadro (ver <see cref="Engine.EngineFrameReadyEventArgs"/>),
+    /// entao o buffer que acabou de ser repassado pro NdiSender so volta a ser escrito pelo LibVLC
+    /// dois quadros depois — folga suficiente pro envio assincrono terminar (e, mesmo que nao tenha
+    /// terminado, a propria NDI SDK sincroniza sozinha na chamada seguinte).
     /// </summary>
     private void OnEngineFrameReady(object? sender, Engine.EngineFrameReadyEventArgs e)
     {
@@ -753,6 +1123,50 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         }
 
         _ndiSender?.SendAudioFrame(e.Data, e.SampleRate, e.Channels, e.SampleCount);
+        ForwardAudioToLivewire(e);
+    }
+
+    /// <summary>
+    /// Sprint Livewire-4 (2026-09-14): reempacota o mesmo bloco de áudio (480 amostras/canal, ver
+    /// <c>Engine.NdiAudioCapture.BlockSamplesPerChannel</c>, o mesmo pipeline NAudio independente que
+    /// já alimenta <see cref="OnEngineAudioFrameReady"/>) em dois pacotes Livewire de
+    /// <see cref="LivewireRtpFraming.FramesPerPacket"/> (240) quadros cada — 480 é exatamente o dobro
+    /// de 240, então a divisão é sempre exata, sem sobra pra guardar entre chamadas. Sem efeito
+    /// honesto se este Deck não tiver Saída Livewire selecionada agora (<see cref="_livewireSender"/>
+    /// nulo) ou se o bloco não vier no formato esperado (estéreo, tamanho par) — nunca deveria
+    /// acontecer com o NdiAudioCapture de hoje, mas é melhor ignorar silenciosamente do que montar um
+    /// pacote errado. Chamado na MESMA thread do Engine que dispara
+    /// <see cref="Engine.PlaybackEngine.AudioFrameReady"/> (nunca a UI thread, mesma razão de latência
+    /// já documentada em <see cref="OnEngineFrameReady"/>).
+    /// </summary>
+    private void ForwardAudioToLivewire(Engine.EngineAudioFrameReadyEventArgs e)
+    {
+        var sender = _livewireSender;
+        if (sender is null || e.Channels != 2 || e.SampleCount <= 0 || e.SampleCount % 2 != 0)
+        {
+            return;
+        }
+
+        var half = e.SampleCount / 2;
+
+        var left1 = new float[half];
+        var right1 = new float[half];
+        for (var i = 0; i < half; i++)
+        {
+            left1[i] = e.Data[i * 2];
+            right1[i] = e.Data[i * 2 + 1];
+        }
+        sender.SendFrame(left1, right1);
+
+        var left2 = new float[half];
+        var right2 = new float[half];
+        for (var i = 0; i < half; i++)
+        {
+            var srcIndex = (half + i) * 2;
+            left2[i] = e.Data[srcIndex];
+            right2[i] = e.Data[srcIndex + 1];
+        }
+        sender.SendFrame(left2, right2);
     }
 
     public void Dispose()
@@ -768,13 +1182,18 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         _engine.MediaEnded -= OnEngineMediaEnded;
         _engine.ErrorOccurred -= OnEngineError;
 
+        // Sprint Livewire-4 (2026-09-14): AudioFrameReady agora e assinado sempre (ver comentario no
+        // construtor), entao desassina sempre tambem — so FrameReady (video, so consumido pelo
+        // NdiSender) continua condicionado a _ndiSender existir.
+        _engine.AudioFrameReady -= OnEngineAudioFrameReady;
+
         if (_ndiSender is not null)
         {
             _engine.FrameReady -= OnEngineFrameReady;
-            _engine.AudioFrameReady -= OnEngineAudioFrameReady;
         }
 
         _engine.Dispose();
         _ndiSender?.Dispose();
+        DisposeLivewireSender();
     }
 }

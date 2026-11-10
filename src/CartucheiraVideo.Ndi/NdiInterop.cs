@@ -23,11 +23,50 @@ internal static class NdiInterop
     internal const string DllName = "Processing.NDI.Lib.x64.dll";
 }
 
-/// <summary>FourCC dos formatos de video suportados pelo envio — so BGRA e usado por este projeto (decisao da Sprint NDI: formato fixo 1920x1080 BGRA, sem negociacao dinamica de formato).</summary>
+/// <summary>
+/// FourCC dos formatos de video suportados pelo envio (resolucao fixa 1920x1080, sem negociacao
+/// dinamica de formato, decisao da Sprint NDI). BGRA/BGRX existem por historico (BGRA ate a Sprint
+/// NDI-video-bgrx, BGRX dessa sprint ate a Sprint NDI-video-uyvy, ambas 2026-09-12); o campo
+/// realmente usado por <see cref="NdiSender.SendFrame"/> desde a Sprint NDI-video-uyvy e UYVY, ver
+/// comentario proprio abaixo.
+/// </summary>
 internal enum NDIlib_FourCC_video_type_e
 {
     /// <summary>NDI_LIB_FOURCC('B','G','R','A') calculado (little-endian: 'B' | 'G'&lt;&lt;8 | 'R'&lt;&lt;16 | 'A'&lt;&lt;24) = 0x41524742.</summary>
-    NDIlib_FourCC_video_type_BGRA = 0x41524742
+    NDIlib_FourCC_video_type_BGRA = 0x41524742,
+
+    /// <summary>
+    /// Sprint NDI-video-bgrx (2026-09-12) — mesmo layout de memoria que BGRA (4 bytes por pixel,
+    /// ordem B,G,R,X), mas o 4º byte (X) e ignorado pela NDI SDK em vez de tratado como canal alfa
+    /// de verdade. Confirmado contra a documentacao oficial (docs.ndi.video/.../frame-types): "This
+    /// is provided as a hint that all alpha channel values are 255, meaning that alpha compositing
+    /// may be avoided" — e a pagina de performance (docs.ndi.video/.../performance-and-implementation)
+    /// documenta que "Sending BGRA or BGRX video will incur a performance penalty" (banda de memoria/
+    /// conversao de cor), mas evitar a composicao de alfa (BGRX vs BGRA) reduz essa penalidade.
+    /// Valor calculado (little-endian: 'B' | 'G'&lt;&lt;8 | 'R'&lt;&lt;16 | 'X'&lt;&lt;24) = 0x58524742,
+    /// conferido contra uma implementacao real de terceiros (teltek/gst-plugin-ndi, ndisys.rs) que
+    /// gera o mesmo FourCC via macro, ja que este projeto nao tem acesso aos headers oficiais da NDI
+    /// SDK dentro deste sandbox. Usado por <see cref="NdiSender.SendFrame"/> ate a Sprint
+    /// NDI-video-uyvy — mantido no enum so por historico/documentacao, nao mais usado no envio.
+    /// </summary>
+    NDIlib_FourCC_video_type_BGRX = 0x58524742,
+
+    /// <summary>
+    /// Sprint NDI-video-uyvy (2026-09-12) — YCbCr 4:2:2 empacotado (2 bytes/pixel em media: grupo de
+    /// 4 bytes cobre 2 pixels, ordem U,Y0,V,Y1 por grupo — confirmado via VideoLAN wiki, wiki.
+    /// videolan.org/YUV). Adotada pra fechar o gap de banda de rede observado pelo usuario contra o
+    /// OBS (Gerenciador de Tarefas: Cartucheira 120.2 Mbps vs OBS 84.5 Mbps, ambos emitindo NDI na
+    /// mesma resolucao/fps) — o addon oficial de NDI do OBS (DistroAV) sempre pede video em YUV pra
+    /// saida NDI, nunca RGB, exatamente pra evitar a "performance penalty" de BGRA/BGRX documentada
+    /// pela propria NDI (ver comentario de BGRX acima). Valor calculado (little-endian: 'U' | 'Y'
+    /// &lt;&lt;8 | 'V'&lt;&lt;16 | 'Y'&lt;&lt;24) = 0x59565955, conferido contra DUAS fontes
+    /// independentes de terceiros (mesma pratica ja usada pra BGRX, ja que este sandbox nao tem
+    /// acesso aos headers oficiais): o crate publico <c>ndi</c> (docs.rs/ndi, enum
+    /// FourCCVideoType::UYVY) e <c>teltek/gst-plugin-ndi</c> (ndisys.rs, make_fourcc de "UYVY") —
+    /// ambas concordam exatamente em 0x59565955. Usado por <see cref="NdiSender.SendFrame"/> desde
+    /// esta sprint.
+    /// </summary>
+    NDIlib_FourCC_video_type_UYVY = 0x59565955
 }
 
 /// <summary>Formato de quadro (entrelaçado/progressivo) — este projeto so envia progressivo (video de arquivo, sem entrelaçamento).</summary>
@@ -62,7 +101,10 @@ internal struct NDIlib_send_create_t
 /// Um quadro de video a enviar. Layout sequencial exato do struct C <c>NDIlib_video_frame_v2_t</c>
 /// (ordem dos campos confirmada contra o header oficial em 2026-08-09) — <c>line_stride_in_bytes</c>
 /// ocupa o mesmo offset que a union C <c>{ line_stride_in_bytes; data_size_in_bytes; }</c>; como
-/// este projeto so envia video nao-comprimido (BGRA), so o campo de stride e usado.
+/// este projeto so envia video nao-comprimido (UYVY desde a Sprint NDI-video-uyvy, 2026-09-12; BGRX
+/// entre as Sprints NDI-video-bgrx e NDI-video-uyvy; BGRA antes disso), so o campo de stride e
+/// usado — pra UYVY, <c>line_stride_in_bytes</c> e 2 bytes por pixel (nao 4, ver NdiSender/
+/// PlaybackEngine).
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct NDIlib_video_frame_v2_t
@@ -219,12 +261,45 @@ internal static class NativeMethods
     internal static extern void NDIlib_send_destroy(IntPtr p_instance);
 
     /// <summary>
-    /// Variante NAO-async de proposito (decisao da Sprint NDI): copia o buffer internamente antes
-    /// de retornar, entao e seguro reusar um unico buffer fixo logo em seguida — a variante _async
-    /// exigiria sincronizar antes de tocar no buffer de novo, complexidade desnecessaria pro MVP.
+    /// Variante SINCRONA/bloqueante — mantida so pro caso raro de precisar de garantia de entrega
+    /// sequencial (nenhum uso restante neste projeto desde a Sprint NDI-video-async, 2026-09-11).
+    ///
+    /// CORRECAO (Sprint NDI-video-async, 2026-09-11): o comentario original aqui ("copia o buffer
+    /// internamente antes de retornar, complexidade desnecessaria pro MVP") estava ERRADO — pesquisa
+    /// contra a documentacao oficial da NDI SDK (docs.ndi.video) confirmou que esta variante faz
+    /// conversao de cor, compressao E a transmissao de rede de verdade DENTRO da chamada, bloqueando
+    /// a thread chamadora o tempo todo. Era exatamente essa chamada, rodando direto na thread de
+    /// decodificacao de video do LibVLC (ver <see cref="NdiSender.SendFrame"/> antigo/
+    /// <c>PlaybackEngine.OnFrameLock/OnFrameDisplay</c>), que causava o travamento de video quadro a
+    /// quadro reportado pelo usuario testando contra vMix numa rede real (o mesmo cenario com OBS +
+    /// DistroAV, que usa a variante _async, ficava limpo) — qualquer lentidao de rede real stalava a
+    /// propria decodificacao. Ver <see cref="NDIlib_send_send_video_async_v2"/>, a variante usada
+    /// agora por <see cref="NdiSender.SendFrame"/>.
     /// </summary>
     [DllImport(NdiInterop.DllName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void NDIlib_send_send_video_v2(IntPtr p_instance, ref NDIlib_video_frame_v2_t p_video_data);
+
+    /// <summary>
+    /// Variante ASSINCRONA (Sprint NDI-video-async, 2026-09-11) — usada por
+    /// <see cref="NdiSender.SendFrame"/> desde esta sprint. Retorna IMEDIATAMENTE, tendo so
+    /// AGENDADO o quadro pra ser processado/enviado — conversao de cor, compressao e transmissao de
+    /// rede acontecem de forma assincrona, fora desta chamada. Confirmado contra o header oficial
+    /// Processing.NDI.Send.h (mesma assinatura usada pelo DistroAV/OBS-NDI,
+    /// github.com/obs-ndi/obs-ndi).
+    ///
+    /// CONTRATO DE LIFETIME DO BUFFER (critico, documentacao oficial NDI —
+    /// docs.ndi.video/.../asynchronous-sending-completions): a memoria apontada por
+    /// <c>p_video_data.p_data</c> NAO PODE ser reescrita/liberada pelo chamador ate que um "evento
+    /// sincronizante" tenha ocorrido — que e UM destes: (a) chamar a variante sincrona
+    /// (<see cref="NDIlib_send_send_video_v2"/>), (b) chamar ESTA MESMA funcao de novo (o QUE
+    /// sincroniza/libera o buffer da chamada ANTERIOR, nao desta), (c) passar um frame nulo, ou (d)
+    /// destruir a instancia (<see cref="NDIlib_send_destroy"/>). Por isso o <c>PlaybackEngine</c>
+    /// usa DOIS buffers alternados ("ping-pong") em vez de um so: enquanto o buffer A pode ainda
+    /// estar em transito assincrono, o LibVLC ja decodifica o proximo quadro no buffer B — nunca
+    /// escreve no mesmo buffer que ainda pode estar em voo.
+    /// </summary>
+    [DllImport(NdiInterop.DllName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void NDIlib_send_send_video_async_v2(IntPtr p_instance, ref NDIlib_video_frame_v2_t p_video_data);
 
     /// <summary>
     /// Sprint NDI-audio (2026-08-11), CORRECAO pos-entrega mesmo dia: funcao "nativa" de envio de

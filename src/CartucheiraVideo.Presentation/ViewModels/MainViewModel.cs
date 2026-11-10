@@ -7,6 +7,8 @@ using CartucheiraVideo.Api;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Core;
 using CartucheiraVideo.Infrastructure;
+using CartucheiraVideo.Infrastructure.Livewire;
+using CartucheiraVideo.Ndi;
 using CartucheiraVideo.Presentation.Mvvm;
 using CartucheiraVideo.Presentation.Views;
 using LibVLC = LibVLCSharp.Shared.LibVLC;
@@ -90,6 +92,23 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <c>readonly</c> com inicializador normal.
     /// </summary>
     private readonly UdpTriggerSender _outboundUdpSender = new();
+    /// <summary>
+    /// Sprint Livewire-3 (2026-09-13, reordenada na frente do Deck): anuncia TODAS as Saídas Livewire
+    /// configuradas (independente de estarem selecionadas em algum Deck/Cartucheira) — instância
+    /// ÚNICA por processo, diferente de <see cref="Engine.AudioEngine"/>/<c>LivewireSender</c> (um
+    /// por banco). Alimentada/reaberta por <see cref="ReapplyLivewireAdvertiser"/>, chamado na
+    /// construção e sempre que a janela de Configurações fecha — mesmo gatilho já usado por
+    /// <see cref="ReloadCartridgeBanksFromSettings"/>.
+    /// </summary>
+    private readonly LivewireAdvertiser _livewireAdvertiser = new();
+    /// <summary>Última placa de rede usada pra (re)abrir <see cref="_livewireAdvertiser"/> — só reabre o socket quando este valor muda de verdade; a lista de Saídas em si é atualizada sem reabrir nada (<see cref="LivewireAdvertiser.UpdateSources"/>).</summary>
+    private string? _livewireAdvertiserInterfaceIp;
+    /// <summary>Falso até o primeiro <see cref="ReapplyLivewireAdvertiser"/> — necessário porque o valor inicial de <see cref="_livewireAdvertiserInterfaceIp"/> (nulo) é indistinguível de "placa configurada = deixar o sistema escolher" (também nulo); sem isto a primeira chamada nunca chamaria <see cref="LivewireAdvertiser.Start"/> quando nenhuma placa específica estiver configurada (o caso mais comum).</summary>
+    private bool _livewireAdvertiserStarted;
+    /// <summary>Último valor aplicado por <see cref="ReapplyNdiNetworkAdapter"/> — só regrava o arquivo do Windows (<see cref="NdiNetworkAdapterConfig"/>, que vale pra máquina inteira) quando este valor muda de verdade desde a última vez, pra não ficar reescrevendo um arquivo compartilhado com outros programas NDI toda vez que Configurações fecha sem essa aba ter mudado nada.</summary>
+    private string? _ndiNetworkInterfaceIpApplied;
+    /// <summary>Falso até a primeira <see cref="ReapplyNdiNetworkAdapter"/> — mesmo motivo do <see cref="_livewireAdvertiserStarted"/> acima (nulo inicial indistinguível de "configurado = deixar o NDI escolher").</summary>
+    private bool _ndiNetworkAdapterApplied;
     private SettingsWindow? _settingsWindow;
     private int? _vinhetasHotkeyId;
     private int? _trilhasHotkeyId;
@@ -116,15 +135,39 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         _libVlc = libVlc;
 
-        DeckA = new DeckViewModel("DECK 1", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus);
-        DeckB = new DeckViewModel("DECK 2", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus);
-        Decks = new[] { DeckA, DeckB };
-
         // Sprint Config Geral, parte 1 (2026-08-09): restaura a configuração salva (se houver)
         // ANTES de qualquer outra coisa tocar nos Decks — primeira vez que algo sobrevive a fechar
         // e abrir o programa de novo.
         _settingsStore = new SettingsStore();
         _persistedSettings = _settingsStore.Load();
+
+        // Fix pós-entrega da Sprint NDI-Firewall-Livewire (v1.0.26, 2026-09-13, mesmo dia da
+        // v1.0.25): estas duas chamadas MOVIDAS pra ANTES de criar qualquer DeckViewModel — na
+        // ordem antiga (depois dos Decks), o usuário confirmou com testes reais que, mesmo com as
+        // regras de Firewall corretamente instaladas e visíveis no `netsh ... show rule`, o vídeo
+        // continuava chegando pela placa do Livewire ao desconectar o cabo. Causa: cada
+        // DeckViewModel cria um `NdiSender` já "sempre quente" (NdiSender.cs — começa a anunciar e
+        // aceitar conexão imediatamente, antes de qualquer Play) — e os Decks eram construídos ANTES
+        // de `ReapplyNdiFirewallGuard` terminar de aplicar a regra (que pode levar vários segundos
+        // esperando o usuário clicar em "Sim" na janela de UAC). Nessa janela de tempo, um receptor
+        // já em rede podia abrir a conexão TCP de vídeo pela placa do Livewire ANTES do bloqueio
+        // existir — e o Windows Firewall não derruba conexão já estabelecida quando uma regra de
+        // bloqueio nova aparece depois, só filtra conexões NOVAS a partir dali. Resultado: a conexão
+        // "furava" o bloqueio na inicialização e ficava presa naquele estado (furada) pelo resto da
+        // sessão, mesmo com as regras certas instaladas — dando a impressão de que o bloqueio não
+        // funcionava. Agora nenhum `NdiSender` existe ainda neste ponto do construtor, então não tem
+        // como uma conexão ser aceita antes do bloqueio estar de pé.
+        ReapplyNdiNetworkAdapter();
+        ReapplyNdiFirewallGuard();
+
+        // Sprint Livewire-4 (2026-09-14): os dois últimos argumentos são os mesmos já passados pra
+        // cada AudioBankViewModel (ver Banks logo abaixo) — deixam cada Deck resolver uma Saída
+        // Livewire selecionada em Configurações (DeckSettingsViewModel.AudioDeviceId = "livewire:{Id}")
+        // sem precisar conhecer a lista completa nem a interface de rede escolhida.
+        DeckA = new DeckViewModel("DECK 1", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus, ResolveLivewireOutput, GetLivewireNetworkInterfaceIp, OnDeckPreview, OnDeckPreviewEnd);
+        DeckB = new DeckViewModel("DECK 2", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus, ResolveLivewireOutput, GetLivewireNetworkInterfaceIp, OnDeckPreview, OnDeckPreviewEnd);
+        Decks = new[] { DeckA, DeckB };
+
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckA, DeckA);
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckB, DeckB);
 
@@ -136,12 +179,25 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Cartucheira 2, parte 2 (2026-08-10): cada banco também recebe um callback pra persistir
         // cor/loop por cartucho (PersistCartridgeOverride) — cada um salva na sua própria lista
         // (Cartridges.VinhetasOverrides/TrilhasOverrides).
+        // Sprint Livewire-2 (2026-09-13): os dois últimos parâmetros deixam cada AudioBankViewModel
+        // resolver uma Saída Livewire selecionada (SetOutputDevice("livewire:{Id}")) sem precisar
+        // conhecer a lista inteira nem a interface de rede escolhida — ambos leem sempre
+        // _persistedSettings, que já reflete qualquer edição salva (mesma instância por referência
+        // usada pelo SettingsViewModel/LivewireOutputsSettingsViewModel).
         Banks = new ObservableCollection<AudioBankViewModel>
         {
-            new("Vinhetas", SetStatus, (path, color, loop) => PersistCartridgeOverride(_persistedSettings.Cartridges.VinhetasOverrides, path, color, loop)),
-            new("Trilhas", SetStatus, (path, color, loop) => PersistCartridgeOverride(_persistedSettings.Cartridges.TrilhasOverrides, path, color, loop))
+            new("Vinhetas", SetStatus, (path, color, loop) => PersistCartridgeOverride(_persistedSettings.Cartridges.VinhetasOverrides, path, color, loop),
+                ResolveLivewireOutput, GetLivewireNetworkInterfaceIp),
+            new("Trilhas", SetStatus, (path, color, loop) => PersistCartridgeOverride(_persistedSettings.Cartridges.TrilhasOverrides, path, color, loop),
+                ResolveLivewireOutput, GetLivewireNetworkInterfaceIp)
         };
         ReloadCartridgeBanksFromSettings();
+
+        // Sprint Livewire-3 (2026-09-13): sobe o anunciador já na construção, mesmo sem nenhuma
+        // Saída Livewire configurada ainda (a thread fica ociosa, sem mandar nada, até a lista deixar
+        // de estar vazia — ver ReapplyLivewireAdvertiser/LivewireAdvertiser.Loop). Precisa vir DEPOIS
+        // de _persistedSettings carregado, por isso aqui no corpo do construtor.
+        ReapplyLivewireAdvertiser();
 
         // Sprint Comando Externo (2026-08-10): as duas rotas HTTP existem sempre (uma por
         // Cartucheira) — o handler consulta o "habilitado" salvo em Config a cada chamada (ver
@@ -191,7 +247,17 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     public string Title => "Cartucheira Vídeo";
 
-    public string VersionLabel => "v1.0.0";
+    /// <summary>
+    /// Sprint Versao-Numero-Manual (2026-09-12): numero incremental (v1.0.X), atualizado A MAO por
+    /// mim a cada sprint/correcao entregue — decisao explicita do usuario em vez de derivar a versao
+    /// da data de compilacao ou do commit do Git (as correcoes recentes tem sido aplicadas via copia
+    /// manual de arquivo .cs, sem passar pelo Git a cada teste, entao um numero ligado ao Git ficaria
+    /// desatualizado). Convencao: incrementar o ultimo digito (X) a cada entrega de codigo nova,
+    /// nunca pular numero, nunca reaproveitar um numero ja usado — ver
+    /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
+    /// verdade entre sessoes.
+    /// </summary>
+    public string VersionLabel => "v1.0.51";
 
     public DeckViewModel DeckA { get; }
 
@@ -287,6 +353,26 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         StatusMessage = $"{deck.Name} parado.";
         ResumeCartucheiraFor(deck);
         SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnEndCommand);
+    }
+
+    /// <summary>
+    /// Sprint Áudio-Unificado (2026-09-15): chamado quando um Deck entra em Preview — diferente de
+    /// <see cref="OnDeckPlay"/>, NUNCA pausa a Cartucheira nem espelha pro Deck B (Preview continua
+    /// isolado dessas duas coisas, decisão de sempre desde a Sprint Preview-Isolado). Único efeito:
+    /// mandar o aviso UDP dedicado (<see cref="DeckSettingsSnapshot.OutboundUdpOnPreviewCommand"/>)
+    /// pra mesa/console externa — motivo de existir: agora que Play e Preview usam a mesma placa de
+    /// áudio (ver <c>Core.Deck.AudioDeviceId</c>), a mesa precisa de um jeito de saber qual dos dois
+    /// está tocando, pra decidir ela mesma a rota física (ar vs. monitor).
+    /// </summary>
+    private void OnDeckPreview(DeckViewModel deck)
+    {
+        SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnPreviewCommand);
+    }
+
+    /// <summary>Ver <see cref="OnDeckPreview"/> — mesma ideia, mas pro fim do Preview (fim natural OU Stop/Clear manual, mesmo critério de "terminar" já usado em <see cref="OnDeckStop"/>/<see cref="OnDeckMediaEnded"/>). Nunca retoma Cartucheira — Preview nunca a pausou pra começar.</summary>
+    private void OnDeckPreviewEnd(DeckViewModel deck)
+    {
+        SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnPreviewEndCommand);
     }
 
     /// <summary>Chamado quando um Deck termina de tocar sozinho (sem loop) — ver <see cref="HasCartucheiraOnPlayAction"/>/<see cref="ResumeCartucheiraFor"/>. Confirmado explicitamente pelo usuário: o cartucho pausado pela Cartucheira volta a tocar terminando sozinho OU com Stop manual (ambos convergem aqui e em <see cref="OnDeckStop"/>) — mesmo critério usado pro aviso UDP de saída (<see cref="SendOutboundDeckTrigger"/>).</summary>
@@ -398,13 +484,25 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         deck.DomainDeck.AutomationActions.FirstOrDefault(a => a.Trigger == AutomationTrigger.OnPlay && a.Destination == OutputRouteType.Cartucheira);
 
     /// <summary>
+    /// Sprint Áudio-Dispositivo-Fix-4 (2026-09-13): DESLIGADO TEMPORARIAMENTE a pedido do usuário,
+    /// enquanto ele termina a rodada de testes dos fixes de áudio em andamento (não quer digitar
+    /// senha a cada teste). Pra REVERTER (voltar a exigir a senha de admin pra abrir Configurações,
+    /// exatamente como era antes desta sprint): trocar esta constante de volta pra <c>true</c>. Nada
+    /// mais foi removido — <see cref="AdminAuthViewModel"/>/<see cref="AdminAuthWindow"/> e toda a
+    /// lógica de definir/logar com a senha continuam intactos logo abaixo, só pulados por este
+    /// `if`.
+    /// </summary>
+    private const bool RequireAdminPasswordForSettings = false;
+
+    /// <summary>
     /// Sprint Config Geral, parte 1 (2026-08-09): abre a janela única de Configurações — protegida
     /// por senha de admin (arquitetura: "Login e senha de admin... para acessar o config"). Fluxo:
     /// (1) se a janela já estiver aberta, só traz ela pra frente (evita duplicata); (2) se ainda
     /// não existe senha salva (primeiro acesso), pede pra DEFINIR uma — sucesso já persiste o
     /// hash/salt novos imediatamente, não espera o Salvar do Settings; (3) senão, pede LOGIN com a
     /// senha existente; (4) só então abre a janela (não-modal — o operador continua usando os Decks
-    /// com ela aberta).
+    /// com ela aberta). Ver <see cref="RequireAdminPasswordForSettings"/>: passos (2)/(3) estão
+    /// temporariamente desligados a pedido do usuário.
     /// </summary>
     private void OpenSettings()
     {
@@ -414,31 +512,34 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        if (string.IsNullOrEmpty(_persistedSettings.AdminPasswordHash))
+        if (RequireAdminPasswordForSettings)
         {
-            var setPasswordViewModel = new AdminAuthViewModel(AdminAuthMode.SetPassword);
-            var setPasswordWindow = new AdminAuthWindow(setPasswordViewModel) { Owner = Application.Current?.MainWindow };
-
-            if (setPasswordWindow.ShowDialog() != true)
+            if (string.IsNullOrEmpty(_persistedSettings.AdminPasswordHash))
             {
-                StatusMessage = "Definição de senha de admin cancelada — Configurações não abertas.";
-                return;
+                var setPasswordViewModel = new AdminAuthViewModel(AdminAuthMode.SetPassword);
+                var setPasswordWindow = new AdminAuthWindow(setPasswordViewModel) { Owner = Application.Current?.MainWindow };
+
+                if (setPasswordWindow.ShowDialog() != true)
+                {
+                    StatusMessage = "Definição de senha de admin cancelada — Configurações não abertas.";
+                    return;
+                }
+
+                _persistedSettings.AdminPasswordHash = setPasswordViewModel.HashResult;
+                _persistedSettings.AdminPasswordSalt = setPasswordViewModel.SaltResult;
+                _settingsStore.Save(_persistedSettings);
+                StatusMessage = "Senha de admin definida.";
             }
-
-            _persistedSettings.AdminPasswordHash = setPasswordViewModel.HashResult;
-            _persistedSettings.AdminPasswordSalt = setPasswordViewModel.SaltResult;
-            _settingsStore.Save(_persistedSettings);
-            StatusMessage = "Senha de admin definida.";
-        }
-        else
-        {
-            var loginViewModel = new AdminAuthViewModel(AdminAuthMode.Login, _persistedSettings.AdminPasswordHash, _persistedSettings.AdminPasswordSalt);
-            var loginWindow = new AdminAuthWindow(loginViewModel) { Owner = Application.Current?.MainWindow };
-
-            if (loginWindow.ShowDialog() != true)
+            else
             {
-                StatusMessage = "Login de admin cancelado — Configurações não abertas.";
-                return;
+                var loginViewModel = new AdminAuthViewModel(AdminAuthMode.Login, _persistedSettings.AdminPasswordHash, _persistedSettings.AdminPasswordSalt);
+                var loginWindow = new AdminAuthWindow(loginViewModel) { Owner = Application.Current?.MainWindow };
+
+                if (loginWindow.ShowDialog() != true)
+                {
+                    StatusMessage = "Login de admin cancelado — Configurações não abertas.";
+                    return;
+                }
             }
         }
 
@@ -452,6 +553,20 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // (dispositivo/pasta podem ter mudado) — barato o suficiente pra rodar sempre que a
             // janela fecha, em vez de um callback dedicado só pra "a seção Cartucheira foi salva".
             ReloadCartridgeBanksFromSettings();
+
+            // Sprint Livewire-3 (2026-09-13): idem pro anúncio — Saída criada/removida/renomeada ou
+            // placa de rede trocada em Configurações → Saídas Livewire só vale de verdade a partir
+            // daqui (mesmo gatilho de sempre).
+            ReapplyLivewireAdvertiser();
+
+            // Sprint NDI-Placa-de-Rede (2026-09-13): idem pra placa de rede do NDI — mudar a escolha
+            // em Configurações → Rede NDI só grava o arquivo do Windows a partir daqui.
+            ReapplyNdiNetworkAdapter();
+
+            // Sprint NDI-Firewall-Livewire (2026-09-13): idem pro reforço por Firewall — mudar a
+            // placa do Livewire em Configurações → Saídas Livewire só aplica/atualiza a regra a
+            // partir daqui (mesmo gatilho de ReapplyLivewireAdvertiser/ReapplyNdiNetworkAdapter).
+            ReapplyNdiFirewallGuard();
 
             // Sprint Comando Externo (2026-08-10): idem pro atalho de teclado — habilitado/tecla
             // podem ter mudado (ou o operador pode ter religado/desligado o comando externo).
@@ -487,6 +602,151 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         TrilhasBank.SetCrossfadeDuration(cartridges.TrilhasCrossfadeMs);
         TrilhasBank.SetRootFolder(cartridges.TrilhasFolderPath);
         TrilhasBank.LoadOverrides(cartridges.TrilhasOverrides);
+    }
+
+    /// <summary>
+    /// Sprint Livewire-2 (2026-09-13): resolve o id gravado num valor prefixado
+    /// (<c>"livewire:{Id}"</c>, ver <c>Engine.AudioEngine.ExternalOutputPrefix</c>) pra Saída
+    /// Livewire configurada correspondente — nulo se ela foi apagada em Configurações depois de já
+    /// selecionada num banco (<see cref="AudioBankViewModel"/> trata isso de forma honesta, sem
+    /// inventar canal nenhum). Lê sempre <see cref="_persistedSettings"/> diretamente — já reflete
+    /// qualquer edição salva, mesma instância por referência usada pelo SettingsViewModel.
+    /// </summary>
+    private LivewireOutputSettings? ResolveLivewireOutput(string outputId) =>
+        _persistedSettings.LivewireOutputs.FirstOrDefault(o => o.Id == outputId);
+
+    /// <summary>Sprint Livewire-2: IP local (IPv4) configurado pra transmitir Livewire — nulo deixa o sistema escolher a interface, ver <see cref="AppSettingsSnapshot.LivewireNetworkInterfaceIp"/>.</summary>
+    private string? GetLivewireNetworkInterfaceIp() => _persistedSettings.LivewireNetworkInterfaceIp;
+
+    /// <summary>
+    /// Sprint Livewire-3 (2026-09-13): (re)aplica <see cref="_livewireAdvertiser"/> a partir do que
+    /// estiver salvo agora em <see cref="_persistedSettings"/> — TODAS as Saídas Livewire configuradas
+    /// (não só as selecionadas nalgum Deck/Cartucheira; ver comentário de classe de
+    /// <see cref="LivewireAdvertiser"/>). Só reabre o socket (<see cref="LivewireAdvertiser.Start"/>)
+    /// quando a placa de rede escolhida mudou de verdade desde a última vez — criar/remover/renomear
+    /// uma Saída ou trocar seu canal não precisa disso, só atualizar a lista
+    /// (<see cref="LivewireAdvertiser.UpdateSources"/>), bem mais barato.
+    /// </summary>
+    private void ReapplyLivewireAdvertiser()
+    {
+        var desiredInterfaceIp = _persistedSettings.LivewireNetworkInterfaceIp;
+
+        if (!_livewireAdvertiserStarted || _livewireAdvertiserInterfaceIp != desiredInterfaceIp)
+        {
+            var machineName = Environment.MachineName;
+            if (_livewireAdvertiser.Start(machineName, desiredInterfaceIp))
+            {
+                _livewireAdvertiserStarted = true;
+            }
+            else
+            {
+                StatusMessage = $"Anúncio Livewire indisponível: {_livewireAdvertiser.LastError}";
+            }
+
+            _livewireAdvertiserInterfaceIp = desiredInterfaceIp;
+        }
+
+        var sources = _persistedSettings.LivewireOutputs
+            .Select(o => new LivewireSourceAnnouncement(o.Channel, o.Name))
+            .ToList();
+        _livewireAdvertiser.UpdateSources(sources);
+    }
+
+    /// <summary>
+    /// Sprint NDI-Placa-de-Rede (2026-09-13): grava (ou remove) a restrição de placa de rede do NDI
+    /// a partir do que estiver salvo em <see cref="_persistedSettings"/>, chamando
+    /// <see cref="NdiNetworkAdapterConfig.ApplyAllowedAdapter"/> — diferente de
+    /// <see cref="ReapplyLivewireAdvertiser"/>, aqui NÃO existe socket nenhum pra reabrir: é só um
+    /// arquivo do Windows (<c>%ProgramData%\NDI\ndi-config.v1.json</c>, que vale pra QUALQUER
+    /// programa NDI da máquina, não só a Cartucheira — ver comentário de classe de
+    /// <see cref="NdiNetworkAdapterConfig"/>), regravado só quando o valor muda de verdade desde a
+    /// última vez (mesmo cuidado de <see cref="_livewireAdvertiserStarted"/>, ver
+    /// <see cref="_ndiNetworkAdapterApplied"/>) pra não ficar mexendo num arquivo compartilhado à
+    /// toa toda vez que Configurações fecha.
+    /// </summary>
+    private void ReapplyNdiNetworkAdapter()
+    {
+        var desiredInterfaceIp = _persistedSettings.NdiNetworkInterfaceIp;
+
+        if (_ndiNetworkAdapterApplied && _ndiNetworkInterfaceIpApplied == desiredInterfaceIp)
+        {
+            return;
+        }
+
+        var (ok, error) = NdiNetworkAdapterConfig.ApplyAllowedAdapter(desiredInterfaceIp);
+        if (ok)
+        {
+            _ndiNetworkAdapterApplied = true;
+            _ndiNetworkInterfaceIpApplied = desiredInterfaceIp;
+        }
+        else
+        {
+            StatusMessage = $"Não foi possível gravar a configuração de rede do NDI: {error}";
+        }
+    }
+
+    /// <summary>
+    /// Sprint NDI-Firewall-Livewire (2026-09-13, com fixes v1.0.24 e v1.0.25): (re)aplica o bloqueio
+    /// de NDI por Firewall (<see cref="NdiFirewallGuard"/>) sempre que a placa do Livewire
+    /// (<see cref="AppSettingsSnapshot.LivewireNetworkInterfaceIp"/>) OU o desenho das regras
+    /// (<see cref="NdiFirewallGuard.RuleSchemaVersion"/>) mudarem desde a última vez que a regra foi
+    /// aplicada com sucesso. Pedida depois que o usuário confirmou, com testes reais (reboot
+    /// completo, Preferred NIC certo no NDI Access Manager, receptor reconectado do zero), que
+    /// <see cref="ReapplyNdiNetworkAdapter"/> sozinho não impediu o NDI de usar a placa errada — esta
+    /// é a camada de verdade, imposta pelo Windows, não um pedido que o NDI pode ignorar.
+    ///
+    /// **Fix pós-entrega da v1.0.24 (v1.0.25, mesmo dia):** até aqui a comparação era só do IP
+    /// (<see cref="AppSettingsSnapshot.NdiFirewallGuardAppliedForLivewireIp"/>) — e isso escondeu um
+    /// bug real: a v1.0.24 corrigiu o DESENHO da regra (acrescentou bloqueio de ENTRADA, que faltava
+    /// na v1.0.23), mas como o IP da placa do Livewire do usuário não tinha mudado entre as duas
+    /// versões, este método nunca chamou <see cref="NdiFirewallGuard.ApplyBlockRule"/> de novo — a
+    /// correção da v1.0.24 nunca rodou de verdade na máquina do usuário, mesmo já instalada ("tudo
+    /// igual, funcionando pela placa do livewire"). Corrigido comparando TAMBÉM
+    /// <see cref="NdiFirewallGuard.RuleSchemaVersion"/> contra
+    /// <see cref="AppSettingsSnapshot.NdiFirewallGuardAppliedRuleSchemaVersion"/> — só pula a
+    /// reaplicação quando os DOIS baterem; qualquer mudança futura no desenho das regras (e o
+    /// incremento correspondente da constante) força uma reaplicação de verdade mesmo com o IP igual.
+    ///
+    /// Ambos os valores ficam PERSISTIDOS em disco (não só em memória, diferente de
+    /// <see cref="_ndiNetworkAdapterApplied"/>) de propósito: aplicar a regra exige uma janela de
+    /// permissão de Administrador (UAC), e sem essa memória persistida o programa pediria essa
+    /// permissão TODA VEZ que abrisse, mesmo sem nada ter mudado. Ao ter sucesso, grava o snapshot
+    /// imediatamente (não espera o próximo Salvar de Configurações), pra essa memória valer mesmo que
+    /// o usuário feche o programa sem mexer em mais nada.
+    ///
+    /// **Fix pós-entrega das v1.0.24/25/26 (v1.0.27, mesmo dia) — causa raiz de verdade:**
+    /// diagnóstico ao vivo na máquina do usuário achou que os perfis de Firewall Particular/Público
+    /// estavam DESLIGADOS — nenhuma das quatro sprints anteriores (v1.0.23 a v1.0.26) tinha chance de
+    /// funcionar, não importa o desenho da regra. <see cref="NdiFirewallGuard.ApplyBlockRule"/> agora
+    /// também liga esses dois perfis e cria duas regras de PERMISSÃO geral pro processo (sem elas,
+    /// ligar o Firewall sozinho quebraria o NDI em QUALQUER placa, não só na do Livewire — confirmado
+    /// ao vivo). Nenhuma mudança de lógica NESTE método — o bump de
+    /// <see cref="NdiFirewallGuard.RuleSchemaVersion"/> (2→3) já força a reaplicação sozinho, mesmo
+    /// pra quem já tinha o IP certo persistido de uma versão anterior. Ver o comentário de classe de
+    /// <see cref="NdiFirewallGuard"/> pro diagnóstico completo (timestamps, `Get-NetTCPConnection`,
+    /// `netsh advfirewall show allprofiles state`).
+    /// </summary>
+    private void ReapplyNdiFirewallGuard()
+    {
+        var desiredLivewireIp = _persistedSettings.LivewireNetworkInterfaceIp;
+
+        if (_persistedSettings.NdiFirewallGuardAppliedForLivewireIp == desiredLivewireIp
+            && _persistedSettings.NdiFirewallGuardAppliedRuleSchemaVersion == NdiFirewallGuard.RuleSchemaVersion)
+        {
+            return;
+        }
+
+        var (ok, error) = NdiFirewallGuard.ApplyBlockRule(desiredLivewireIp);
+        if (ok)
+        {
+            _persistedSettings.NdiFirewallGuardAppliedForLivewireIp = desiredLivewireIp;
+            _persistedSettings.NdiFirewallGuardAppliedRuleSchemaVersion = NdiFirewallGuard.RuleSchemaVersion;
+            _settingsStore.Save(_persistedSettings);
+        }
+        else
+        {
+            StatusMessage = $"Não foi possível reforçar por Firewall o bloqueio do NDI na placa do Livewire: {error}";
+        }
     }
 
     /// <summary>
@@ -814,5 +1074,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Sprint Comando Externo Deck→Mesa (2026-08-13): quinto canal a encerrar — remetente UDP de
         // saída (avisos de Play/Fim dos Decks), mesmo padrão.
         _outboundUdpSender.Dispose();
+        // Sprint Livewire-3 (2026-09-13): sexto canal a encerrar — anunciador Livewire (ADVT1/ADVT2).
+        _livewireAdvertiser.Dispose();
     }
 }

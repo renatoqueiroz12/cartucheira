@@ -19,14 +19,11 @@ internal static class SettingsMapper
     {
         deck.DomainDeck.NdiChannelName = string.IsNullOrWhiteSpace(snapshot.NdiChannelName) ? null : snapshot.NdiChannelName;
 
+        // Sprint Áudio-Unificado (2026-09-15): AudioDeviceId agora vale pro Play E pro Preview (o
+        // campo separado PreviewAudioDeviceId foi removido, ver Core.Deck.AudioDeviceId) — uma única
+        // linha aplica os dois.
         deck.DomainDeck.AudioDeviceId = snapshot.AudioDeviceId;
         deck.SetAudioOutputDevice(snapshot.AudioDeviceId);
-
-        // PreviewAudioDeviceId (Sprint Preview-Isolado, 2026-08-15) NÃO é empurrado pro Engine aqui
-        // de propósito — diferente de AudioDeviceId acima, ele só é aplicado no instante em que o
-        // operador clica Preview (DeckViewModel.Preview), pra nunca correr o risco de deixar o Deck
-        // "preso" na placa de preview num Play real (ver comentário de DeckViewModel.Play).
-        deck.DomainDeck.PreviewAudioDeviceId = snapshot.PreviewAudioDeviceId;
 
         deck.SendToVMix = snapshot.VMixEnabled;
         var vmix = deck.DomainDeck.OutputRoutes.First(r => r.OutputType == OutputRouteType.VMix);
@@ -57,7 +54,6 @@ internal static class SettingsMapper
     {
         NdiChannelName = vm.NdiChannelName,
         AudioDeviceId = vm.AudioDeviceId,
-        PreviewAudioDeviceId = vm.PreviewAudioDeviceId,
         VMixEnabled = vm.VMixEnabled,
         VMixHost = vm.VMixHost,
         VMixPort = vm.VMixPort,
@@ -75,7 +71,9 @@ internal static class SettingsMapper
         OutboundUdpHost = vm.OutboundUdpHost?.Trim() ?? string.Empty,
         OutboundUdpPort = vm.OutboundUdpPort,
         OutboundUdpOnPlayCommand = vm.OutboundUdpOnPlayCommand?.Trim() ?? string.Empty,
-        OutboundUdpOnEndCommand = vm.OutboundUdpOnEndCommand?.Trim() ?? string.Empty
+        OutboundUdpOnEndCommand = vm.OutboundUdpOnEndCommand?.Trim() ?? string.Empty,
+        OutboundUdpOnPreviewCommand = vm.OutboundUdpOnPreviewCommand?.Trim() ?? string.Empty,
+        OutboundUdpOnPreviewEndCommand = vm.OutboundUdpOnPreviewEndCommand?.Trim() ?? string.Empty
     };
 
     private static AutomationActionSnapshot ToActionSnapshot(AutomationActionViewModel action) => new()

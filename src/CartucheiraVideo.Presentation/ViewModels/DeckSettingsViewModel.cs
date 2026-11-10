@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Windows.Input;
 using CartucheiraVideo.Configuration;
@@ -25,6 +26,20 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// Os campos de vMix/Resolume/Automação SALVAM de verdade (não são fictícios), mas ainda não
 /// disparam nenhuma chamada de rede — não existe cliente TCP/HTTP ainda (Frame Pipeline → NDI
 /// Sender → vMix/Resolume Controller são os próximos passos do roteiro, status-implementacao.md).
+///
+/// Sprint Livewire-4 (2026-09-14): <see cref="AudioDevices"/> ("Dispositivo de áudio") ganha as
+/// Saídas Livewire nativas configuradas em Configurações → Saídas Livewire, além dos dispositivos
+/// Windows de sempre — mesmo padrão (mesmo <see cref="RebuildAudioDevices"/>/
+/// <see cref="OnLivewireOutputsChanged"/>) já usado por <see cref="CartridgeSettingsViewModel"/> pra
+/// Vinhetas/Trilhas.
+///
+/// Sprint Áudio-Unificado (2026-09-15): o seletor separado "Dispositivo de áudio (Preview)"
+/// (<c>PreviewAudioDevices</c>/<c>PreviewAudioDeviceId</c>) foi REMOVIDO — Play e Preview agora usam
+/// a MESMA placa (<see cref="AudioDeviceId"/>), decisão explícita do usuário depois de uma sequência
+/// de bugs sérios causados pela dupla seleção (ver comentário completo em
+/// <see cref="Core.Deck.AudioDeviceId"/>). Dois campos novos (<see cref="OutboundUdpOnPreviewCommand"/>/
+/// <see cref="OutboundUdpOnPreviewEndCommand"/>) substituem a distinção que a placa separada dava —
+/// agora é a mesa/console externa quem decide a rota física, avisada por UDP.
 /// </summary>
 public sealed class DeckSettingsViewModel : ViewModelBase
 {
@@ -40,7 +55,6 @@ public sealed class DeckSettingsViewModel : ViewModelBase
 
     private string _ndiChannelName;
     private string? _audioDeviceId;
-    private string? _previewAudioDeviceId;
     private bool _vMixEnabled;
     private string _vMixHost;
     private string _vMixPort;
@@ -57,6 +71,10 @@ public sealed class DeckSettingsViewModel : ViewModelBase
     private int _outboundUdpPort;
     private string _outboundUdpOnPlayCommand;
     private string _outboundUdpOnEndCommand;
+    private string _outboundUdpOnPreviewCommand;
+    private string _outboundUdpOnPreviewEndCommand;
+    private readonly ObservableCollection<LivewireOutputItemViewModel> _livewireOutputs;
+    private readonly ObservableCollection<ComboOption<string?>> _audioDevices = new();
 
     /// <summary>
     /// Sprint Comando Externo Decks (2026-08-12): recebe também o <see cref="DeckSettingsSnapshot"/>
@@ -67,18 +85,26 @@ public sealed class DeckSettingsViewModel : ViewModelBase
     /// também não guarda essas configurações) — só existem no snapshot persistido, consultado
     /// direto por <c>MainViewModel</c> a cada pacote recebido, então a única fonte pra semear estes
     /// três campos na tela é o snapshot, não o <see cref="DeckViewModel"/>.
+    ///
+    /// Sprint Livewire-4 (2026-09-14): <paramref name="livewireOutputs"/> é a MESMA instância (por
+    /// referência) que <see cref="LivewireOutputsSettingsViewModel.Outputs"/> usa — injetada pelo
+    /// <see cref="SettingsViewModel"/> pra este painel poder incluir as Saídas Livewire configuradas
+    /// no seletor de "Dispositivo de áudio (Play)" (<see cref="AudioDevices"/>). Ver
+    /// <see cref="RebuildAudioDevices"/> pra limitação honesta sobre renomear (mesma já documentada
+    /// em <see cref="CartridgeSettingsViewModel"/>).
     /// </summary>
-    public DeckSettingsViewModel(DeckViewModel deck, DeckSettingsSnapshot snapshot, UdpPortSettingsViewModel sharedUdpPort)
+    public DeckSettingsViewModel(DeckViewModel deck, DeckSettingsSnapshot snapshot, UdpPortSettingsViewModel sharedUdpPort, ObservableCollection<LivewireOutputItemViewModel> livewireOutputs)
     {
         ArgumentNullException.ThrowIfNull(deck);
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(sharedUdpPort);
+        ArgumentNullException.ThrowIfNull(livewireOutputs);
 
         SharedUdpPort = sharedUdpPort;
+        _livewireOutputs = livewireOutputs;
         DeckName = deck.Name;
         _ndiChannelName = deck.DomainDeck.NdiChannelName ?? string.Empty;
         _audioDeviceId = deck.DomainDeck.AudioDeviceId;
-        _previewAudioDeviceId = deck.DomainDeck.PreviewAudioDeviceId;
         _externalTriggerEnabled = snapshot.ExternalTriggerEnabled;
         _udpTriggerPlayCommand = snapshot.UdpTriggerPlayCommand;
         _udpTriggerPauseCommand = snapshot.UdpTriggerPauseCommand;
@@ -87,14 +113,15 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         _outboundUdpPort = snapshot.OutboundUdpPort;
         _outboundUdpOnPlayCommand = snapshot.OutboundUdpOnPlayCommand;
         _outboundUdpOnEndCommand = snapshot.OutboundUdpOnEndCommand;
+        _outboundUdpOnPreviewCommand = snapshot.OutboundUdpOnPreviewCommand;
+        _outboundUdpOnPreviewEndCommand = snapshot.OutboundUdpOnPreviewEndCommand;
 
-        var devices = new List<ComboOption<string?>>
-        {
-            new() { Value = null, Label = "Padrão do sistema" }
-        };
-        devices.AddRange(AudioEngine.EnumerateOutputDevices()
-            .Select(d => new ComboOption<string?> { Value = d.DeviceId, Label = d.Description }));
-        AudioDevices = devices;
+        AudioDevices = _audioDevices;
+        RebuildAudioDevices();
+        // Sprint Livewire-4: só Add/Remove disparam recálculo (ver comentário completo em
+        // RebuildAudioDevices) — renomear uma Saída já existente não atualiza o rótulo aqui até a
+        // janela de Configurações ser fechada e reaberta.
+        _livewireOutputs.CollectionChanged += OnLivewireOutputsChanged;
 
         var vmix = deck.DomainDeck.OutputRoutes.First(r => r.OutputType == OutputRouteType.VMix);
         _vMixEnabled = vmix.Enabled;
@@ -180,30 +207,30 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         set => SetProperty(ref _ndiChannelName, value);
     }
 
-    /// <summary>Dispositivos de saída de áudio do Windows (mmdevice) + a opção "Padrão do sistema" (Value nulo) no topo — mesma lista/fonte já usada em Configurações → Cartucheira.</summary>
+    /// <summary>
+    /// Dispositivos de saída de áudio do Windows (mmdevice) + a opção "Padrão do sistema" (Value
+    /// nulo) no topo + (Sprint Livewire-4, 2026-09-14) as Saídas Livewire nativas configuradas em
+    /// Configurações → Saídas Livewire, cada uma com valor prefixado <c>"livewire:{Id}"</c>. Sprint
+    /// Áudio-Unificado (2026-09-15): usado pelo ÚNICO seletor "Dispositivo de áudio" deste Deck —
+    /// vale tanto pro Play quanto pro Preview (o seletor separado de Preview foi removido, ver
+    /// comentário de classe). Tipo concreto é <see cref="ObservableCollection{T}"/> (embora exposto
+    /// aqui como <see cref="IReadOnlyList{T}"/>) de propósito, mesmo padrão de
+    /// <see cref="CartridgeSettingsViewModel.AudioDevices"/> — o WPF enxerga o objeto real em runtime
+    /// e reage a Add/Remove de Saídas Livewire sem precisar trocar o Binding, ver
+    /// <see cref="RebuildAudioDevices"/>.
+    /// </summary>
     public IReadOnlyList<ComboOption<string?>> AudioDevices { get; }
 
     /// <summary>
-    /// Dispositivo de saída de áudio do Windows usado pelo áudio local/preview deste Deck (o vídeo
-    /// tocando na tela) — Sprint Áudio-Dispositivo-Deck (2026-08-11). Nulo = padrão do sistema. Não
-    /// afeta o áudio já enviado pelo NDI (caminho separado, ver <see cref="Engine.PlaybackEngine.SetAudioOutputDevice"/>).
+    /// Dispositivo de saída de áudio do Windows (ou Saída Livewire nativa) usado pelo áudio local
+    /// deste Deck — Sprint Áudio-Dispositivo-Deck (2026-08-11). Nulo = padrão do sistema. Não afeta o
+    /// áudio já enviado pelo NDI (caminho separado, ver <see cref="Engine.PlaybackEngine.SetAudioOutputDevice"/>).
+    /// Sprint Áudio-Unificado (2026-09-15): usado tanto pelo Play quanto pelo Preview deste Deck.
     /// </summary>
     public string? AudioDeviceId
     {
         get => _audioDeviceId;
         set => SetProperty(ref _audioDeviceId, value);
-    }
-
-    /// <summary>
-    /// Dispositivo de saída de áudio do Windows usado SÓ pelo botão Preview deste Deck (Sprint
-    /// Preview-Isolado, 2026-08-15) — mesma lista de <see cref="AudioDevices"/>, campo separado de
-    /// propósito (conferir um clipe sem que o áudio saia pela placa principal/transmissão). Nulo =
-    /// padrão do sistema.
-    /// </summary>
-    public string? PreviewAudioDeviceId
-    {
-        get => _previewAudioDeviceId;
-        set => SetProperty(ref _previewAudioDeviceId, value);
     }
 
     public bool VMixEnabled
@@ -316,6 +343,20 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         set => SetProperty(ref _outboundUdpOnEndCommand, value);
     }
 
+    /// <summary>Sprint Áudio-Unificado (2026-09-15): texto mandado pro destino acima quando este Deck entra em Preview — mesmo toggle/destino do Play/Fim, só o texto muda. Existe pra mesa/console externa saber diferenciar Play de Preview agora que os dois usam a mesma placa de áudio.</summary>
+    public string OutboundUdpOnPreviewCommand
+    {
+        get => _outboundUdpOnPreviewCommand;
+        set => SetProperty(ref _outboundUdpOnPreviewCommand, value);
+    }
+
+    /// <summary>Texto mandado pro destino acima quando o Preview deste Deck termina — fim natural OU Stop/Clear manual, mesmo critério de <see cref="OutboundUdpOnEndCommand"/>.</summary>
+    public string OutboundUdpOnPreviewEndCommand
+    {
+        get => _outboundUdpOnPreviewEndCommand;
+        set => SetProperty(ref _outboundUdpOnPreviewEndCommand, value);
+    }
+
     /// <summary>Ações "On Play" (arquitetura §10) — disparo real depende do vMix/Resolume Controller, ainda não implementado.</summary>
     public ObservableCollection<AutomationActionViewModel> OnPlayActions { get; }
 
@@ -376,10 +417,6 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         deck.DomainDeck.AudioDeviceId = AudioDeviceId;
         deck.SetAudioOutputDevice(AudioDeviceId);
 
-        // PreviewAudioDeviceId NÃO é empurrado pro Engine aqui de propósito — ver comentário em
-        // SettingsMapper.ApplyToDeck (mesma decisão): só é aplicado no instante de um Preview real.
-        deck.DomainDeck.PreviewAudioDeviceId = PreviewAudioDeviceId;
-
         deck.SendToVMix = VMixEnabled;
         var vmix = deck.DomainDeck.OutputRoutes.First(r => r.OutputType == OutputRouteType.VMix);
         vmix.Configuration["Host"] = VMixHost.Trim();
@@ -399,6 +436,37 @@ public sealed class DeckSettingsViewModel : ViewModelBase
             deck.DomainDeck.AutomationActions.Add(actionViewModel.Model);
         }
     }
+
+    /// <summary>
+    /// Sprint Livewire-4 (2026-09-14): (re)monta <see cref="_audioDevices"/> do zero — dispositivos
+    /// Windows (mmdevice, enumerados de novo a cada chamada) + Saídas Livewire configuradas agora em
+    /// <see cref="_livewireOutputs"/>. Chamado uma vez na construção e sempre que
+    /// <see cref="_livewireOutputs"/> ganha ou perde um item (<see cref="OnLivewireOutputsChanged"/>)
+    /// — RENOMEAR uma Saída já existente não chama isto, mesma limitação honesta já aceita e
+    /// documentada em <see cref="CartridgeSettingsViewModel.RebuildAudioDevices"/> (o rótulo só
+    /// atualiza depois de fechar e reabrir Configurações).
+    /// </summary>
+    private void RebuildAudioDevices()
+    {
+        _audioDevices.Clear();
+        _audioDevices.Add(new ComboOption<string?> { Value = null, Label = "Padrão do sistema" });
+
+        foreach (var device in AudioEngine.EnumerateOutputDevices())
+        {
+            _audioDevices.Add(new ComboOption<string?> { Value = device.DeviceId, Label = device.Description });
+        }
+
+        foreach (var output in _livewireOutputs)
+        {
+            _audioDevices.Add(new ComboOption<string?>
+            {
+                Value = AudioEngine.ExternalOutputPrefix + output.Id,
+                Label = $"Livewire: {output.Name} (canal {output.Channel})"
+            });
+        }
+    }
+
+    private void OnLivewireOutputsChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildAudioDevices();
 
     private static AutomationActionViewModel CreateAction(AutomationTrigger trigger) =>
         new(new AutomationAction { Trigger = trigger, Destination = OutputRouteType.VMix, Transition = TransitionType.Cut });

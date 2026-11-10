@@ -16,6 +16,18 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// Cartucheira (<see cref="CartridgeSettingsViewModel"/>) — ao lado de Deck 1/Deck 2. A navegação
 /// de "aba única selecionada" passou de um bool só (IsDeck1Selected/!IsDeck1Selected=IsDeck2Selected)
 /// pra um enum interno de 3 valores, já que agora há 3 seções mutuamente exclusivas.
+///
+/// Sprint Livewire-2 (2026-09-13): quarta seção — "Saídas Livewire"
+/// (<see cref="LivewireOutputsSettingsViewModel"/>), enum de <see cref="Section"/> vai pra 4
+/// valores. <see cref="LivewireOutputsSettingsViewModel.Outputs"/> é passada por referência pro
+/// construtor de <see cref="CartridgeSettingsViewModel"/> — as duas seções compartilham a MESMA
+/// lista em memória, então criar/remover uma Saída Livewire aqui já aparece no seletor de
+/// dispositivo de Vinhetas/Trilhas sem fechar/reabrir a janela.
+///
+/// Sprint NDI-Placa-de-Rede (2026-09-13): quinta seção — "Rede NDI"
+/// (<see cref="NdiNetworkSettingsViewModel"/>), enum de <see cref="Section"/> vai pra 5 valores. Sem
+/// nenhuma lista compartilhada com outra seção (diferente da Livewire acima) — o valor só é lido de
+/// volta em <c>MainViewModel.ReapplyNdiNetworkAdapter</c> quando a janela de Configurações fecha.
 /// </summary>
 public sealed class SettingsViewModel : ViewModelBase
 {
@@ -23,7 +35,9 @@ public sealed class SettingsViewModel : ViewModelBase
     {
         Deck1,
         Deck2,
-        Cartridges
+        Cartridges,
+        LivewireOutputs,
+        NdiNetwork
     }
 
     private readonly DeckViewModel _deckA;
@@ -54,13 +68,30 @@ public sealed class SettingsViewModel : ViewModelBase
         // UdpPortSettingsViewModel nos três painéis (Cartucheira, Deck 1, Deck 2) — cada um expõe
         // um Binding local de dois níveis, sem sair do próprio DataContext.
         SharedUdpPort = new UdpPortSettingsViewModel(currentSnapshot.UdpTriggerPort);
-        Deck1Settings = new DeckSettingsViewModel(deckA, currentSnapshot.DeckA, SharedUdpPort);
-        Deck2Settings = new DeckSettingsViewModel(deckB, currentSnapshot.DeckB, SharedUdpPort);
-        CartridgeSettings = new CartridgeSettingsViewModel(currentSnapshot.Cartridges, SharedUdpPort);
+
+        // Sprint Livewire-2 (2026-09-13)/Livewire-4 (2026-09-14): LivewireOutputsSettings.Outputs é
+        // passada por referência tanto pra CartridgeSettingsViewModel quanto (desde a Livewire-4) pros
+        // dois DeckSettingsViewModel abaixo — criar/remover uma Saída na aba nova já atualiza a lista
+        // de dispositivos de Vinhetas/Trilhas/Deck 1/Deck 2 na hora, sem fechar/reabrir Configurações
+        // (ver comentário completo em CartridgeSettingsViewModel.RebuildAudioDevices/
+        // DeckSettingsViewModel.RebuildAudioDevices). Precisa ser criada ANTES dos dois
+        // DeckSettingsViewModel agora, diferente da ordem original desta sprint anterior.
+        LivewireOutputsSettings = new LivewireOutputsSettingsViewModel(currentSnapshot);
+
+        Deck1Settings = new DeckSettingsViewModel(deckA, currentSnapshot.DeckA, SharedUdpPort, LivewireOutputsSettings.Outputs);
+        Deck2Settings = new DeckSettingsViewModel(deckB, currentSnapshot.DeckB, SharedUdpPort, LivewireOutputsSettings.Outputs);
+
+        CartridgeSettings = new CartridgeSettingsViewModel(currentSnapshot.Cartridges, SharedUdpPort, LivewireOutputsSettings.Outputs);
+
+        // Sprint NDI-Placa-de-Rede (2026-09-13): sem lista compartilhada com nenhuma outra seção —
+        // só o snapshot, mesmo padrão simples de CartridgeSettings/Deck1Settings/Deck2Settings.
+        NdiNetworkSettings = new NdiNetworkSettingsViewModel(currentSnapshot);
 
         SelectDeck1Command = new RelayCommand(_ => SelectedSection = Section.Deck1);
         SelectDeck2Command = new RelayCommand(_ => SelectedSection = Section.Deck2);
         SelectCartridgesCommand = new RelayCommand(_ => SelectedSection = Section.Cartridges);
+        SelectLivewireOutputsCommand = new RelayCommand(_ => SelectedSection = Section.LivewireOutputs);
+        SelectNdiNetworkCommand = new RelayCommand(_ => SelectedSection = Section.NdiNetwork);
 
         SaveCommand = new RelayCommand(_ => Save());
     }
@@ -77,6 +108,12 @@ public sealed class SettingsViewModel : ViewModelBase
     /// <summary>Configurações da Cartucheira (Vinhetas/Trilhas) — dispositivo de áudio, pasta de origem, comando externo (Sprint Cartucheira).</summary>
     public CartridgeSettingsViewModel CartridgeSettings { get; }
 
+    /// <summary>Sprint Livewire-2 (2026-09-13): gerenciador das "Saídas Livewire" (nome + canal) e da placa de rede usada pra transmiti-las.</summary>
+    public LivewireOutputsSettingsViewModel LivewireOutputsSettings { get; }
+
+    /// <summary>Sprint NDI-Placa-de-Rede (2026-09-13): placa de rede à qual o NDI desta máquina fica restrito.</summary>
+    public NdiNetworkSettingsViewModel NdiNetworkSettings { get; }
+
     private Section SelectedSection
     {
         get => _selectedSection;
@@ -87,6 +124,8 @@ public sealed class SettingsViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsDeck1Selected));
                 OnPropertyChanged(nameof(IsDeck2Selected));
                 OnPropertyChanged(nameof(IsCartridgesSelected));
+                OnPropertyChanged(nameof(IsLivewireOutputsSelected));
+                OnPropertyChanged(nameof(IsNdiNetworkSelected));
             }
         }
     }
@@ -97,11 +136,19 @@ public sealed class SettingsViewModel : ViewModelBase
 
     public bool IsCartridgesSelected => SelectedSection == Section.Cartridges;
 
+    public bool IsLivewireOutputsSelected => SelectedSection == Section.LivewireOutputs;
+
+    public bool IsNdiNetworkSelected => SelectedSection == Section.NdiNetwork;
+
     public ICommand SelectDeck1Command { get; }
 
     public ICommand SelectDeck2Command { get; }
 
     public ICommand SelectCartridgesCommand { get; }
+
+    public ICommand SelectLivewireOutputsCommand { get; }
+
+    public ICommand SelectNdiNetworkCommand { get; }
 
     /// <summary>Aplica os dois painéis de Deck e a Cartucheira nos objetos reais, grava o snapshot inteiro no disco e avisa o operador — sem fechar a janela.</summary>
     public ICommand SaveCommand { get; }
@@ -114,6 +161,8 @@ public sealed class SettingsViewModel : ViewModelBase
         _currentSnapshot.DeckA = SettingsMapper.ToSnapshot(Deck1Settings);
         _currentSnapshot.DeckB = SettingsMapper.ToSnapshot(Deck2Settings);
         CartridgeSettings.ApplyTo(_currentSnapshot.Cartridges);
+        LivewireOutputsSettings.ApplyTo(_currentSnapshot);
+        NdiNetworkSettings.ApplyTo(_currentSnapshot);
         _currentSnapshot.UdpTriggerPort = SharedUdpPort.Port;
 
         _onStatus(_settingsStore.Save(_currentSnapshot)

@@ -8,6 +8,7 @@ using System.Windows.Input;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Core;
 using CartucheiraVideo.Engine;
+using CartucheiraVideo.Infrastructure.Livewire;
 using CartucheiraVideo.Presentation.Mvvm;
 using CartucheiraVideo.Presentation.Views;
 
@@ -101,6 +102,8 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
 
     private readonly Action<string> _onStatus;
     private readonly Action<string, string?, bool> _persistOverride;
+    private readonly Func<string, LivewireOutputSettings?> _resolveLivewireOutput;
+    private readonly Func<string?> _getLivewireNetworkInterfaceIp;
     private readonly AudioEngine _audioEngine;
     private readonly Dictionary<string, CartridgeOverride> _overridesByPath = new();
     private readonly List<VtButtonViewModel> _selectedPads = new();
@@ -112,12 +115,29 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
     private bool _isInsideProgram;
     private bool _hasButtons;
     private bool _hasPrograms;
+    private LivewireSender? _livewireSender;
+    private string? _livewireOutputId;
+    private string? _livewireNetworkInterfaceIp;
 
-    public AudioBankViewModel(string name, Action<string> onStatus, Action<string, string?, bool> persistOverride)
+    /// <summary>
+    /// Sprint Livewire-2 (2026-09-13): <paramref name="resolveLivewireOutput"/> e
+    /// <paramref name="getLivewireNetworkInterfaceIp"/> são novos — o MainViewModel os passa pra este
+    /// banco poder resolver uma Saída Livewire selecionada (<see cref="SetOutputDevice"/>) sem
+    /// precisar conhecer a lista completa configurada em Configurações nem a interface de rede
+    /// escolhida; ver <see cref="UpdateLivewireSender"/>.
+    /// </summary>
+    public AudioBankViewModel(
+        string name,
+        Action<string> onStatus,
+        Action<string, string?, bool> persistOverride,
+        Func<string, LivewireOutputSettings?> resolveLivewireOutput,
+        Func<string?> getLivewireNetworkInterfaceIp)
     {
         _name = name;
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
         _persistOverride = persistOverride ?? throw new ArgumentNullException(nameof(persistOverride));
+        _resolveLivewireOutput = resolveLivewireOutput ?? throw new ArgumentNullException(nameof(resolveLivewireOutput));
+        _getLivewireNetworkInterfaceIp = getLivewireNetworkInterfaceIp ?? throw new ArgumentNullException(nameof(getLivewireNetworkInterfaceIp));
         _audioEngine = new AudioEngine();
 
         _audioEngine.MediaEnded += (_, _) => Application.Current?.Dispatcher.Invoke(OnPlaybackEnded);
@@ -131,6 +151,12 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
         // tocando agora — sem efeito se nada estiver tocando ou se a duração dele for desconhecida
         // (VtButtonViewModel.UpdateElapsed já trata os dois casos).
         _audioEngine.PositionChanged += (_, elapsed) => Application.Current?.Dispatcher.Invoke(() => NowPlaying?.UpdateElapsed(elapsed));
+
+        // Sprint Livewire-2 (2026-09-13): disparado na thread dedicada do AudioEngine (nunca a UI
+        // thread) só quando este banco tem uma Saída Livewire selecionada — de propósito SEM
+        // Application.Current.Dispatcher.Invoke aqui, o ritmo é de 5ms e marshalar pra UI a cada
+        // bloco custaria caro à toa (não precisa tocar em nada de UI, só mandar o pacote pela rede).
+        _audioEngine.ExternalAudioBlockReady += OnExternalAudioBlockReady;
 
         Programs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CountLabel));
         Buttons.CollectionChanged += (_, _) => OnPropertyChanged(nameof(CountLabel));
@@ -234,8 +260,103 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
     /// <summary>Volta da lista de cartuchos de um programa pra lista de programas.</summary>
     public ICommand BackCommand { get; }
 
-    /// <summary>Dispositivo de saída de áudio usado por este banco a partir do próximo cartucho tocado (Configurações → Cartucheira). Nulo = padrão do sistema.</summary>
-    public void SetOutputDevice(string? deviceId) => _audioEngine.SetOutputDevice(deviceId);
+    /// <summary>
+    /// Dispositivo de saída de áudio usado por este banco a partir do próximo cartucho tocado
+    /// (Configurações → Cartucheira). Nulo = padrão do sistema. Sprint Livewire-2 (2026-09-13):
+    /// também aceita um valor prefixado <c>"livewire:{Id}"</c> (Saída Livewire criada em
+    /// Configurações) — ver <see cref="AudioEngine.ExternalOutputPrefix"/> e
+    /// <see cref="UpdateLivewireSender"/>.
+    /// </summary>
+    public void SetOutputDevice(string? deviceId)
+    {
+        _audioEngine.SetOutputDevice(deviceId);
+        UpdateLivewireSender(deviceId);
+    }
+
+    /// <summary>
+    /// Sprint Livewire-2 (2026-09-13): cria/recria/desliga o <see cref="LivewireSender"/> deste banco
+    /// conforme o dispositivo configurado agora. O <see cref="LivewireSender"/> é só o "cano de
+    /// saída" (canal Livewire escolhido + placa de rede) — quem decide QUANDO mandar cada bloco é
+    /// sempre <see cref="AudioEngine.ExternalAudioBlockReady"/> (ver <see cref="OnExternalAudioBlockReady"/>),
+    /// nunca este método.
+    /// </summary>
+    private void UpdateLivewireSender(string? deviceId)
+    {
+        var isLivewire = deviceId is not null && deviceId.StartsWith(AudioEngine.ExternalOutputPrefix, StringComparison.Ordinal);
+
+        if (!isLivewire)
+        {
+            DisposeLivewireSender();
+            return;
+        }
+
+        var outputId = deviceId!.Substring(AudioEngine.ExternalOutputPrefix.Length);
+        var output = _resolveLivewireOutput(outputId);
+
+        if (output is null)
+        {
+            // Saída referenciada não existe mais (apagada em Configurações depois de já selecionada
+            // aqui) — fica honestamente sem transmitir nada em vez de adivinhar um canal.
+            // AudioEngine.ExternalAudioBlockReady continua disparando (o mixer é lido do mesmo jeito),
+            // só não há mais pra onde mandar.
+            DisposeLivewireSender();
+            _onStatus($"{Name}: a Saída Livewire selecionada não existe mais — nada será transmitido até escolher outra em Configurações.");
+            return;
+        }
+
+        var networkInterfaceIp = _getLivewireNetworkInterfaceIp();
+
+        if (_livewireSender is not null
+            && _livewireOutputId == outputId
+            && _livewireSender.Channel == output.Channel
+            && _livewireNetworkInterfaceIp == networkInterfaceIp)
+        {
+            // Nada mudou desde o último Start (nem a Saída, nem o canal, nem a placa de rede) — não
+            // vale a pena derrubar e reabrir o socket à toa (ex.: janela de Configurações fechada sem
+            // nenhuma edição real nesta Cartucheira).
+            return;
+        }
+
+        DisposeLivewireSender();
+
+        var sender = new LivewireSender(output.Channel);
+        if (!sender.Start(networkInterfaceIp))
+        {
+            _onStatus($"{Name}: não foi possível iniciar a Saída Livewire \"{output.Name}\" (canal {output.Channel}): {sender.LastError}.");
+            sender.Dispose();
+            return;
+        }
+
+        _livewireSender = sender;
+        _livewireOutputId = outputId;
+        _livewireNetworkInterfaceIp = networkInterfaceIp;
+    }
+
+    private void DisposeLivewireSender()
+    {
+        _livewireSender?.Dispose();
+        _livewireSender = null;
+        _livewireOutputId = null;
+        _livewireNetworkInterfaceIp = null;
+    }
+
+    /// <summary>
+    /// Disparado na thread dedicada do <see cref="AudioEngine"/> (nunca a UI thread) a cada bloco de
+    /// 5ms pronto pra virar um pacote Livewire. Sem efeito se este banco não tiver Saída Livewire
+    /// selecionada agora, ou se o bloco for de um id diferente do configurado no momento (corrida
+    /// rara entre trocar de dispositivo em Configurações e um bloco que já estava a caminho —
+    /// inofensiva, só descartada).
+    /// </summary>
+    private void OnExternalAudioBlockReady(object? sender, ExternalAudioBlockEventArgs e)
+    {
+        var livewireSender = _livewireSender;
+        if (livewireSender is null || _livewireOutputId != e.OutputId)
+        {
+            return;
+        }
+
+        livewireSender.SendFrame(e.Left, e.Right);
+    }
 
     /// <summary>Duração (ms) do crossfade aplicado na próxima troca de cartucho deste banco — Sprint Crossfade v2 (2026-08-11). Zero = corte seco (padrão).</summary>
     public void SetCrossfadeDuration(int milliseconds) => _audioEngine.SetCrossfadeDuration(milliseconds);
@@ -771,5 +892,9 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
         })
     };
 
-    public void Dispose() => _audioEngine.Dispose();
+    public void Dispose()
+    {
+        _audioEngine.Dispose();
+        DisposeLivewireSender();
+    }
 }

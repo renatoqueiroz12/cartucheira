@@ -1,0 +1,48 @@
+<UserControl x:Class="CartucheiraVideo.Presentation.Views.NdiNetworkSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        Sprint NDI-Placa-de-Rede (2026-09-13): quinta seção da janela de Configurações, ao lado de
+        Deck 1/Deck 2/Cartucheira/Saídas Livewire. Mesmo padrão de Style.FieldLabel/FieldGroup/
+        SectionTitle redefinidos localmente já usado pelos outros painéis desta janela (ver
+        comentário equivalente em LivewireOutputsSettingsPanel.xaml) — mantido bem mais simples que
+        aquele painel: só um seletor e dois avisos em texto, sem lista pra gerenciar.
+    -->
+    <UserControl.Resources>
+        <Style x:Key="Theme.FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Small}" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+
+        <Style x:Key="Theme.FieldGroup" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+
+        <Style x:Key="Theme.SectionTitle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Label}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <TextBlock Text="Rede NDI" Style="{StaticResource Theme.SectionTitle}" />
+            <TextBlock Text="Restringe a placa de rede usada pelo NDI (vídeo/áudio dos Decks) — útil quando outra placa desta máquina já está dedicada a outra coisa (ex.: Livewire) e o NDI não pode mais sair por ela."
+                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,0,0,14" TextWrapping="Wrap" />
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Placa de rede permitida para o NDI" Style="{StaticResource Theme.FieldLabel}" />
+                <ComboBox ItemsSource="{Binding NetworkInterfaces}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                          SelectedValue="{Binding NetworkInterfaceIp}" />
+                <TextBlock Text="IMPORTANTE: o NDI não tem essa opção &quot;por programa&quot; — o Windows guarda essa escolha num arquivo que vale pra QUALQUER programa NDI desta máquina, não só a Cartucheira (se houver outro software NDI rodando aqui, ele também fica restrito à placa escolhida)."
+                           Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,10,0,0" TextWrapping="Wrap" FontWeight="Bold" />
+                <TextBlock Text="Depois de salvar, reinicie a Cartucheira (e qualquer outro programa NDI aberto nesta máquina) — não há confirmação de que o NDI relê essa configuração com os programas já abertos."
+                           Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

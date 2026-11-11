@@ -60,7 +60,7 @@ public static class BackgroundArtRenderer
                 // do stream fechar no fim deste using — sem isso, o acesso aos pixels abaixo
                 // poderia tentar ler de um stream ja fechado (carregamento tardio/lazy e o padrao
                 // normal do WPF quando o cache option e OnDemand).
-                var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.PreservePixelCacheOption, BitmapCacheOption.OnLoad);
+                var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.None, BitmapCacheOption.OnLoad);
 
                 if (decoder.Frames.Count == 0)
                 {

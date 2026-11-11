@@ -730,6 +730,25 @@ public sealed class PlaybackEngine : IDisposable
         // a trilha de audio do arquivo TAMBEM e mandava pro dispositivo de audio PADRAO do Windows
         // por conta propria, um consumidor de audio indesejado e nunca configuravel. ":no-audio" aqui
         // e a correcao definitiva: este player nunca precisou de audio nenhum, so decodifica video.
+        // Fix v1.0.60 (2026-11-11): achado revendo este metodo investigando o crash de acesso
+        // invalido (0xc0000005/ntdll.dll) relatado ao dar Play — este Stop() aqui estava FALTANDO,
+        // assimetrico com o _framePlayerB.Stop() alguns campos abaixo (que SEMPRE e chamado antes de
+        // trocar a Media do slot B). Sem ele, se este metodo for chamado com o slot A ainda tocando
+        // de verdade (ex.: operador troca o arquivo do mesmo Deck sem parar primeiro, ou chama Load
+        // de novo rapido), a troca de _framePlayer.Media + ConfigureFrameFormat (que reescreve
+        // _frameOffsetXBytes/_frameOffsetYBytes/chama SetVideoFormat com as dimensoes do arquivo
+        // NOVO) acontece na thread da interface ENQUANTO a thread interna do LibVLC ainda pode estar
+        // dentro de OnFrameLock/OnFrameDisplay lendo esses mesmos campos pro arquivo ANTIGO — uma
+        // corrida de dados classica entre threads, e exatamente a classe de bug (estado nativo
+        // compartilhado sem sincronizacao) que ja causou os sete crashes historicos do audio NDI
+        // documentados em NdiSender. Stop() aqui forca o LibVLC a terminar de usar o formato/buffers
+        // antigos antes de qualquer campo novo ser escrito. NAO comprovado ainda como a causa do
+        // crash relatado (o usuario descreveu um Play isolado, nao uma troca de arquivo em
+        // sequencia) — corrigido de qualquer forma por ser um defeito real e de baixo risco, mas a
+        // investigacao do crash continua: ver tambem o log nativo do LibVLC adicionado nesta mesma
+        // versao (App.xaml.cs) pra capturar a causa raiz de verdade na proxima reproducao.
+        _framePlayer.Stop();
+
         var previousFrameMedia = _currentFrameMedia;
         _currentFrameMedia = new Media(_libVlc, filePath, FromType.FromPath, ":no-audio");
         _framePlayer.Media = _currentFrameMedia;

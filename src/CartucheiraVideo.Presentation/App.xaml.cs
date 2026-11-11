@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
@@ -51,7 +52,41 @@ public partial class App : Application
         // Totalmente qualificado de proposito: "Core" sozinho colidiria com o namespace
         // CartucheiraVideo.Core (o projeto de dominio) se algum dia for importado neste arquivo.
         LibVLCSharp.Shared.Core.Initialize();
-        _libVlc = new LibVLC();
+
+        // Fix v1.0.60 (2026-11-11): incidente real em investigacao — "dei Play num Deck e o
+        // programa fechou" se repete mesmo com os handlers de excecao da v1.0.59 no lugar (eles
+        // nunca disparam, crash.log nunca e criado). Confirmado via Visualizador de Eventos do
+        // Windows: codigo de excecao 0xc0000005 (STATUS_ACCESS_VIOLATION), modulo com falha
+        // ntdll.dll — uma categoria de falha nativa que NENHUM handler gerenciado do .NET consegue
+        // capturar (ver comentario de classe acima). crash.log so registra excecoes do CLR; nunca
+        // vai ver isto. A UNICA forma de capturar uma pista real da causa nativa (qual arquivo,
+        // qual codec, qual modulo interno do libvlc) e pelo proprio log nativo do libvlc — por isso
+        // estas duas opcoes abaixo, passadas direto pro libvlc_new nativo (nao e codigo gerenciado,
+        // nao passa por nenhum dos handlers acima). "--verbose=2" e o nivel de log mais detalhado
+        // documentado da VLC CLI (debug); "--file-logging"/"--logfile=" sao o modulo "logger" oficial
+        // do libvlc que grava esse log em arquivo, em vez de so na saida padrao (que este processo,
+        // rodando sem console, nao tem onde mostrar). Mesma pasta de sempre
+        // (%AppData%\CartucheiraVideo), igual ao crash.log e ao settings.json.
+        var libVlcLogPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "CartucheiraVideo",
+            "libvlc.log");
+        try
+        {
+            var libVlcLogDirectory = Path.GetDirectoryName(libVlcLogPath);
+            if (!string.IsNullOrEmpty(libVlcLogDirectory))
+            {
+                Directory.CreateDirectory(libVlcLogDirectory);
+            }
+        }
+        catch
+        {
+            // Falha honesta e silenciosa — mesma postura do CrashLogger: diagnostico nunca pode
+            // impedir o programa de abrir. Sem a pasta criada aqui, o libvlc so vai falhar em criar
+            // o proprio arquivo de log (sem log nativo nesta sessao), nunca derruba o startup.
+        }
+
+        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}");
 
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);

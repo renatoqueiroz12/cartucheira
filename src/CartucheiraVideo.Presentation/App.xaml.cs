@@ -38,6 +38,12 @@ public partial class App : Application
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);
         mainWindow.Show();
+
+        // Fix v1.0.54 (2026-11-11): tem que vir DEPOIS do Show() acima, nunca dentro do construtor
+        // do MainViewModel — ver comentário completo em MainViewModel.InitializeAfterMainWindowShown
+        // pro porquê (a checagem de segurança de "Telas" precisa da janela principal já visível pra
+        // saber qual monitor é o do operador e nunca abrir uma saída de tela em cima dele).
+        _mainViewModel.InitializeAfterMainWindowShown();
     }
 
     protected override void OnExit(ExitEventArgs e)

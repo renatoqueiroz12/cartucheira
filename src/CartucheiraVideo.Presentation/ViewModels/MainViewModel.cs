@@ -177,21 +177,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Sprint Arte-de-Fundo (2026-11-10): ApplyToDeck acima só escreve DomainDeck.UseBackgroundArt
         // — não passa por State nenhuma vez (o Deck começa e continua em Cue), então o gatilho normal
         // (DeckViewModel.State setter chamando UpdateBackgroundArtIdleSender) nunca dispara sozinho
-        // na inicialização. RefreshBackgroundArt() força a primeira avaliação, pra um Deck que já
-        // abre com "usar arte de fundo" ligado e uma arte ativa configurada já mostrar ela desde o
-        // primeiro instante, sem precisar de nenhum Play/Stop manual primeiro.
-        // Sprint Telas-Saida-Direta (2026-11-10): RefreshScreenOutputs() ANTES de RefreshBackgroundArt()
-        // de propósito — a decisão de mandar (ou não) a arte de fundo agora também considera se há
-        // alguma tela aberta (ver UpdateBackgroundArtIdleSender), então as janelas precisam já
-        // existir antes dessa avaliação, senão um Deck sem NDI mas configurado pra Telas perderia a
-        // primeira avaliação da arte por engano. Mesmo motivo de existir do RefreshBackgroundArt()
-        // abaixo: ApplyToDeck só escreve os campos, não passa por State nenhuma vez, então nenhum
-        // dos dois gatilhos normais dispara sozinho na inicialização.
-        DeckA.RefreshScreenOutputs();
-        DeckB.RefreshScreenOutputs();
-
-        DeckA.RefreshBackgroundArt();
-        DeckB.RefreshBackgroundArt();
+        // na inicialização. Por isso a primeira avaliação (RefreshScreenOutputs + RefreshBackgroundArt)
+        // precisa ser forçada manualmente — mas NÃO aqui dentro do construtor, ver
+        // InitializeAfterMainWindowShown() logo abaixo pro motivo (incidente real, Fix v1.0.54).
 
         // Sprint Cartucheira (2026-08-09): dois bancos fixos (Vinhetas/Trilhas), cada um com seu
         // próprio Engine.AudioEngine independente (NAudio desde a Sprint Crossfade v2, 2026-08-11 —
@@ -267,6 +255,35 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _clockTimer.Start();
     }
 
+    /// <summary>
+    /// Fix v1.0.54 (2026-11-11): chamado por <c>App.OnStartup</c> logo DEPOIS de
+    /// <c>mainWindow.Show()</c> — nunca de dentro deste construtor. Faz a primeira avaliação de
+    /// Telas/Arte de Fundo dos dois Decks, mesmo papel que <see cref="DeckViewModel.RefreshScreenOutputs"/>/
+    /// <see cref="DeckViewModel.RefreshBackgroundArt"/> já cumprem ao Salvar em Configurações —
+    /// necessário porque <c>ApplyToDeck</c> (chamado no construtor, acima) só escreve os campos,
+    /// nunca passa <see cref="DeckViewModel.State"/> por uma transição, então nenhum dos dois
+    /// gatilhos normais dispara sozinho na inicialização.
+    ///
+    /// Esta chamada só funciona corretamente DEPOIS da janela principal já estar mostrada: a
+    /// checagem de segurança que impede uma Tela de abrir em cima do monitor do operador
+    /// (<see cref="DeckViewModel.RefreshScreenOutputs"/>) resolve isso olhando
+    /// <see cref="Application.Current"/>.Windows — antes do <c>Show()</c> essa coleção está vazia
+    /// (a MainWindow sequer existe ainda nesta classe, que é construída ANTES dela em
+    /// <c>App.OnStartup</c>), então a checagem não acha nada pra proteger e a tela acaba abrindo
+    /// mesmo em cima do monitor onde a janela principal está prestes a aparecer — foi exatamente
+    /// o incidente real que motivou o Fix v1.0.54 (o usuário via tela preta direto ao abrir o
+    /// programa, mesmo já com a proteção daquele fix). Chamar isto só depois do <c>Show()</c>
+    /// resolve na raiz, sem precisar de nenhum atraso/retry artificial.
+    /// </summary>
+    public void InitializeAfterMainWindowShown()
+    {
+        DeckA.RefreshScreenOutputs();
+        DeckB.RefreshScreenOutputs();
+
+        DeckA.RefreshBackgroundArt();
+        DeckB.RefreshBackgroundArt();
+    }
+
     public string Title => "Cartucheira Vídeo";
 
     /// <summary>
@@ -279,7 +296,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.54";
+    public string VersionLabel => "v1.0.55";
 
     public DeckViewModel DeckA { get; }
 

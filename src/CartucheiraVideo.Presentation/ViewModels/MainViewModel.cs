@@ -235,6 +235,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         ApplyExternalTriggerSettings();
 
+        // Fix v1.0.56 (2026-11-11): atalho de emergência "fechar todas as Telas" — sempre ativo,
+        // não é uma opção de Configurações (ver RegisterEmergencyCloseScreensHotkey).
+        RegisterEmergencyCloseScreensHotkey();
+
         NdiOutputs = new ObservableCollection<NdiOutputStatusViewModel>
         {
             new() { Name = "vMix", IsConnected = false },
@@ -296,7 +300,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.55";
+    public string VersionLabel => "v1.0.56";
 
     public DeckViewModel DeckA { get; }
 
@@ -848,6 +852,55 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         return result.Id;
+    }
+
+    /// <summary>
+    /// Fix v1.0.56 (2026-11-11): registra o atalho global (Ctrl+Alt+Shift+F9) que fecha TODAS as
+    /// <see cref="ScreenOutputWindow"/> dos dois Decks na hora — pedido direto do usuário depois de
+    /// ficar travado de novo mesmo com a proteção da v1.0.54/v1.0.55 (ver DeckViewModel.
+    /// CloseAllScreenOutputWindowsForSafety): aquela proteção evita abrir uma Tela em cima do
+    /// monitor do operador, mas não cobre todo caso possível (ex.: máquina com um monitor só, onde
+    /// "a tela principal" É o único monitor que existe). Diferente do antigo atalho Ctrl+Shift+Esc
+    /// (removido — colidia com o atalho reservado do próprio Windows pro Gerenciador de Tarefas e
+    /// por isso nunca disparava, confirmado pelo usuário testando no Windows real): este é um
+    /// atalho GLOBAL de verdade via <see cref="GlobalHotkeyService"/>/<c>RegisterHotKey</c> —
+    /// funciona mesmo sem nenhuma janela da Cartucheira em foco (diferente do antigo, que era um
+    /// <c>PreviewKeyDown</c> amarrado a cada <see cref="ScreenOutputWindow"/> individualmente, e só
+    /// fazia efeito se aquela janela específica estivesse em foco — no incidente real, a janela
+    /// nem conseguia receber foco de verdade por estar coberta). Ctrl+Alt+Shift é uma combinação
+    /// deliberadamente incomum, pra minimizar a chance de colidir com outro programa já rodando
+    /// (vMix, Resolume, OBS etc.); se ainda assim colidir, o registro falha de forma honesta (ver
+    /// <see cref="StatusMessage"/> abaixo) em vez de fingir que o atalho está ativo.
+    ///
+    /// Sempre ativo enquanto o programa roda — não é uma opção de Configurações, é uma rede de
+    /// segurança incondicional. Nunca é desregistrado/reregistrado (diferente de
+    /// <see cref="ReapplyHotkey"/>), então não precisa guardar o id — <c>_hotkeyService.Dispose()</c>
+    /// (chamado em <see cref="Dispose"/>) já libera no fechamento do programa.
+    /// </summary>
+    private void RegisterEmergencyCloseScreensHotkey()
+    {
+        var result = _hotkeyService.Register(
+            GlobalHotkeyKey.F9,
+            () => Application.Current?.Dispatcher.Invoke(() =>
+            {
+                DeckA.CloseAllScreenOutputWindowsForSafety();
+                DeckB.CloseAllScreenOutputWindowsForSafety();
+
+                StatusMessage = "Emergência: todas as Telas foram fechadas agora (Ctrl+Alt+Shift+F9). Vá em Configurações e corrija a seleção de Telas antes de salvar de novo.";
+
+                if (Application.Current?.MainWindow is { } mainWindow)
+                {
+                    mainWindow.Activate();
+                    mainWindow.Topmost = true;
+                    mainWindow.Topmost = false;
+                }
+            }),
+            GlobalHotkeyModifiers.Control | GlobalHotkeyModifiers.Alt | GlobalHotkeyModifiers.Shift);
+
+        if (!result.Succeeded)
+        {
+            StatusMessage = $"Atalho de emergência (Ctrl+Alt+Shift+F9) não pôde ser ativado: {result.ErrorMessage}. As outras proteções de Telas continuam valendo.";
+        }
     }
 
     /// <summary>

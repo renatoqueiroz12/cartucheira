@@ -39,7 +39,9 @@ public sealed class GlobalHotkeyService : IDisposable
     private const uint WM_HOTKEY = 0x0312;
     private const uint WM_APP_INVOKE = 0x8000 + 1; // WM_APP + 1 — mensagem própria, sem significado nativo, só usada pra "há callbacks pendentes na fila, execute-os".
     private const uint MOD_NOREPEAT = 0x4000;
+    private const uint MOD_ALT = 0x0001;
     private const uint MOD_CONTROL = 0x0002;
+    private const uint MOD_SHIFT = 0x0004;
     private const int CW_USEDEFAULT = unchecked((int)0x80000000);
 
     private static readonly IntPtr HWND_MESSAGE = new(-3);
@@ -74,8 +76,14 @@ public sealed class GlobalHotkeyService : IDisposable
     /// Nunca lança em caso de falha (ex.: tecla já usada por outro programa) — devolve
     /// <see cref="HotkeyRegistrationResult.Failure"/> com uma mensagem legível, pra quem chamou
     /// avisar o operador honestamente em vez de fingir que o atalho está ativo.
+    ///
+    /// Fix v1.0.56 (2026-11-11): parâmetro <paramref name="modifiers"/> novo, opcional — todo
+    /// chamador antigo (Vinhetas/Trilhas) continua sem passar nada, comportamento idêntico a
+    /// antes. Permite exigir Ctrl/Alt/Shift explícitos além da tecla base, usado pelo atalho de
+    /// emergência "fechar todas as Telas" (Ctrl+Alt+Shift+F9), que precisa de uma combinação rara
+    /// pra nunca colidir com nada do Windows ou de outro programa.
     /// </summary>
-    public HotkeyRegistrationResult Register(GlobalHotkeyKey key, Action onPressed)
+    public HotkeyRegistrationResult Register(GlobalHotkeyKey key, Action onPressed, GlobalHotkeyModifiers modifiers = GlobalHotkeyModifiers.None)
     {
         ArgumentNullException.ThrowIfNull(onPressed);
 
@@ -107,11 +115,15 @@ public sealed class GlobalHotkeyService : IDisposable
             // (nenhum relato de problema com elas). Ver também o rótulo "Ctrl+Tab" no ComboBox de
             // Configurações (CartridgeSettingsViewModel.KeyboardShortcuts) — o operador precisa saber
             // que agora precisa segurar Ctrl.
-            var modifiers = MOD_NOREPEAT | (key == GlobalHotkeyKey.Tab ? MOD_CONTROL : 0);
+            var win32Modifiers = MOD_NOREPEAT
+                | (key == GlobalHotkeyKey.Tab ? MOD_CONTROL : 0)
+                | ((modifiers & GlobalHotkeyModifiers.Control) != 0 ? MOD_CONTROL : 0)
+                | ((modifiers & GlobalHotkeyModifiers.Alt) != 0 ? MOD_ALT : 0)
+                | ((modifiers & GlobalHotkeyModifiers.Shift) != 0 ? MOD_SHIFT : 0);
 
             RunOnMessageThread(() =>
             {
-                succeeded = RegisterHotKey(_hwnd, id, modifiers, (uint)key);
+                succeeded = RegisterHotKey(_hwnd, id, win32Modifiers, (uint)key);
                 if (!succeeded)
                 {
                     win32Error = Marshal.GetLastWin32Error();

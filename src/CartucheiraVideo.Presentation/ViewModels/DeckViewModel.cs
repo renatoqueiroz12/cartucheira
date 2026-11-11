@@ -1504,22 +1504,48 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
             var window = new ScreenOutputWindow(screen.DeviceName);
             window.SetSource(bitmap);
             window.PositionOnScreen(screen);
-            // Rede de segurança adicional (mesmo incidente do comentário acima): Ctrl+Shift+Esc
-            // dentro desta janela fecha ela na hora, mesmo que a checagem de monitor-do-operador
-            // acima não tenha pego o caso (ex.: o operador move a janela principal pra esta tela
-            // DEPOIS que a Cartucheira já abriu a saída aqui). Não mexe na configuração salva —
-            // só dá uma saída imediata; a tela volta a abrir no próximo Refresh enquanto a seleção
-            // continuar marcada, dando tempo do operador ir em Configurações corrigir de verdade.
-            window.PreviewKeyDown += (_, e) =>
-            {
-                if (e.Key == System.Windows.Input.Key.Escape && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
-                {
-                    window.Close();
-                }
-            };
+            // Fix v1.0.56 (2026-11-11): a antiga rede de segurança daqui (PreviewKeyDown desta
+            // janela escutando Ctrl+Shift+Esc) foi REMOVIDA — confirmado pelo usuário testando no
+            // Windows real que nunca disparava (Ctrl+Shift+Esc é atalho reservado do próprio
+            // Windows pro Gerenciador de Tarefas, interceptado antes de chegar em qualquer janela
+            // de aplicativo) e, mesmo se disparasse, dependia desta janela especificamente estar
+            // em foco — o que falha exatamente no cenário que mais importa (ela cobrindo tudo sem
+            // conseguir receber foco de verdade). Substituída por um atalho GLOBAL de verdade
+            // (Ctrl+Alt+Shift+F9, independente de foco) em MainViewModel.
+            // RegisterEmergencyCloseScreensHotkey, que fecha todas as Telas dos dois Decks de uma
+            // vez via DeckViewModel.CloseAllScreenOutputWindowsForSafety.
             window.Closed += (_, _) => _screenOutputWindows.Remove(window);
             window.Show();
             _screenOutputWindows.Add(window);
+        }
+    }
+
+    /// <summary>
+    /// Fix v1.0.56 (2026-11-11): fecha TODAS as <see cref="ScreenOutputWindow"/> deste Deck na
+    /// hora, incondicionalmente — chamado pelo atalho global de emergência (Ctrl+Alt+Shift+F9, ver
+    /// <c>MainViewModel.RegisterEmergencyCloseScreensHotkey</c>) quando o operador fica com alguma
+    /// Tela cobrindo o monitor onde precisaria acessar Configurações. Motivo de existir: a proteção
+    /// de <see cref="RefreshScreenOutputs"/> (nunca abrir uma Tela no monitor do operador) não
+    /// cobre todo caso — por exemplo, uma máquina com um monitor só, onde "a tela principal" É o
+    /// único monitor que existe (não tem como excluir sem também nunca mostrar nada ali), ou
+    /// qualquer outro caso que a detecção de monitor não pegue. Relatado pelo usuário em produção
+    /// (2026-11-11): mesmo já com a v1.0.54/v1.0.55 instaladas, selecionar a tela principal travou
+    /// de novo o acesso à Configuração.
+    ///
+    /// Diferente de <see cref="RefreshScreenOutputs"/>: não recalcula nada contra a seleção salva,
+    /// só derruba o que estiver aberto AGORA — a seleção em si continua intacta em
+    /// <see cref="Core.Deck.ScreenOutputDeviceNames"/>, então a Tela pode voltar a abrir no próximo
+    /// <see cref="RefreshScreenOutputs"/> (próxima inicialização, ou próximo Salvar em
+    /// Configurações) enquanto o operador não corrigir a seleção de verdade — este método é só o
+    /// "pânico, agora", nunca uma correção permanente da configuração.
+    /// </summary>
+    public void CloseAllScreenOutputWindowsForSafety()
+    {
+        for (var i = _screenOutputWindows.Count - 1; i >= 0; i--)
+        {
+            var window = _screenOutputWindows[i];
+            _screenOutputWindows.RemoveAt(i);
+            window.Close();
         }
     }
 

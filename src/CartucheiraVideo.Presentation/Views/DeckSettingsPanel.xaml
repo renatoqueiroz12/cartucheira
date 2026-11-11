@@ -310,6 +310,10 @@
                                                    Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}"
                                                    Margin="22,2,0,0" TextWrapping="Wrap"
                                                    Visibility="{Binding IsNotCurrentlyConnected, Converter={StaticResource BoolToVis}}" />
+                                        <TextBlock Text="⚠ Este é o monitor onde a Cartucheira está sendo usada agora — marcar isto não envia vídeo pra cá (proteção contra travar sua tela). Use outra tela pra saída de vídeo."
+                                                   Foreground="{DynamicResource Brush.Amber}" FontSize="{StaticResource FontSize.Micro}"
+                                                   Margin="22,2,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding IsOperatorScreen, Converter={StaticResource BoolToVis}}" />
                                     </StackPanel>
                                 </DataTemplate>
                             </ListBox.ItemTemplate>

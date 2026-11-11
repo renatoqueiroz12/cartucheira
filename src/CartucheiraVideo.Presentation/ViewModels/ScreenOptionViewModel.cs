@@ -16,17 +16,24 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// (placa desligada, cabo tirado), a escolha continua salva e marcada, mas a linha mostra um aviso em
 /// vez de fingir que está tudo bem — ver <see cref="DeckSettingsViewModel"/> pra como a lista é
 /// montada combinando os monitores detectados agora com a seleção persistida.
+///
+/// Fix v1.0.57 (2026-11-11): <see cref="IsOperatorScreen"/> novo — incidente real: o usuário achou
+/// que o app estava "enxergando errado" os monitores porque marcar "Tela 1" não mandava imagem pra
+/// lugar nenhum, sem perceber que "Tela 1" era justamente o monitor onde a própria Cartucheira
+/// estava rodando (bloqueado de propósito, ver <c>DeckViewModel.RefreshScreenOutputs</c>). Agora a
+/// própria linha da lista avisa isso, em vez do operador só descobrir ao tentar Salvar.
 /// </summary>
 public sealed class ScreenOptionViewModel : ViewModelBase
 {
     private bool _isSelected;
 
-    public ScreenOptionViewModel(string deviceName, string label, bool isSelected, bool isCurrentlyConnected)
+    public ScreenOptionViewModel(string deviceName, string label, bool isSelected, bool isCurrentlyConnected, bool isOperatorScreen = false)
     {
         DeviceName = deviceName;
         Label = label;
         _isSelected = isSelected;
         IsCurrentlyConnected = isCurrentlyConnected;
+        IsOperatorScreen = isOperatorScreen;
     }
 
     /// <summary>Identificador estável do monitor (ex.: <c>"\\.\DISPLAY2"</c>) — imutável, é o que persiste.</summary>
@@ -51,4 +58,14 @@ public sealed class ScreenOptionViewModel : ViewModelBase
 
     /// <summary>Inverso de <see cref="IsCurrentlyConnected"/> — só pra facilitar o Binding de Visibility do aviso na XAML (evita precisar de um converter booleano-inverso só pra isto).</summary>
     public bool IsNotCurrentlyConnected => !IsCurrentlyConnected;
+
+    /// <summary>
+    /// Verdadeiro quando este monitor é o que hospeda AGORA alguma janela de verdade da própria
+    /// Cartucheira (MainWindow, SettingsWindow etc.) — mesma checagem de
+    /// <see cref="DeckViewModel.GetOperatorScreenDeviceNames"/>, usada aqui só pra AVISAR na lista
+    /// (ver Fix v1.0.57 no comentário da classe); marcar esta linha continua permitido (a seleção
+    /// salva nunca é bloqueada), só não vai abrir uma Tela aqui de verdade — a proteção real
+    /// continua sendo feita em <see cref="DeckViewModel.RefreshScreenOutputs"/>.
+    /// </summary>
+    public bool IsOperatorScreen { get; }
 }

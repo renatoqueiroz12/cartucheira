@@ -535,12 +535,21 @@ public sealed class DeckSettingsViewModel : ViewModelBase
     /// detectado agora (placa desconectada) entra como uma linha extra, marcada, com
     /// <see cref="ScreenOptionViewModel.IsCurrentlyConnected"/> falso — "falha honesta" em vez de
     /// simplesmente descartar a escolha do operador por uma desconexão temporária.
+    ///
+    /// Fix v1.0.57 (2026-11-11): também marca qual linha é <see cref="ScreenOptionViewModel.IsOperatorScreen"/>
+    /// — o monitor onde a própria Cartucheira está rodando agora — reaproveitando
+    /// <see cref="DeckViewModel.GetOperatorScreenDeviceNames"/> (mesma checagem usada pra nunca
+    /// abrir uma Tela ali). Incidente real que motivou isto: o usuário achou que a numeração
+    /// "Tela 1"/"Tela 2" estava "invertida" ou "errada" porque marcar a tela onde ele próprio
+    /// estava não mandava vídeo pra lugar nenhum — sem essa indicação visual, não tinha como saber
+    /// que era bloqueio proposital, não bug de detecção.
     /// </summary>
     private static IEnumerable<ScreenOptionViewModel> BuildAvailableScreens(IEnumerable<string> persistedDeviceNames)
     {
         var persisted = new List<string>(persistedDeviceNames);
         var detectedNames = new HashSet<string>();
         var result = new List<ScreenOptionViewModel>();
+        var operatorDeviceNames = DeckViewModel.GetOperatorScreenDeviceNames();
 
         var detectedScreens = System.Windows.Forms.Screen.AllScreens;
         for (var i = 0; i < detectedScreens.Length; i++)
@@ -548,7 +557,7 @@ public sealed class DeckSettingsViewModel : ViewModelBase
             var screen = detectedScreens[i];
             detectedNames.Add(screen.DeviceName);
             var label = $"Tela {i + 1} — {screen.Bounds.Width}x{screen.Bounds.Height} em ({screen.Bounds.X},{screen.Bounds.Y})";
-            result.Add(new ScreenOptionViewModel(screen.DeviceName, label, persisted.Contains(screen.DeviceName), isCurrentlyConnected: true));
+            result.Add(new ScreenOptionViewModel(screen.DeviceName, label, persisted.Contains(screen.DeviceName), isCurrentlyConnected: true, isOperatorScreen: operatorDeviceNames.Contains(screen.DeviceName)));
         }
 
         foreach (var deviceName in persisted)

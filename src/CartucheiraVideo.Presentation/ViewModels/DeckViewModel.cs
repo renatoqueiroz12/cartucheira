@@ -1556,8 +1556,17 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     /// anularia a checagem). Falha honesta: qualquer problema ao resolver a tela de uma janela
     /// específica apenas ignora aquela janela, nunca derruba o <see cref="RefreshScreenOutputs"/>
     /// inteiro.
+    ///
+    /// Fix v1.0.57 (2026-11-11): visibilidade elevada de <c>private</c> pra <c>internal</c> —
+    /// incidente real: o usuário confundiu "Tela 1"/"Tela 2" na aba Configurações com a ordem
+    /// física dos monitores, não percebeu que "Tela 1" era simplesmente o monitor onde a própria
+    /// Cartucheira estava aberta (por isso marcar aquela linha "não mandava imagem pra lugar
+    /// nenhum" — bloqueada de propósito por esta mesma checagem) e achou que o app tinha
+    /// "entendido errado" os monitores. <see cref="DeckSettingsViewModel.BuildAvailableScreens"/>
+    /// agora chama este método pra marcar visualmente, na própria lista, qual linha é o monitor
+    /// atual — ver <see cref="ScreenOptionViewModel.IsOperatorScreen"/>.
     /// </summary>
-    private static HashSet<string> GetOperatorScreenDeviceNames()
+    internal static HashSet<string> GetOperatorScreenDeviceNames()
     {
         var result = new HashSet<string>();
 

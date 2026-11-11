@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CartucheiraVideo.Configuration;
@@ -1452,10 +1453,28 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
             ? new HashSet<string>(DomainDeck.ScreenOutputDeviceNames)
             : new HashSet<string>();
 
+        // Incidente real (2026-11-11): o usuário marcou, sem perceber, o MESMO monitor onde roda a
+        // janela principal da Cartucheira como uma "Tela" de saída — a ScreenOutputWindow (sem
+        // borda, sempre no topo, maximizada) cobriu a tela inteira sem nenhuma forma de fechar
+        // (sem botão, sem ícone na barra de tarefas), travando o operador fora do próprio programa
+        // até precisar encerrar a sessão do Windows. Corrigido com uma segunda camada de segurança,
+        // além de qualquer cuidado na UI de seleção: NUNCA abrir uma ScreenOutputWindow no monitor
+        // que hospeda alguma janela de verdade da própria Cartucheira agora (MainWindow,
+        // SettingsWindow etc.) — essa checagem roda aqui, no ponto único que de fato abre as
+        // janelas, então vale tanto pra seleção feita antes desta sprint existir (configuração
+        // antiga/editada à mão) quanto pra qualquer seleção futura.
+        var operatorDeviceNames = GetOperatorScreenDeviceNames();
+
         var targetScreens = System.Windows.Forms.Screen.AllScreens
-            .Where(s => desiredDeviceNames.Contains(s.DeviceName))
+            .Where(s => desiredDeviceNames.Contains(s.DeviceName) && !operatorDeviceNames.Contains(s.DeviceName))
             .ToList();
         var targetDeviceNames = new HashSet<string>(targetScreens.Select(s => s.DeviceName));
+
+        var skippedForSafety = desiredDeviceNames.Intersect(operatorDeviceNames).Any();
+        if (skippedForSafety)
+        {
+            _onStatus("Aviso: uma tela marcada em \"Telas\" não foi aberta porque é a mesma tela onde a Cartucheira está sendo usada agora — isso evita travar sua tela. Desmarque essa tela em Configurações, ou use-a só em outro monitor.");
+        }
 
         for (var i = _screenOutputWindows.Count - 1; i >= 0; i--)
         {
@@ -1485,9 +1504,67 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
             var window = new ScreenOutputWindow(screen.DeviceName);
             window.SetSource(bitmap);
             window.PositionOnScreen(screen);
+            // Rede de segurança adicional (mesmo incidente do comentário acima): Ctrl+Shift+Esc
+            // dentro desta janela fecha ela na hora, mesmo que a checagem de monitor-do-operador
+            // acima não tenha pego o caso (ex.: o operador move a janela principal pra esta tela
+            // DEPOIS que a Cartucheira já abriu a saída aqui). Não mexe na configuração salva —
+            // só dá uma saída imediata; a tela volta a abrir no próximo Refresh enquanto a seleção
+            // continuar marcada, dando tempo do operador ir em Configurações corrigir de verdade.
+            window.PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == System.Windows.Input.Key.Escape && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+                {
+                    window.Close();
+                }
+            };
+            window.Closed += (_, _) => _screenOutputWindows.Remove(window);
             window.Show();
             _screenOutputWindows.Add(window);
         }
+    }
+
+    /// <summary>
+    /// Nomes de dispositivo (<see cref="System.Windows.Forms.Screen.DeviceName"/>) de todo monitor
+    /// que hospeda AGORA alguma janela de verdade da própria Cartucheira (MainWindow, SettingsWindow,
+    /// diálogos etc.) — nunca as próprias <see cref="ScreenOutputWindow"/> (seria sempre verdade e
+    /// anularia a checagem). Falha honesta: qualquer problema ao resolver a tela de uma janela
+    /// específica apenas ignora aquela janela, nunca derruba o <see cref="RefreshScreenOutputs"/>
+    /// inteiro.
+    /// </summary>
+    private static HashSet<string> GetOperatorScreenDeviceNames()
+    {
+        var result = new HashSet<string>();
+
+        if (System.Windows.Application.Current is null)
+        {
+            return result;
+        }
+
+        foreach (Window window in System.Windows.Application.Current.Windows)
+        {
+            if (window is ScreenOutputWindow || !window.IsVisible)
+            {
+                continue;
+            }
+
+            try
+            {
+                var handle = new WindowInteropHelper(window).Handle;
+                if (handle == IntPtr.Zero)
+                {
+                    continue;
+                }
+
+                var screen = System.Windows.Forms.Screen.FromHandle(handle);
+                result.Add(screen.DeviceName);
+            }
+            catch (Exception)
+            {
+                // Falha honesta — ver comentário de resumo do método.
+            }
+        }
+
+        return result;
     }
 
     /// <summary>Cria (uma única vez, sob demanda) o <see cref="WriteableBitmap"/> 1920x1080 compartilhado por todas as telas deste Deck — mesmo canvas fixo que <see cref="BackgroundArtRenderer"/> já usa.</summary>

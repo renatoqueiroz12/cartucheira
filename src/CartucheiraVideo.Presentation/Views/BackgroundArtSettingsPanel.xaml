@@ -1,0 +1,78 @@
+<UserControl x:Class="CartucheiraVideo.Presentation.Views.BackgroundArtSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:CartucheiraVideo.Presentation.ViewModels">
+
+    <!--
+        Sprint Arte-de-Fundo (2026-11-10): sexta seção da janela de Configurações, ao lado de Deck 1/
+        Deck 2/Cartucheira/Saídas Livewire/Rede NDI — cadastro de artes de espera ("Arte 1", "Arte 2",
+        "Arte 3" etc.) e escolha de qual delas está ATIVA agora. Mesmo padrão de
+        Style.FieldLabel/FieldGroup/SectionTitle redefinidos localmente já usado pelos outros painéis
+        desta janela (ver comentário equivalente em LivewireOutputsSettingsPanel.xaml) — e mesmo
+        layout Lista+ComboBox+botões Adicionar/Remover daquele painel, só troca o conteúdo.
+
+        Quem decide SE um Deck usa a arte ativa aqui cadastrada é o próprio Deck (toggle "Mostrar
+        arte de fundo quando parado" na aba Resolume de cada Deck) — este painel só gerencia a lista
+        de artes e qual está em uso, não é por Deck.
+    -->
+    <UserControl.Resources>
+        <Style x:Key="Theme.FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Small}" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+
+        <Style x:Key="Theme.FieldGroup" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+
+        <Style x:Key="Theme.SectionTitle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Label}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <TextBlock Text="Arte de Fundo" Style="{StaticResource Theme.SectionTitle}" />
+            <TextBlock Text="Cadastre aqui as artes de espera (imagens estáticas) que um Deck pode mandar pra própria saída NDI quando não estiver tocando nada, em vez de ficar sem sinal. Escolha abaixo qual delas está ATIVA agora — só uma por vez. Pra um Deck específico usar isto, ligue &quot;Mostrar arte de fundo quando parado&quot; na aba Resolume da Configuração dele."
+                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,0,0,14" TextWrapping="Wrap" />
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Arte ativa agora" Style="{StaticResource Theme.FieldLabel}" />
+                <ComboBox ItemsSource="{Binding ActiveOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                          SelectedValue="{Binding ActivePresetId}" />
+            </StackPanel>
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Artes configuradas" Style="{StaticResource Theme.FieldLabel}" />
+                <ListBox ItemsSource="{Binding Presets}" SelectedItem="{Binding SelectedPreset}" MaxHeight="280"
+                         BorderThickness="1" BorderBrush="{DynamicResource Brush.LineSoft}">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:BackgroundArtItemViewModel}">
+                            <Grid Margin="0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="12" />
+                                    <ColumnDefinition Width="160" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Tag="nome da arte" />
+                                <TextBlock Grid.Column="2" Text="{Binding FileName}" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}"
+                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding FilePath}" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock Text="&quot;Nova arte&quot; abre um diálogo pra escolher o arquivo de imagem (PNG/JPG/BMP) — nenhuma cópia é feita pra dentro do programa, se o arquivo original for movido ou apagado depois, a arte simplesmente para de carregar. Trocar o arquivo de uma arte já criada não é suportado — remova e crie de novo apontando pro arquivo certo."
+                           Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                    <Button Content="Nova arte..." Padding="10,6" Margin="0,0,8,0" Command="{Binding AddCommand}" />
+                    <Button Content="Remover selecionada" Padding="10,6" Command="{Binding RemoveCommand}" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

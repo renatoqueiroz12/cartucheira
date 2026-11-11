@@ -19,6 +19,9 @@
         Sprint Livewire-2 (2026-09-13): quarta entrada — "Saídas Livewire". Sprint NDI-Placa-de-Rede
         (2026-09-13, mesmo dia): quinta entrada — "Rede NDI" — mesmo padrão de Visibility.
 
+        Sprint Arte-de-Fundo (2026-11-10): sexta entrada — "Arte de Fundo" (BackgroundArtSettingsPanel)
+        — mesmo padrão de Visibility das anteriores.
+
         Rodapé único (Salvar/Fechar) — diferente do antigo diálogo por Deck, Salvar aqui NÃO fecha a
         janela: aplica e persiste os três painéis de uma vez (SettingsViewModel.SaveCommand) e deixa
         o operador continuar ajustando. Fechar (code-behind) só fecha, sem desfazer nada que já
@@ -115,11 +118,22 @@
                             </Style>
                         </Button.Style>
                     </Button>
-                    <Button Content="Rede NDI" Command="{Binding SelectNdiNetworkCommand}">
+                    <Button Content="Rede NDI" Command="{Binding SelectNdiNetworkCommand}" Margin="0,0,0,4">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsNdiNetworkSelected}" Value="True">
+                                        <Setter Property="Tag" Value="Active" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="Arte de Fundo" Command="{Binding SelectBackgroundArtCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBackgroundArtSelected}" Value="True">
                                         <Setter Property="Tag" Value="Active" />
                                     </DataTrigger>
                                 </Style.Triggers>
@@ -150,6 +164,9 @@
                 </Border>
                 <Border Visibility="{Binding IsNdiNetworkSelected, Converter={StaticResource BoolToVis}}">
                     <views:NdiNetworkSettingsPanel DataContext="{Binding NdiNetworkSettings}" />
+                </Border>
+                <Border Visibility="{Binding IsBackgroundArtSelected, Converter={StaticResource BoolToVis}}">
+                    <views:BackgroundArtSettingsPanel DataContext="{Binding BackgroundArtSettings}" />
                 </Border>
             </Grid>
         </Grid>

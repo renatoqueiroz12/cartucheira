@@ -53,6 +53,24 @@ public sealed class AppSettingsSnapshot
     public string? LivewireNetworkInterfaceIp { get; set; }
 
     /// <summary>
+    /// Artes de espera cadastradas (menu Configurações → Arte de Fundo, Sprint Arte-de-Fundo,
+    /// 2026-11-10) — "Arte 1", "Arte 2", "Arte 3" etc. no vocabulário do usuário. Ver
+    /// <see cref="ActiveBackgroundArtId"/> (qual está em uso agora) e
+    /// <see cref="DeckSettingsSnapshot.UseBackgroundArt"/> (quais Decks aplicam isso na própria
+    /// saída NDI).
+    /// </summary>
+    public List<BackgroundArtPreset> BackgroundArtPresets { get; set; } = new();
+
+    /// <summary>
+    /// <see cref="BackgroundArtPreset.Id"/> da arte atualmente em uso — nulo/vazio ou um Id que não
+    /// bate com nenhuma arte de <see cref="BackgroundArtPresets"/> (ex.: a arte ativa foi removida)
+    /// equivalem a "nenhuma arte selecionada": os Decks marcados com
+    /// <see cref="DeckSettingsSnapshot.UseBackgroundArt"/> voltam ao comportamento de sempre (param
+    /// de mandar quadro nenhum quando não estão tocando), falha honesta em vez de adivinhar.
+    /// </summary>
+    public string? ActiveBackgroundArtId { get; set; }
+
+    /// <summary>
     /// IP local (IPv4) da placa de rede à qual o NDI desta máquina fica restrito — Sprint
     /// NDI-Placa-de-Rede (2026-09-13), pedida depois de dedicar uma placa só pro Livewire ("o NDI
     /// vai precisar ter o tratamento de qual placa de rede ele vai transmitir, pois agora ele está

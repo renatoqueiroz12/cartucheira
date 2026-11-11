@@ -102,6 +102,17 @@
                     </Style>
                 </Button.Style>
             </Button>
+            <Button Content="Telas" Command="{Binding SelectScreensTabCommand}">
+                <Button.Style>
+                    <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsTabButton}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsScreensTabSelected}" Value="True">
+                                <Setter Property="Tag" Value="Active" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
             <Button Content="Automação" Command="{Binding SelectAutomationTabCommand}">
                 <Button.Style>
                     <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsTabButton}">
@@ -275,6 +286,39 @@
                         <TextBox Text="{Binding ResolumeLayer, UpdateSourceTrigger=PropertyChanged}" Tag="número ou nome do layer no Resolume" />
                     </StackPanel>
                     <TextBlock Text="Nenhuma conexão real ainda — o Resolume Controller (Infrastructure) entra numa sprint futura. Estes valores só ficam salvos, prontos pra quando ele existir."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" Margin="0,0,0,16" />
+                    <CheckBox Content="Mostrar arte de fundo quando parado" IsChecked="{Binding UseBackgroundArt}" Margin="0,0,0,4" />
+                    <TextBlock Text="Quando este Deck não estiver tocando (parado, no fim de um VT ou antes de dar Play), a saída NDI dele passa a mandar a arte ativa escolhida em Configurações → Arte de Fundo, em vez de ficar sem sinal. Cadastre e escolha a arte ativa na aba &quot;Arte de Fundo&quot; da sidebar."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer Visibility="{Binding IsScreensTabSelected, Converter={StaticResource BoolToVis}}" VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <CheckBox Content="Enviar para Telas" IsChecked="{Binding SendToScreensEnabled}" Margin="0,0,0,16" />
+                    <TextBlock Text="Manda o vídeo deste Deck direto pras telas marcadas abaixo, usando a placa de vídeo conectada neste PC — sem passar pelo Resolume. É aditivo: marcar isto não desliga &quot;Enviar para Resolume&quot; na aba Resolume, então deixe aquele desmarcado quando migrar de vez pras telas."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" Margin="0,0,0,16" />
+                    <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                        <TextBlock Text="Telas detectadas" Style="{StaticResource Theme.FieldLabel}" />
+                        <ListBox ItemsSource="{Binding AvailableScreens}" MaxHeight="280"
+                                 BorderThickness="1" BorderBrush="{DynamicResource Brush.LineSoft}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:ScreenOptionViewModel}">
+                                    <StackPanel Margin="0,4">
+                                        <CheckBox Content="{Binding Label}" IsChecked="{Binding IsSelected}" />
+                                        <TextBlock Text="Não detectada agora — confira se a placa/cabo estão conectados. A seleção continua salva."
+                                                   Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}"
+                                                   Margin="22,2,0,0" TextWrapping="Wrap"
+                                                   Visibility="{Binding IsNotCurrentlyConnected, Converter={StaticResource BoolToVis}}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock Text="Lista montada a partir dos monitores que o Windows reconhece agora (placa de vídeo conectada no PC) — marque os que devem exibir o vídeo deste Deck. Clique em Salvar depois de ligar/desligar a placa ou mudar a seleção pra abrir/fechar as janelas nas telas certas."
+                                   Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <CheckBox Content="Mostrar arte de fundo quando parado" IsChecked="{Binding UseBackgroundArt}" Margin="0,0,0,4" />
+                    <TextBlock Text="Mesmo toggle da aba Resolume — quando este Deck não estiver tocando, as telas marcadas acima (e o NDI/Resolume, se ligado) passam a mostrar a arte ativa escolhida em Configurações → Arte de Fundo, em vez de ficar com o último quadro congelado."
                                Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" />
                 </StackPanel>
             </ScrollViewer>

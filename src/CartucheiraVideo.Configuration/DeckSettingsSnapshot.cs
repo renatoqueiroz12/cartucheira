@@ -29,6 +29,29 @@ public sealed class DeckSettingsSnapshot
 
     public string ResolumeLayer { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Sprint Arte-de-Fundo (2026-11-10): verdadeiro = a saída NDI deste Deck manda a arte ativa
+    /// (<see cref="AppSettingsSnapshot.ActiveBackgroundArtId"/>) quando ele não está tocando, em vez
+    /// de parar de mandar quadro nenhum. Ver <c>Core.Deck.UseBackgroundArt</c> pro
+    /// comportamento completo — este campo só persiste o valor marcado na aba Resolume da tela de
+    /// Configuração deste Deck. Padrão falso.
+    /// </summary>
+    public bool UseBackgroundArt { get; set; }
+
+    /// <summary>
+    /// Sprint Telas-Saida-Direta (2026-11-10): verdadeiro = este Deck desenha seu video direto numa
+    /// janela sem borda sobre cada monitor do Windows listado em <see cref="ScreenOutputDeviceNames"/>,
+    /// usando a placa de video local do PC — sem depender do Resolume. Ver <c>Core.Deck.SendToScreens</c>
+    /// pro comportamento completo. Padrão falso.
+    /// </summary>
+    public bool SendToScreens { get; set; }
+
+    /// <summary>
+    /// Identificadores dos monitores escolhidos — ver <c>Core.Deck.ScreenOutputDeviceNames</c>. Lista
+    /// vazia por padrão.
+    /// </summary>
+    public List<string> ScreenOutputDeviceNames { get; set; } = new();
+
     public List<AutomationActionSnapshot> OnPlayActions { get; set; } = new();
 
     public List<AutomationActionSnapshot> OnEndActions { get; set; } = new();

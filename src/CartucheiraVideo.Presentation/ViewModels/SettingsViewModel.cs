@@ -28,6 +28,12 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// (<see cref="NdiNetworkSettingsViewModel"/>), enum de <see cref="Section"/> vai pra 5 valores. Sem
 /// nenhuma lista compartilhada com outra seção (diferente da Livewire acima) — o valor só é lido de
 /// volta em <c>MainViewModel.ReapplyNdiNetworkAdapter</c> quando a janela de Configurações fecha.
+///
+/// Sprint Arte-de-Fundo (2026-11-10): sexta seção — "Arte de Fundo"
+/// (<see cref="BackgroundArtSettingsViewModel"/>), enum de <see cref="Section"/> vai pra 6 valores.
+/// Mesmo padrão simples de <see cref="NdiNetworkSettings"/> (só o snapshot, sem lista compartilhada
+/// com outra seção) — quem decide SE um Deck usa a arte ativa aqui cadastrada é o próprio
+/// <see cref="DeckSettingsViewModel.UseBackgroundArt"/> (aba Resolume de cada Deck).
 /// </summary>
 public sealed class SettingsViewModel : ViewModelBase
 {
@@ -37,7 +43,8 @@ public sealed class SettingsViewModel : ViewModelBase
         Deck2,
         Cartridges,
         LivewireOutputs,
-        NdiNetwork
+        NdiNetwork,
+        BackgroundArt
     }
 
     private readonly DeckViewModel _deckA;
@@ -87,11 +94,17 @@ public sealed class SettingsViewModel : ViewModelBase
         // só o snapshot, mesmo padrão simples de CartridgeSettings/Deck1Settings/Deck2Settings.
         NdiNetworkSettings = new NdiNetworkSettingsViewModel(currentSnapshot);
 
+        // Sprint Arte-de-Fundo (2026-11-10): mesmo padrão simples de NdiNetworkSettings acima — só
+        // precisa do snapshot inteiro (Presets + ActiveBackgroundArtId moram na raiz dele, não
+        // dentro de um Deck específico).
+        BackgroundArtSettings = new BackgroundArtSettingsViewModel(currentSnapshot);
+
         SelectDeck1Command = new RelayCommand(_ => SelectedSection = Section.Deck1);
         SelectDeck2Command = new RelayCommand(_ => SelectedSection = Section.Deck2);
         SelectCartridgesCommand = new RelayCommand(_ => SelectedSection = Section.Cartridges);
         SelectLivewireOutputsCommand = new RelayCommand(_ => SelectedSection = Section.LivewireOutputs);
         SelectNdiNetworkCommand = new RelayCommand(_ => SelectedSection = Section.NdiNetwork);
+        SelectBackgroundArtCommand = new RelayCommand(_ => SelectedSection = Section.BackgroundArt);
 
         SaveCommand = new RelayCommand(_ => Save());
     }
@@ -114,6 +127,9 @@ public sealed class SettingsViewModel : ViewModelBase
     /// <summary>Sprint NDI-Placa-de-Rede (2026-09-13): placa de rede à qual o NDI desta máquina fica restrito.</summary>
     public NdiNetworkSettingsViewModel NdiNetworkSettings { get; }
 
+    /// <summary>Sprint Arte-de-Fundo (2026-11-10): artes de espera cadastradas + qual está ativa agora.</summary>
+    public BackgroundArtSettingsViewModel BackgroundArtSettings { get; }
+
     private Section SelectedSection
     {
         get => _selectedSection;
@@ -126,6 +142,7 @@ public sealed class SettingsViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsCartridgesSelected));
                 OnPropertyChanged(nameof(IsLivewireOutputsSelected));
                 OnPropertyChanged(nameof(IsNdiNetworkSelected));
+                OnPropertyChanged(nameof(IsBackgroundArtSelected));
             }
         }
     }
@@ -140,6 +157,8 @@ public sealed class SettingsViewModel : ViewModelBase
 
     public bool IsNdiNetworkSelected => SelectedSection == Section.NdiNetwork;
 
+    public bool IsBackgroundArtSelected => SelectedSection == Section.BackgroundArt;
+
     public ICommand SelectDeck1Command { get; }
 
     public ICommand SelectDeck2Command { get; }
@@ -149,6 +168,8 @@ public sealed class SettingsViewModel : ViewModelBase
     public ICommand SelectLivewireOutputsCommand { get; }
 
     public ICommand SelectNdiNetworkCommand { get; }
+
+    public ICommand SelectBackgroundArtCommand { get; }
 
     /// <summary>Aplica os dois painéis de Deck e a Cartucheira nos objetos reais, grava o snapshot inteiro no disco e avisa o operador — sem fechar a janela.</summary>
     public ICommand SaveCommand { get; }
@@ -163,7 +184,24 @@ public sealed class SettingsViewModel : ViewModelBase
         CartridgeSettings.ApplyTo(_currentSnapshot.Cartridges);
         LivewireOutputsSettings.ApplyTo(_currentSnapshot);
         NdiNetworkSettings.ApplyTo(_currentSnapshot);
+        BackgroundArtSettings.ApplyTo(_currentSnapshot);
         _currentSnapshot.UdpTriggerPort = SharedUdpPort.Port;
+
+        // Sprint Arte-de-Fundo (2026-11-10): a lista de artes/qual está ativa (linha acima) e o
+        // toggle "usar arte de fundo" de cada Deck (dentro de Deck1Settings.ApplyTo/Deck2Settings.ApplyTo,
+        // já chamados no topo deste método) podem ter mudado — nenhum dos dois passa por
+        // DeckViewModel.State, então o gatilho normal nunca dispara sozinho aqui. RefreshBackgroundArt()
+        // força os dois Decks a reavaliar agora, sem esperar o próximo Play/Stop.
+        // Sprint Telas-Saida-Direta (2026-11-10): RefreshScreenOutputs() ANTES de RefreshBackgroundArt()
+        // de propósito — ver comentário completo no mesmo par de chamadas em
+        // MainViewModel (construtor): a decisão de mandar a arte de fundo agora também considera se
+        // há alguma tela aberta, então as janelas precisam já existir/ter sido fechadas antes dessa
+        // avaliação.
+        _deckA.RefreshScreenOutputs();
+        _deckB.RefreshScreenOutputs();
+
+        _deckA.RefreshBackgroundArt();
+        _deckB.RefreshBackgroundArt();
 
         _onStatus(_settingsStore.Save(_currentSnapshot)
             ? "Configurações salvas."

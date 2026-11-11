@@ -37,6 +37,15 @@ internal static class SettingsMapper
         resolume.Configuration["Port"] = snapshot.ResolumePort;
         resolume.Configuration["Layer"] = snapshot.ResolumeLayer;
 
+        deck.DomainDeck.UseBackgroundArt = snapshot.UseBackgroundArt;
+
+        deck.DomainDeck.SendToScreens = snapshot.SendToScreens;
+        deck.DomainDeck.ScreenOutputDeviceNames.Clear();
+        foreach (var deviceName in snapshot.ScreenOutputDeviceNames)
+        {
+            deck.DomainDeck.ScreenOutputDeviceNames.Add(deviceName);
+        }
+
         deck.DomainDeck.AutomationActions.Clear();
         foreach (var actionSnapshot in snapshot.OnPlayActions)
         {
@@ -62,6 +71,9 @@ internal static class SettingsMapper
         ResolumeHost = vm.ResolumeHost,
         ResolumePort = vm.ResolumePort,
         ResolumeLayer = vm.ResolumeLayer,
+        UseBackgroundArt = vm.UseBackgroundArt,
+        SendToScreens = vm.SendToScreensEnabled,
+        ScreenOutputDeviceNames = vm.AvailableScreens.Where(s => s.IsSelected).Select(s => s.DeviceName).ToList(),
         OnPlayActions = vm.OnPlayActions.Select(ToActionSnapshot).ToList(),
         OnEndActions = vm.OnEndActions.Select(ToActionSnapshot).ToList(),
         ExternalTriggerEnabled = vm.ExternalTriggerEnabled,

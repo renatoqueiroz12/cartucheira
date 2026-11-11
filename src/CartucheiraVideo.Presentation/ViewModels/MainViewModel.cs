@@ -164,12 +164,34 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // cada AudioBankViewModel (ver Banks logo abaixo) — deixam cada Deck resolver uma Saída
         // Livewire selecionada em Configurações (DeckSettingsViewModel.AudioDeviceId = "livewire:{Id}")
         // sem precisar conhecer a lista completa nem a interface de rede escolhida.
-        DeckA = new DeckViewModel("DECK 1", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus, ResolveLivewireOutput, GetLivewireNetworkInterfaceIp, OnDeckPreview, OnDeckPreviewEnd);
-        DeckB = new DeckViewModel("DECK 2", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus, ResolveLivewireOutput, GetLivewireNetworkInterfaceIp, OnDeckPreview, OnDeckPreviewEnd);
+        //
+        // Sprint Arte-de-Fundo (2026-11-10): GetActiveBackgroundArtPath é novo, mesmo padrão das
+        // duas funções Livewire acima — ver comentário completo lá embaixo.
+        DeckA = new DeckViewModel("DECK 1", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus, ResolveLivewireOutput, GetLivewireNetworkInterfaceIp, GetActiveBackgroundArtPath, OnDeckPreview, OnDeckPreviewEnd);
+        DeckB = new DeckViewModel("DECK 2", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus, ResolveLivewireOutput, GetLivewireNetworkInterfaceIp, GetActiveBackgroundArtPath, OnDeckPreview, OnDeckPreviewEnd);
         Decks = new[] { DeckA, DeckB };
 
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckA, DeckA);
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckB, DeckB);
+
+        // Sprint Arte-de-Fundo (2026-11-10): ApplyToDeck acima só escreve DomainDeck.UseBackgroundArt
+        // — não passa por State nenhuma vez (o Deck começa e continua em Cue), então o gatilho normal
+        // (DeckViewModel.State setter chamando UpdateBackgroundArtIdleSender) nunca dispara sozinho
+        // na inicialização. RefreshBackgroundArt() força a primeira avaliação, pra um Deck que já
+        // abre com "usar arte de fundo" ligado e uma arte ativa configurada já mostrar ela desde o
+        // primeiro instante, sem precisar de nenhum Play/Stop manual primeiro.
+        // Sprint Telas-Saida-Direta (2026-11-10): RefreshScreenOutputs() ANTES de RefreshBackgroundArt()
+        // de propósito — a decisão de mandar (ou não) a arte de fundo agora também considera se há
+        // alguma tela aberta (ver UpdateBackgroundArtIdleSender), então as janelas precisam já
+        // existir antes dessa avaliação, senão um Deck sem NDI mas configurado pra Telas perderia a
+        // primeira avaliação da arte por engano. Mesmo motivo de existir do RefreshBackgroundArt()
+        // abaixo: ApplyToDeck só escreve os campos, não passa por State nenhuma vez, então nenhum
+        // dos dois gatilhos normais dispara sozinho na inicialização.
+        DeckA.RefreshScreenOutputs();
+        DeckB.RefreshScreenOutputs();
+
+        DeckA.RefreshBackgroundArt();
+        DeckB.RefreshBackgroundArt();
 
         // Sprint Cartucheira (2026-08-09): dois bancos fixos (Vinhetas/Trilhas), cada um com seu
         // próprio Engine.AudioEngine independente (NAudio desde a Sprint Crossfade v2, 2026-08-11 —
@@ -257,7 +279,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.51";
+    public string VersionLabel => "v1.0.53";
 
     public DeckViewModel DeckA { get; }
 
@@ -617,6 +639,26 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     /// <summary>Sprint Livewire-2: IP local (IPv4) configurado pra transmitir Livewire — nulo deixa o sistema escolher a interface, ver <see cref="AppSettingsSnapshot.LivewireNetworkInterfaceIp"/>.</summary>
     private string? GetLivewireNetworkInterfaceIp() => _persistedSettings.LivewireNetworkInterfaceIp;
+
+    /// <summary>
+    /// Sprint Arte-de-Fundo (2026-11-10): resolve <see cref="AppSettingsSnapshot.ActiveBackgroundArtId"/>
+    /// pro caminho do arquivo da arte correspondente em <see cref="AppSettingsSnapshot.BackgroundArtPresets"/>
+    /// — nulo se nenhuma arte estiver ativa, ou se o Id ativo não bater com nenhuma arte da lista
+    /// (ex.: ela foi removida em Configurações depois de já estar ativa — falha honesta, mesmo
+    /// padrão de <see cref="ResolveLivewireOutput"/>). Lê sempre <see cref="_persistedSettings"/>
+    /// diretamente — já reflete qualquer edição salva, mesma instância por referência usada pelo
+    /// SettingsViewModel/BackgroundArtSettingsViewModel.
+    /// </summary>
+    private string? GetActiveBackgroundArtPath()
+    {
+        var activeId = _persistedSettings.ActiveBackgroundArtId;
+        if (string.IsNullOrWhiteSpace(activeId))
+        {
+            return null;
+        }
+
+        return _persistedSettings.BackgroundArtPresets.FirstOrDefault(p => p.Id == activeId)?.FilePath;
+    }
 
     /// <summary>
     /// Sprint Livewire-3 (2026-09-13): (re)aplica <see cref="_livewireAdvertiser"/> a partir do que

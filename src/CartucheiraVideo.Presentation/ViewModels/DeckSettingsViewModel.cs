@@ -48,6 +48,7 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         Geral,
         VMix,
         Resolume,
+        Telas,
         Automacao
     }
 
@@ -63,6 +64,8 @@ public sealed class DeckSettingsViewModel : ViewModelBase
     private string _resolumeHost;
     private string _resolumePort;
     private string _resolumeLayer;
+    private bool _useBackgroundArt;
+    private bool _sendToScreensEnabled;
     private bool _externalTriggerEnabled;
     private string _udpTriggerPlayCommand;
     private string _udpTriggerPauseCommand;
@@ -134,6 +137,10 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         _resolumeHost = GetConfig(resolume, "Host");
         _resolumePort = GetConfig(resolume, "Port");
         _resolumeLayer = GetConfig(resolume, "Layer");
+        _useBackgroundArt = deck.DomainDeck.UseBackgroundArt;
+
+        _sendToScreensEnabled = deck.DomainDeck.SendToScreens;
+        AvailableScreens = new ObservableCollection<ScreenOptionViewModel>(BuildAvailableScreens(deck.DomainDeck.ScreenOutputDeviceNames));
 
         OnPlayActions = new ObservableCollection<AutomationActionViewModel>(
             deck.DomainDeck.AutomationActions
@@ -148,6 +155,7 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         SelectGeneralTabCommand = new RelayCommand(_ => SelectedTab = SettingsTab.Geral);
         SelectVMixTabCommand = new RelayCommand(_ => SelectedTab = SettingsTab.VMix);
         SelectResolumeTabCommand = new RelayCommand(_ => SelectedTab = SettingsTab.Resolume);
+        SelectScreensTabCommand = new RelayCommand(_ => SelectedTab = SettingsTab.Telas);
         SelectAutomationTabCommand = new RelayCommand(_ => SelectedTab = SettingsTab.Automacao);
 
         AddOnPlayActionCommand = new RelayCommand(_ => OnPlayActions.Add(CreateAction(AutomationTrigger.OnPlay)));
@@ -179,6 +187,7 @@ public sealed class DeckSettingsViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsGeneralTabSelected));
                 OnPropertyChanged(nameof(IsVMixTabSelected));
                 OnPropertyChanged(nameof(IsResolumeTabSelected));
+                OnPropertyChanged(nameof(IsScreensTabSelected));
                 OnPropertyChanged(nameof(IsAutomationTabSelected));
             }
         }
@@ -190,6 +199,8 @@ public sealed class DeckSettingsViewModel : ViewModelBase
 
     public bool IsResolumeTabSelected => SelectedTab == SettingsTab.Resolume;
 
+    public bool IsScreensTabSelected => SelectedTab == SettingsTab.Telas;
+
     public bool IsAutomationTabSelected => SelectedTab == SettingsTab.Automacao;
 
     public ICommand SelectGeneralTabCommand { get; }
@@ -197,6 +208,8 @@ public sealed class DeckSettingsViewModel : ViewModelBase
     public ICommand SelectVMixTabCommand { get; }
 
     public ICommand SelectResolumeTabCommand { get; }
+
+    public ICommand SelectScreensTabCommand { get; }
 
     public ICommand SelectAutomationTabCommand { get; }
 
@@ -282,6 +295,41 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         get => _resolumeLayer;
         set => SetProperty(ref _resolumeLayer, value);
     }
+
+    /// <summary>
+    /// Sprint Arte-de-Fundo (2026-11-10): verdadeiro = a saída NDI deste Deck manda a arte ativa
+    /// (Configurações → Arte de Fundo) quando ele não está tocando (Cue/Stopped/Finished), em vez
+    /// de parar de mandar quadro nenhum — ver <see cref="Core.Deck.UseBackgroundArt"/> pro
+    /// comportamento completo. Pedido do usuário: só precisa disso no Deck que vai pro Resolume/
+    /// telões (hoje, o Deck 2) — o Deck que vai pro vMix (Deck 1) não precisa ligar isto.
+    /// </summary>
+    public bool UseBackgroundArt
+    {
+        get => _useBackgroundArt;
+        set => SetProperty(ref _useBackgroundArt, value);
+    }
+
+    /// <summary>
+    /// Sprint Telas-Saida-Direta (2026-11-10): verdadeiro = este Deck desenha seu vídeo diretamente
+    /// nas telas marcadas em <see cref="AvailableScreens"/>, usando a placa de vídeo local do PC —
+    /// sem depender do Resolume. Ver <see cref="Core.Deck.SendToScreens"/> pro comportamento
+    /// completo. Pedido do usuário: o Deck 2 vai parar de ir pro Resolume e vai direto pros telões
+    /// conectados na placa de vídeo do PC.
+    /// </summary>
+    public bool SendToScreensEnabled
+    {
+        get => _sendToScreensEnabled;
+        set => SetProperty(ref _sendToScreensEnabled, value);
+    }
+
+    /// <summary>
+    /// Monitores do Windows detectados agora (<c>System.Windows.Forms.Screen.AllScreens</c>) mesclados
+    /// com a seleção persistida deste Deck (<see cref="Core.Deck.ScreenOutputDeviceNames"/>) — ver
+    /// <see cref="BuildAvailableScreens"/>. Cada linha é um checkbox na aba "Telas"; uma linha cujo
+    /// monitor não está conectado agora (<see cref="ScreenOptionViewModel.IsCurrentlyConnected"/>
+    /// falso) continua marcada, mas a tela de Configuração mostra um aviso nela.
+    /// </summary>
+    public ObservableCollection<ScreenOptionViewModel> AvailableScreens { get; }
 
     /// <summary>Verdadeiro = este Deck recebe comando externo de verdade por UDP (mesa de áudio) — Sprint Comando Externo Decks (2026-08-12), mesmo padrão do toggle único já usado pela Cartucheira.</summary>
     public bool ExternalTriggerEnabled
@@ -429,6 +477,15 @@ public sealed class DeckSettingsViewModel : ViewModelBase
         resolume.Configuration["Port"] = ResolumePort.Trim();
         resolume.Configuration["Layer"] = ResolumeLayer.Trim();
 
+        deck.DomainDeck.UseBackgroundArt = UseBackgroundArt;
+
+        deck.DomainDeck.SendToScreens = SendToScreensEnabled;
+        deck.DomainDeck.ScreenOutputDeviceNames.Clear();
+        foreach (var screen in AvailableScreens.Where(s => s.IsSelected))
+        {
+            deck.DomainDeck.ScreenOutputDeviceNames.Add(screen.DeviceName);
+        }
+
         deck.DomainDeck.AutomationActions.Clear();
         foreach (var actionViewModel in OnPlayActions.Concat(OnEndActions))
         {
@@ -467,6 +524,43 @@ public sealed class DeckSettingsViewModel : ViewModelBase
     }
 
     private void OnLivewireOutputsChanged(object? sender, NotifyCollectionChangedEventArgs e) => RebuildAudioDevices();
+
+    /// <summary>
+    /// Sprint Telas-Saida-Direta (2026-11-10): monta a lista da aba "Telas" combinando os monitores
+    /// que o Windows detecta AGORA (<c>System.Windows.Forms.Screen.AllScreens</c> — nome totalmente
+    /// qualificado de propósito, nunca <c>using System.Windows.Forms;</c> neste projeto por causa da
+    /// ambiguidade já documentada no .csproj com tipos WPF homônimos como <c>Application</c>) com a
+    /// seleção persistida (<paramref name="persistedDeviceNames"/>). Um monitor detectado agora entra
+    /// marcado se já estava na seleção salva; um nome salvo que NÃO corresponde a nenhum monitor
+    /// detectado agora (placa desconectada) entra como uma linha extra, marcada, com
+    /// <see cref="ScreenOptionViewModel.IsCurrentlyConnected"/> falso — "falha honesta" em vez de
+    /// simplesmente descartar a escolha do operador por uma desconexão temporária.
+    /// </summary>
+    private static IEnumerable<ScreenOptionViewModel> BuildAvailableScreens(IEnumerable<string> persistedDeviceNames)
+    {
+        var persisted = new List<string>(persistedDeviceNames);
+        var detectedNames = new HashSet<string>();
+        var result = new List<ScreenOptionViewModel>();
+
+        var detectedScreens = System.Windows.Forms.Screen.AllScreens;
+        for (var i = 0; i < detectedScreens.Length; i++)
+        {
+            var screen = detectedScreens[i];
+            detectedNames.Add(screen.DeviceName);
+            var label = $"Tela {i + 1} — {screen.Bounds.Width}x{screen.Bounds.Height} em ({screen.Bounds.X},{screen.Bounds.Y})";
+            result.Add(new ScreenOptionViewModel(screen.DeviceName, label, persisted.Contains(screen.DeviceName), isCurrentlyConnected: true));
+        }
+
+        foreach (var deviceName in persisted)
+        {
+            if (!detectedNames.Contains(deviceName))
+            {
+                result.Add(new ScreenOptionViewModel(deviceName, $"{deviceName} (não detectada agora)", isSelected: true, isCurrentlyConnected: false));
+            }
+        }
+
+        return result;
+    }
 
     private static AutomationActionViewModel CreateAction(AutomationTrigger trigger) =>
         new(new AutomationAction { Trigger = trigger, Destination = OutputRouteType.VMix, Transition = TransitionType.Cut });

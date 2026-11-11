@@ -1,12 +1,17 @@
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Core;
 using CartucheiraVideo.Infrastructure.Livewire;
 using CartucheiraVideo.Ndi;
 using CartucheiraVideo.Presentation.Mvvm;
+using CartucheiraVideo.Presentation.Views;
 using Engine = CartucheiraVideo.Engine;
 using LibVLC = LibVLCSharp.Shared.LibVLC;
 using MediaPlayer = LibVLCSharp.Shared.MediaPlayer;
@@ -74,6 +79,38 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// mesmo pipeline NAudio da Sprint NDI-audio — nunca o áudio interno do LibVLC/MediaPlayer, que
 /// continua controlando só o monitor local deste computador). Ver
 /// <see cref="ForwardAudioToLivewire"/> pro reempacotamento de tamanho de bloco.
+///
+/// Sprint Arte-de-Fundo (2026-11-10): quando <see cref="Core.Deck.UseBackgroundArt"/> estiver
+/// ligado (aba Resolume da Configuração deste Deck) e <see cref="State"/> estiver "parado"
+/// (Cue/Stopped/Finished — ver <see cref="IsBackgroundArtIdleState"/>), a saída NDI deste Deck
+/// passa a mandar continuamente a arte de fundo ATIVA (Configurações → Arte de Fundo,
+/// <see cref="BackgroundArtRenderer"/>) em vez de simplesmente parar de mandar quadro nenhum
+/// (comportamento de sempre antes desta sprint, ainda usado quando o toggle está desligado ou
+/// nenhuma arte resolve/carrega). Pedido do usuário: o Deck que vai pro Resolume/telões (hoje, o
+/// Deck 2 — o Deck 1 vai pro vMix) deve mostrar uma arte de espera entre um VT e outro, em vez de
+/// ficar com o último quadro congelado ou sem sinal. Mecanismo é um <see cref="Timer"/> simples
+/// (não <see cref="System.Windows.Threading.DispatcherTimer"/> — mesmo motivo de
+/// <see cref="OnEngineFrameReady"/> já não usar a UI thread: <see cref="Ndi.NdiSender.SendFrame"/>
+/// já é seguro fora dela) reenviando o MESMO buffer nativo a cada tick — ver
+/// <see cref="UpdateBackgroundArtIdleSender"/> pro porquê de um buffer só (sem ping-pong) ser
+/// seguro aqui, diferente do vídeo real.
+///
+/// Sprint Telas-Saida-Direta (2026-11-10): quando <see cref="Core.Deck.SendToScreens"/> estiver
+/// ligado (aba Telas da Configuração deste Deck), o vídeo (e, quando ocioso, a MESMA arte de fundo
+/// ativa acima) também é desenhado direto numa <see cref="Views.ScreenOutputWindow"/> (sem borda,
+/// sempre no topo) por monitor do Windows escolhido em <see cref="Core.Deck.ScreenOutputDeviceNames"/>
+/// — pedido do usuário: ele ligou uma placa de vídeo com várias saídas neste PC e quer mandar o
+/// Deck 2 direto pros telões conectados nela, sem depender do Resolume. Reaproveita o MESMO buffer
+/// UYVY já usado pro NDI (nunca um segundo <see cref="LibVLC"/>/<see cref="MediaPlayer"/>
+/// independente) — decisão deliberada pra não repetir a história desta base de bugs sérios de
+/// sincronismo entre players independentes (drift, trava de clock de áudio/vídeo, etc.); a única
+/// conversão nova é UYVY→BGRA32 (<see cref="UyvyBgraConverter"/>), feita na mesma thread de callback
+/// do Engine que já alimenta o NDI (<see cref="ForwardFrameToScreens"/>) — só o <c>WritePixels</c>
+/// final do <see cref="System.Windows.Media.Imaging.WriteableBitmap"/> compartilhado precisa da UI
+/// thread (afinidade de thread), via <see cref="Dispatcher.BeginInvoke(Delegate)"/> com descarte de
+/// quadro se a UI thread estiver ocupada (<see cref="_screenFrameInFlight"/>). Deliberadamente
+/// desacoplado da saída NDI estar disponível (<see cref="_ndiSender"/> pode ser nulo) — ver
+/// comentário do construtor sobre <c>_engine.FrameReady</c> ter saído do try/catch do NDI.
 /// </summary>
 public sealed class DeckViewModel : ViewModelBase, IDisposable
 {
@@ -89,9 +126,62 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     private readonly NdiSender? _ndiSender;
     private readonly Func<string, LivewireOutputSettings?> _resolveLivewireOutput;
     private readonly Func<string?> _getLivewireNetworkInterfaceIp;
+    private readonly Func<string?> _getActiveBackgroundArtPath;
     private LivewireSender? _livewireSender;
     private string? _livewireOutputId;
     private string? _livewireNetworkInterfaceIp;
+
+    /// <summary>
+    /// Sprint Arte-de-Fundo (2026-11-10): mecanismo de "quadro ocioso" — ver
+    /// <see cref="UpdateBackgroundArtIdleSender"/> pra condição completa de quando isto liga.
+    /// Buffer nativo ÚNICO (não ping-pong como <see cref="Engine.PlaybackEngine"/> usa pro vídeo
+    /// real) — decisão deliberada: o conteúdo nunca muda (é uma imagem estática, sempre os mesmos
+    /// bytes a cada envio), então não existe o risco de sobrescrever um buffer que a NDI SDK ainda
+    /// esteja lendo de um envio assíncrono anterior (esse risco só existe quando o CONTEÚDO muda
+    /// quadro a quadro, caso do vídeo real — ver comentário de <see cref="OnEngineFrameReady"/>).
+    /// <see cref="_backgroundArtGate"/> protege só a troca do buffer (<see cref="ReplaceBackgroundArtBuffer"/>/
+    /// <see cref="StopBackgroundArtTimer"/>, sempre na UI thread) contra o próprio
+    /// <see cref="System.Threading.Timer"/> (thread do ThreadPool) tentando ler o ponteiro no meio
+    /// de uma troca.
+    /// </summary>
+    private readonly object _backgroundArtGate = new();
+    private Timer? _backgroundArtTimer;
+    private IntPtr _backgroundArtBuffer = IntPtr.Zero;
+    private volatile bool _backgroundArtSending;
+
+    /// <summary>
+    /// Sprint Telas-Saida-Direta (2026-11-10): uma <see cref="ScreenOutputWindow"/> aberta por
+    /// monitor atualmente selecionado em <see cref="Core.Deck.ScreenOutputDeviceNames"/> (só quando
+    /// <see cref="Core.Deck.SendToScreens"/> está ligado) — ver <see cref="RefreshScreenOutputs"/>
+    /// pra como esta lista é (re)montada. Todas compartilham o MESMO <see cref="_screenOutputBitmap"/>
+    /// — escrever nele uma vez atualiza todas as telas ao mesmo tempo, sem laço nenhum aqui.
+    /// </summary>
+    private readonly List<ScreenOutputWindow> _screenOutputWindows = new();
+
+    /// <summary>
+    /// Bitmap ÚNICO (1920x1080, Bgra32), criado sob demanda na UI thread, compartilhado por todas
+    /// as <see cref="_screenOutputWindows"/> deste Deck — mesmo canvas fixo que
+    /// <see cref="BackgroundArtRenderer"/> já usa. <see cref="WriteableBitmap"/> tem afinidade de
+    /// thread (só pode ser escrito pela thread que o criou); por isso só é criado/escrito dentro de
+    /// <see cref="Dispatcher.BeginInvoke(Delegate)"/> (sempre a UI thread), nunca direto na thread do
+    /// callback do Engine.
+    /// </summary>
+    private WriteableBitmap? _screenOutputBitmap;
+
+    /// <summary>Buffer BGRA32 reaproveitado a cada quadro por <see cref="UyvyBgraConverter.ConvertToBgra32"/>, pra não alocar nada por quadro no caminho quente de <see cref="OnEngineFrameReady"/>.</summary>
+    private byte[]? _screenOutputBgraBuffer;
+
+    /// <summary>Cópia administrada reaproveitada do buffer nativo (<see cref="Engine.EngineFrameReadyEventArgs.Data"/>, um <see cref="IntPtr"/>) de cada quadro — precisa existir porque <see cref="UyvyBgraConverter.ConvertToBgra32"/> trabalha sobre <c>byte[]</c>, nunca indexando um ponteiro nativo diretamente (lento demais chamado por quadro).</summary>
+    private byte[]? _screenOutputUyvyBuffer;
+
+    /// <summary>
+    /// Guarda de "descarte de quadro" — verdadeiro enquanto um <see cref="Dispatcher.BeginInvoke(Delegate)"/>
+    /// anterior ainda não rodou na UI thread. Se a UI thread estiver ocupada/lenta, o próximo quadro
+    /// do callback do Engine simplesmente NÃO despacha (em vez de empilhar despachos sem limite) —
+    /// mesmo espírito de "nunca deixar uma fila crescer sem limite" já preocupação documentada deste
+    /// projeto (ver pendência histórica "Fila de áudio NDI saturada" em versao-atual.md).
+    /// </summary>
+    private volatile bool _screenFrameInFlight;
 
     private string _loadedFileName = "Vazio";
     private string? _loadedFilePath;
@@ -176,6 +266,12 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     /// duas funções já injetadas em cada <see cref="AudioBankViewModel"/>) pra este Deck poder
     /// resolver uma Saída Livewire selecionada sem precisar conhecer a lista completa configurada em
     /// Configurações nem a interface de rede escolhida; ver <see cref="UpdateLivewireSender"/>.
+    ///
+    /// Sprint Arte-de-Fundo (2026-11-10): <paramref name="getActiveBackgroundArtPath"/> é novo,
+    /// mesmo padrão dos dois acima (função injetada pelo MainViewModel, lê sempre a configuração
+    /// persistida mais recente) — resolve o caminho do arquivo da arte de fundo ATIVA agora
+    /// (Configurações → Arte de Fundo), ou nulo se nenhuma estiver ativa. Ver
+    /// <see cref="UpdateBackgroundArtIdleSender"/>/<see cref="RefreshBackgroundArt"/>.
     /// </summary>
     public DeckViewModel(
         string name,
@@ -188,6 +284,7 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         Action<string> onStatus,
         Func<string, LivewireOutputSettings?> resolveLivewireOutput,
         Func<string?> getLivewireNetworkInterfaceIp,
+        Func<string?> getActiveBackgroundArtPath,
         Action<DeckViewModel>? onPreview = null,
         Action<DeckViewModel>? onPreviewEnd = null)
     {
@@ -226,6 +323,7 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         _onPreviewEnd = onPreviewEnd ?? (_ => { });
         _resolveLivewireOutput = resolveLivewireOutput ?? throw new ArgumentNullException(nameof(resolveLivewireOutput));
         _getLivewireNetworkInterfaceIp = getLivewireNetworkInterfaceIp ?? throw new ArgumentNullException(nameof(getLivewireNetworkInterfaceIp));
+        _getActiveBackgroundArtPath = getActiveBackgroundArtPath ?? throw new ArgumentNullException(nameof(getActiveBackgroundArtPath));
 
         _engine = new Engine.PlaybackEngine(libVlc);
         _engine.StateChanged += OnEngineStateChanged;
@@ -244,7 +342,6 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         {
             var ndiName = !string.IsNullOrWhiteSpace(DomainDeck.NdiChannelName) ? DomainDeck.NdiChannelName! : Name;
             _ndiSender = new NdiSender(ndiName);
-            _engine.FrameReady += OnEngineFrameReady;
         }
         catch (Exception ex)
         {
@@ -267,6 +364,17 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         // ficava sem Livewire nativo no Deck, sem nenhum aviso honesto sobre o motivo — bug real
         // corrigido junto com esta sprint, nao so uma limpeza cosmetica.
         _engine.AudioFrameReady += OnEngineAudioFrameReady;
+
+        // Sprint Telas-Saida-Direta (2026-11-10): FrameReady (video) SAIU do try/catch de NDI acima
+        // de proposito, mesmo motivo exato da correcao do AudioFrameReady na Sprint Livewire-4 (ver
+        // comentario acima) — agora OnEngineFrameReady tambem tem DOIS consumidores possiveis
+        // (_ndiSender?.SendFrame, so quando NDI estiver disponivel, e ForwardFrameToScreens, so
+        // quando este Deck tiver SendToScreens ligado — os dois ja sao null-safe/condicionais
+        // sozinhos ali dentro). Sem esta mudanca, uma maquina SEM NDI instalado tambem ficaria sem
+        // conseguir mandar video pras Telas — justamente o cenario que o usuario descreveu querer
+        // ("nao vou mais mandar pro resolume, vou mandar pra essas telas"), que não deveria depender
+        // da NDI SDK estar instalada pra funcionar.
+        _engine.FrameReady += OnEngineFrameReady;
 
         PlayCommand = new RelayCommand(_ => Play(), _ => HasVideo && State != DeckPlaybackState.Playing);
         PauseCommand = new RelayCommand(_ => Pause(), _ => State == DeckPlaybackState.Playing);
@@ -420,6 +528,7 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
                 OnPropertyChanged(nameof(StatusColorHex));
                 OnPropertyChanged(nameof(ShowStatusOverlay));
                 RaiseOutputDependentPropertiesChanged();
+                UpdateBackgroundArtIdleSender();
                 ((RelayCommand)PlayCommand).RaiseCanExecuteChanged();
                 ((RelayCommand)PauseCommand).RaiseCanExecuteChanged();
                 ((RelayCommand)StopCommand).RaiseCanExecuteChanged();
@@ -1091,6 +1200,305 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     private void OnEngineFrameReady(object? sender, Engine.EngineFrameReadyEventArgs e)
     {
         _ndiSender?.SendFrame(e.Data, e.Width, e.Height, e.StrideBytes);
+        ForwardFrameToScreens(e);
+    }
+
+    /// <summary>
+    /// Sprint Telas-Saida-Direta (2026-11-10): espelha o MESMO quadro UYVY que acabou de ir pro NDI
+    /// direto nas telas abertas deste Deck (<see cref="_screenOutputWindows"/>), se
+    /// <see cref="Core.Deck.SendToScreens"/> estiver ligado e houver pelo menos uma. Chamado na
+    /// MESMA thread de callback do Engine que <see cref="OnEngineFrameReady"/> (nunca a UI thread,
+    /// mesmo motivo de latência documentado ali) — a conversão UYVY→BGRA32
+    /// (<see cref="UyvyBgraConverter"/>) acontece AQUI, nesta thread, pra deixar o trabalho que de
+    /// fato precisa da UI thread (o <c>WritePixels</c> do <see cref="WriteableBitmap"/>, que tem
+    /// afinidade de thread) o mais leve possível. <see cref="_screenFrameInFlight"/> garante que, se
+    /// a UI thread estiver lenta/ocupada, o próximo quadro simplesmente é descartado em vez de
+    /// empilhar despachos sem limite (mesmo "nunca deixar fila crescer" já preocupação documentada
+    /// deste projeto).
+    /// </summary>
+    private void ForwardFrameToScreens(Engine.EngineFrameReadyEventArgs e)
+    {
+        if (!DomainDeck.SendToScreens || _screenOutputWindows.Count == 0 || _screenFrameInFlight)
+        {
+            return;
+        }
+
+        _screenFrameInFlight = true;
+
+        try
+        {
+            var width = e.Width;
+            var height = e.Height;
+            var stride = e.StrideBytes;
+            var byteCount = height * stride;
+
+            if (_screenOutputUyvyBuffer is null || _screenOutputUyvyBuffer.Length < byteCount)
+            {
+                _screenOutputUyvyBuffer = new byte[byteCount];
+            }
+
+            Marshal.Copy(e.Data, _screenOutputUyvyBuffer, 0, byteCount);
+
+            _screenOutputBgraBuffer ??= new byte[BackgroundArtRenderer.FrameWidth * BackgroundArtRenderer.FrameHeight * 4];
+            UyvyBgraConverter.ConvertToBgra32(_screenOutputUyvyBuffer, width, height, stride, _screenOutputBgraBuffer);
+
+            var bgra = _screenOutputBgraBuffer;
+            Application.Current?.Dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    WriteScreenOutputBitmap(bgra, width, height);
+                }
+                finally
+                {
+                    _screenFrameInFlight = false;
+                }
+            });
+        }
+        catch (Exception)
+        {
+            // Falha honesta — qualquer problema aqui (buffer inesperado, etc.) nunca pode derrubar
+            // o caminho principal do NDI, que já rodou acima com sucesso.
+            _screenFrameInFlight = false;
+        }
+    }
+
+    /// <summary>Escreve um buffer BGRA32 já convertido no <see cref="_screenOutputBitmap"/> compartilhado — SEMPRE na UI thread (afinidade de thread do <see cref="WriteableBitmap"/>).</summary>
+    private void WriteScreenOutputBitmap(byte[] bgra, int width, int height)
+    {
+        if (_screenOutputBitmap is null)
+        {
+            return;
+        }
+
+        _screenOutputBitmap.WritePixels(new Int32Rect(0, 0, width, height), bgra, width * 4, 0);
+    }
+
+    private static bool IsBackgroundArtIdleState(DeckPlaybackState state) =>
+        state is DeckPlaybackState.Cue or DeckPlaybackState.Stopped or DeckPlaybackState.Finished;
+
+    /// <summary>
+    /// Sprint Arte-de-Fundo (2026-11-10): decide se a saída NDI deste Deck deve estar mandando a
+    /// arte de fundo ativa agora — chamado sempre que <see cref="State"/> muda (ver setter acima) e
+    /// por <see cref="RefreshBackgroundArt"/> (Configurações → Salvar, e na inicialização do
+    /// programa — ver <c>MainViewModel</c>). Liga só quando TODAS forem verdadeiras: existe pelo
+    /// menos UM destino pra mandar a arte (saída NDI disponível, <see cref="_ndiSender"/> não nulo,
+    /// OU pelo menos uma tela aberta — <see cref="Core.Deck.SendToScreens"/> ligado e
+    /// <see cref="_screenOutputWindows"/> não vazia), <see cref="Core.Deck.UseBackgroundArt"/> deste
+    /// Deck, e o Deck estiver numa das três situações de <see cref="IsBackgroundArtIdleState"/>
+    /// (Cue/Stopped/Finished). Deliberadamente NÃO inclui Paused — um Deck pausado continua
+    /// mostrando o último quadro real do próprio VT (congelado), não a arte de espera, mesmo
+    /// comportamento visual de sempre nesse estado.
+    ///
+    /// Sprint Telas-Saida-Direta (2026-11-10): a condição de destino deixou de exigir só
+    /// <see cref="_ndiSender"/> não nulo — antes desta sprint, uma máquina sem NDI instalado também
+    /// ficava sem conseguir mostrar a arte de fundo nas Telas (mesmo bug de acoplamento indevido já
+    /// corrigido pro áudio na Sprint Livewire-4, ver comentário do construtor), o que quebraria
+    /// justamente o cenário que motivou esta sprint (usuário migrando do Resolume pras Telas). Se
+    /// NENHUM dos dois destinos existir, nem vale a pena decodificar a imagem — mesma economia de
+    /// CPU de antes.
+    ///
+    /// Qualquer combinação que não bata (toggle desligado, nenhuma arte ativa resolvendo/carregando,
+    /// nenhum destino disponível, ou tocando/pausado/erro/etc.) para o timer e libera o buffer
+    /// nativo — a saída volta a não mandar quadro nenhum, falha honesta em vez de adivinhar.
+    /// </summary>
+    private void UpdateBackgroundArtIdleSender()
+    {
+        var hasAnyBackgroundArtDestination = _ndiSender is not null || (DomainDeck.SendToScreens && _screenOutputWindows.Count > 0);
+        var shouldSend = hasAnyBackgroundArtDestination && DomainDeck.UseBackgroundArt && IsBackgroundArtIdleState(State);
+
+        if (!shouldSend || !TryRenderActiveBackgroundArt(out var frame))
+        {
+            StopBackgroundArtTimer();
+            return;
+        }
+
+        ReplaceBackgroundArtBuffer(frame);
+        StartBackgroundArtTimer();
+    }
+
+    /// <summary>Resolve (<see cref="_getActiveBackgroundArtPath"/>) e decodifica (<see cref="BackgroundArtRenderer"/>) a arte ativa agora. Falso em qualquer falha honesta — nenhuma arte ativa, arquivo ausente, decodificação falhou.</summary>
+    private bool TryRenderActiveBackgroundArt(out byte[] frame)
+    {
+        var rendered = BackgroundArtRenderer.RenderToUyvy(_getActiveBackgroundArtPath());
+        frame = rendered ?? Array.Empty<byte>();
+        return rendered is not null;
+    }
+
+    private void ReplaceBackgroundArtBuffer(byte[] frame)
+    {
+        lock (_backgroundArtGate)
+        {
+            if (_backgroundArtBuffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(_backgroundArtBuffer);
+                _backgroundArtBuffer = IntPtr.Zero;
+            }
+
+            _backgroundArtBuffer = Marshal.AllocHGlobal(frame.Length);
+            Marshal.Copy(frame, 0, _backgroundArtBuffer, frame.Length);
+        }
+
+        WriteBackgroundArtFrameToScreens(frame);
+    }
+
+    /// <summary>
+    /// Sprint Telas-Saida-Direta (2026-11-10): espelha a MESMA arte de fundo que acabou de ser
+    /// resolvida pra saída NDI (chamado só de dentro de <see cref="ReplaceBackgroundArtBuffer"/>,
+    /// nunca direto) nas telas diretas deste Deck, se alguma estiver aberta — pergunta "Arte
+    /// parado" da Sprint Telas-Saida-Direta: o usuário confirmou que quer a mesma arte ativa também
+    /// nas telas, não um comportamento diferente. Diferente do vídeo real
+    /// (<see cref="ForwardFrameToScreens"/>), o conteúdo aqui NUNCA muda entre chamadas (é sempre a
+    /// mesma imagem estática) — por isso basta UMA conversão/escrita por troca de arte, nunca a
+    /// cada tick do <see cref="_backgroundArtTimer"/> (200ms) que só reenvia pro NDI. Sempre chamado
+    /// na UI thread (mesma thread de quem chama <see cref="ReplaceBackgroundArtBuffer"/> — ver
+    /// comentário de <see cref="UpdateBackgroundArtIdleSender"/>), então escreve direto no
+    /// <see cref="WriteableBitmap"/> sem precisar de <see cref="Dispatcher.BeginInvoke(Delegate)"/>.
+    /// </summary>
+    private void WriteBackgroundArtFrameToScreens(byte[] frame)
+    {
+        if (!DomainDeck.SendToScreens || _screenOutputWindows.Count == 0 || _screenOutputBitmap is null)
+        {
+            return;
+        }
+
+        _screenOutputBgraBuffer ??= new byte[BackgroundArtRenderer.FrameWidth * BackgroundArtRenderer.FrameHeight * 4];
+        UyvyBgraConverter.ConvertToBgra32(frame, BackgroundArtRenderer.FrameWidth, BackgroundArtRenderer.FrameHeight, BackgroundArtRenderer.StrideBytes, _screenOutputBgraBuffer);
+        WriteScreenOutputBitmap(_screenOutputBgraBuffer, BackgroundArtRenderer.FrameWidth, BackgroundArtRenderer.FrameHeight);
+    }
+
+    private void StartBackgroundArtTimer()
+    {
+        _backgroundArtSending = true;
+
+        // Sprint Arte-de-Fundo (2026-11-10): 5 quadros/s — baixo de propósito (a imagem nunca
+        // muda, só reenvia os mesmos bytes), o suficiente pra manter o Resolume/telões "vendo" uma
+        // fonte NDI viva em vez de uma fonte sem atualização; sem precedente nenhum nesta base de
+        // código pra calibrar contra, então este valor é um palpite honesto, não uma medição real —
+        // ajuste aqui se algum receptor precisar de mais.
+        const int periodMs = 200;
+
+        if (_backgroundArtTimer is null)
+        {
+            _backgroundArtTimer = new Timer(_ => SendBackgroundArtFrame(), null, 0, periodMs);
+        }
+        else
+        {
+            _backgroundArtTimer.Change(0, periodMs);
+        }
+    }
+
+    private void StopBackgroundArtTimer()
+    {
+        _backgroundArtSending = false;
+        _backgroundArtTimer?.Change(Timeout.Infinite, Timeout.Infinite);
+
+        lock (_backgroundArtGate)
+        {
+            if (_backgroundArtBuffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(_backgroundArtBuffer);
+                _backgroundArtBuffer = IntPtr.Zero;
+            }
+        }
+    }
+
+    private void SendBackgroundArtFrame()
+    {
+        if (!_backgroundArtSending)
+        {
+            return;
+        }
+
+        lock (_backgroundArtGate)
+        {
+            if (_backgroundArtBuffer == IntPtr.Zero)
+            {
+                return;
+            }
+
+            _ndiSender?.SendFrame(_backgroundArtBuffer, BackgroundArtRenderer.FrameWidth, BackgroundArtRenderer.FrameHeight, BackgroundArtRenderer.StrideBytes);
+        }
+    }
+
+    /// <summary>
+    /// Sprint Arte-de-Fundo (2026-11-10): reavalia a arte de fundo deste Deck do zero — chamado pelo
+    /// <c>MainViewModel</c> na inicialização (depois de <c>SettingsMapper.ApplyToDeck</c> aplicar
+    /// <see cref="Core.Deck.UseBackgroundArt"/>) e pelo <see cref="SettingsViewModel"/> ao Salvar (a
+    /// lista de artes/qual está ativa podem ter mudado, mesmo sem este Deck ter trocado de Estado —
+    /// <see cref="State"/> sozinho não cobre isso). Seguro chamar a qualquer momento, inclusive
+    /// enquanto já está mandando uma arte antiga — troca o buffer nativo sem sair do ar (o Resolume
+    /// só vê o quadro novo a partir do próximo tick do timer, no máximo 200ms depois).
+    /// </summary>
+    public void RefreshBackgroundArt() => UpdateBackgroundArtIdleSender();
+
+    /// <summary>
+    /// Sprint Telas-Saida-Direta (2026-11-10): abre/fecha as <see cref="ScreenOutputWindow"/> deste
+    /// Deck pra bater com <see cref="Core.Deck.SendToScreens"/>/<see cref="Core.Deck.ScreenOutputDeviceNames"/>
+    /// contra os monitores que o Windows reconhece AGORA (<c>System.Windows.Forms.Screen.AllScreens</c>)
+    /// — chamado pelo <c>MainViewModel</c> na inicialização (depois de <c>SettingsMapper.ApplyToDeck</c>)
+    /// e pelo <see cref="SettingsViewModel"/> ao Salvar, mesmo papel/pontos de chamada de
+    /// <see cref="RefreshBackgroundArt"/> pra arte de fundo. Sempre chamado na UI thread (mesmos dois
+    /// chamadores) — cria/fecha <see cref="Window"/> de verdade, que só pode acontecer ali. Um
+    /// monitor escolhido que não está conectado agora é simplesmente ignorado aqui (não há janela
+    /// nenhuma pra abrir sobre um monitor que não existe) — a seleção continua salva, ver
+    /// <see cref="ScreenOptionViewModel.IsCurrentlyConnected"/> pra onde isso é mostrado ao operador.
+    /// Seguro chamar a qualquer momento: só fecha as janelas que deixaram de fazer sentido e só
+    /// abre as que faltam, nunca fecha/reabre tudo à toa.
+    /// </summary>
+    public void RefreshScreenOutputs()
+    {
+        var desiredDeviceNames = DomainDeck.SendToScreens
+            ? new HashSet<string>(DomainDeck.ScreenOutputDeviceNames)
+            : new HashSet<string>();
+
+        var targetScreens = System.Windows.Forms.Screen.AllScreens
+            .Where(s => desiredDeviceNames.Contains(s.DeviceName))
+            .ToList();
+        var targetDeviceNames = new HashSet<string>(targetScreens.Select(s => s.DeviceName));
+
+        for (var i = _screenOutputWindows.Count - 1; i >= 0; i--)
+        {
+            var window = _screenOutputWindows[i];
+            if (!targetDeviceNames.Contains(window.DeviceName))
+            {
+                _screenOutputWindows.RemoveAt(i);
+                window.Close();
+            }
+        }
+
+        if (targetScreens.Count == 0)
+        {
+            return;
+        }
+
+        var bitmap = EnsureScreenOutputBitmap();
+        var alreadyOpenDeviceNames = new HashSet<string>(_screenOutputWindows.Select(w => w.DeviceName));
+
+        foreach (var screen in targetScreens)
+        {
+            if (alreadyOpenDeviceNames.Contains(screen.DeviceName))
+            {
+                continue;
+            }
+
+            var window = new ScreenOutputWindow(screen.DeviceName);
+            window.SetSource(bitmap);
+            window.PositionOnScreen(screen);
+            window.Show();
+            _screenOutputWindows.Add(window);
+        }
+    }
+
+    /// <summary>Cria (uma única vez, sob demanda) o <see cref="WriteableBitmap"/> 1920x1080 compartilhado por todas as telas deste Deck — mesmo canvas fixo que <see cref="BackgroundArtRenderer"/> já usa.</summary>
+    private WriteableBitmap EnsureScreenOutputBitmap()
+    {
+        if (_screenOutputBitmap is null)
+        {
+            _screenOutputBitmap = new WriteableBitmap(BackgroundArtRenderer.FrameWidth, BackgroundArtRenderer.FrameHeight, 96, 96, PixelFormats.Bgra32, null);
+        }
+
+        return _screenOutputBitmap;
     }
 
     /// <summary>
@@ -1183,14 +1591,34 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         _engine.ErrorOccurred -= OnEngineError;
 
         // Sprint Livewire-4 (2026-09-14): AudioFrameReady agora e assinado sempre (ver comentario no
-        // construtor), entao desassina sempre tambem — so FrameReady (video, so consumido pelo
-        // NdiSender) continua condicionado a _ndiSender existir.
+        // construtor), entao desassina sempre tambem.
         _engine.AudioFrameReady -= OnEngineAudioFrameReady;
 
-        if (_ndiSender is not null)
+        // Sprint Telas-Saida-Direta (2026-11-10): FrameReady (video) agora tambem e assinado sempre
+        // (ver comentario no construtor — dois consumidores possiveis, NDI e Telas, cada um
+        // null-safe/condicional sozinho), entao desassina sempre tambem, sem condicionar a
+        // _ndiSender existir.
+        _engine.FrameReady -= OnEngineFrameReady;
+
+        // Sprint Arte-de-Fundo (2026-11-10): para o timer e libera o buffer nativo ANTES de
+        // descartar o NdiSender — StopBackgroundArtTimer já zera _backgroundArtSending primeiro
+        // (checado por SendBackgroundArtFrame antes de qualquer chamada ao NdiSender), o que reduz
+        // bastante a janela de uma tick do timer (thread do ThreadPool) chamar SendFrame num
+        // NdiSender já descartado, mas não a elimina por completo — mesmo risco residual, inerente
+        // ao próprio design, que _engine.Dispose() abaixo já aceita contra callbacks nativos em voo.
+        StopBackgroundArtTimer();
+        _backgroundArtTimer?.Dispose();
+        _backgroundArtTimer = null;
+
+        // Sprint Telas-Saida-Direta (2026-11-10): fecha todas as janelas de telão abertas deste
+        // Deck — nunca deixar uma janela sem borda/sempre no topo pra trás depois que o Deck (ou o
+        // programa inteiro, ao fechar) é descartado.
+        foreach (var window in _screenOutputWindows)
         {
-            _engine.FrameReady -= OnEngineFrameReady;
+            window.Close();
         }
+
+        _screenOutputWindows.Clear();
 
         _engine.Dispose();
         _ndiSender?.Dispose();

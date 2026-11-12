@@ -90,30 +90,33 @@ public partial class App : Application
         // Engine.PlaybackEngine.LogNativeCallTrace) confirmou com certeza que o crash de acesso
         // invalido (0xc0000005) ao dar Pause/Stop acontece DENTRO da propria chamada
         // `_mediaPlayer.Stop()` — o player da TELA (preview local, nunca o player headless que
-        // alimenta o NDI). O log nativo do libvlc (v1.0.60) mostrou o contexto: esta maquina usa
-        // placa de video Intel (driver WDDM confirmado no log: "Intel WDDM driver 32.0.101.7088"),
-        // e o player da tela estava usando o modulo de saida "direct3d11" com decodificacao
-        // ACELERADA POR HARDWARE (avcodec escolhendo o decodificador de video com suporte a
-        // hardware quando disponivel, comportamento padrao do libvlc). Essa combinacao especifica —
-        // GPU Intel integrada + saida Direct3D11 + decodificacao por hardware — tem historico
-        // documentado na comunidade LibVLC/LibVLCSharp de causar exatamente este sintoma (acesso
-        // invalido ao parar/pausar o video): o quadro decodificado fica numa textura da GPU
-        // compartilhada entre o decodificador e o renderizador, e desmontar essa textura durante
-        // Stop/Pause tem uma corrida de dados conhecida em certas versoes de driver Intel — um
-        // problema do DRIVER/da combinacao de hardware, nao da logica desta Cartucheira.
+        // alimenta o NDI). Primeira hipotese testada (v1.0.63, "--avcodec-hw=none", desligar
+        // decodificacao por HARDWARE): usuario reproduziu o mesmo crash de novo, no MESMO ponto
+        // exato (rastro confirmou: "Stop() — antes de _mediaPlayer.Stop()", sem o "depois de"),
+        // mesmo com essa opcao aplicada — hipotese REFUTADA, decodificacao por hardware nao era
+        // (ou nao era so) a causa.
         //
-        // "--avcodec-hw=none" desliga a decodificacao acelerada por hardware pro processo inteiro
-        // (afeta os dois players — tela E o player headless do NDI, ambos passam a decodificar por
-        // software) — o quadro passa a existir sempre em memoria normal (RAM), nunca numa textura da
-        // GPU, eliminando de raiz a classe de corrida que a combinacao acima pode disparar. Custo
-        // aceito: decodificacao por software usa mais CPU que por hardware — pra um unico Deck em
-        // 1080p (o canvas fixo deste projeto), isto e tipicamente bem dentro da capacidade de
-        // qualquer CPU moderna, e a prioridade #1 deste projeto (nunca derrubar a transmissao) pesa
-        // mais que economizar CPU. NAO comprovado 100% como a causa final (depende do proximo teste
-        // do usuario confirmar) — mas e a hipotese mais forte disponivel, apoiada em evidencia
-        // direta (o rastro apontando exatamente esta chamada) e num padrao de falha ja documentado
-        // publicamente pra esta combinacao exata de hardware/API.
-        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none");
+        // Fix v1.0.64 (2026-11-12): revisao apos a refutacao acima — "--avcodec-hw" controla so a
+        // DECODIFICACAO (avcodec escolhendo um decoder com aceleracao de hardware); o modulo de
+        // SAIDA/renderizacao de video (vout) e uma coisa SEPARADA, e o log nativo do libvlc (v1.0.60)
+        // mostrou que o player da tela estava usando "direct3d11" como vout (confirmado:
+        // "using vout display module "direct3d11"") — o renderizador em si, nao o decoder, que
+        // continua em uso independente de "--avcodec-hw". Teardown do vout Direct3D11 (o que
+        // `MediaPlayer.Stop()` faz — destroi o vout atual, o proximo Play recria do zero) embutido
+        // numa janela WPF (VideoView) e uma combinacao com historico documentado de instabilidade
+        // na comunidade LibVLCSharp, especialmente em placas Intel integradas (confirmado no log:
+        // "Intel WDDM driver 32.0.101.7088") — mais madura/testada ha mais anos que o vout Direct3D9
+        // antigo. "--vout=direct3d9" forca o RENDERIZADOR do player da tela pro modulo antigo
+        // (ainda acelerado por GPU, sem perda de fluidez esperada) — so afeta <c>_mediaPlayer</c>
+        // (o player da tela): <c>_framePlayer</c>/<c>_framePlayerB</c> (o player headless que
+        // alimenta o NDI) chamam <c>SetVideoCallbacks</c> explicitamente, o que forca o modulo
+        // "vmem" pra ELES independente de qualquer "--vout" global aqui — zero impacto no sinal de
+        // transmissao real, que nunca passou pelo vout Direct3D11/Direct3D9 pra comecar. Mantido
+        // "--avcodec-hw=none" tambem (defesa em profundidade — nao comprovado necessario, mas sem
+        // custo real pra um unico Deck 1080p, e nao foi ele quem causou o crash refutado acima, so
+        // nao foi suficiente por si so). NAO comprovado 100% ainda — depende do proximo teste do
+        // usuario confirmar.
+        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none", "--vout=direct3d9");
 
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);

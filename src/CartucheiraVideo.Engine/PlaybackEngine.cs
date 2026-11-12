@@ -1320,40 +1320,100 @@ public sealed class PlaybackEngine : IDisposable
         _standbyHasFrame = false;
     }
 
+    /// <summary>
+    /// Fix v1.0.62 (2026-11-12): incidente real — usuario confirmou reproducao 100% consistente
+    /// ("qualquer video, so de dar o play e depois pausa ou stop ja fecha") de um NOVO crash de
+    /// acesso invalido nativo, so depois da v1.0.61 ter corrigido o crash de arquivo corrompido (ate
+    /// entao, nenhum teste tinha chegado vivo ate um Pause/Stop de verdade). Mesmo codigo de excecao
+    /// (0xc0000005) confirmado via Visualizador de Eventos, mas SEM nenhuma pista util do log nativo
+    /// do libvlc (v1.0.60): o arquivo terminava bem no meio da abertura normal do arquivo, sem
+    /// nenhum sinal do Pause/Stop em si — o logger "file" do libvlc mantem buffer proprio e as
+    /// ultimas linhas (as que mostrariam o Pause/Stop de verdade) nunca chegam a ser descarregadas
+    /// em disco antes de um crash abrupto como este.
+    ///
+    /// Este metodo (e <see cref="Stop"/>/<see cref="Seek"/>) fazem VARIAS chamadas nativas
+    /// diferentes em sequencia (_mediaPlayer.Pause/Stop/Time, activeFramePlayer.Pause/Stop/Time,
+    /// _audioCapture.*) — sem saber qual delas e a culpada de verdade, qualquer correcao seria
+    /// adivinhacao pura. <see cref="LogNativeCallTrace"/> grava um marcador em disco DE FORMA
+    /// SINCRONA (abre, escreve e fecha o arquivo a cada chamada — sem buffer proprio retido entre
+    /// chamadas, ao contrario do logger do libvlc) imediatamente ANTES e DEPOIS de cada chamada
+    /// nativa arriscada abaixo. Na proxima reproducao, o ULTIMO marcador "antes de X" sem o
+    /// correspondente "depois de X" aponta, com certeza, exatamente qual chamada nativa especifica
+    /// e a que esta travando o processo — substitui adivinhacao por evidencia direta.
+    /// </summary>
+    private static void LogNativeCallTrace(string label)
+    {
+        try
+        {
+            var path = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "CartucheiraVideo",
+                "native-call-trace.log");
+
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.AppendAllText(path, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {label}{Environment.NewLine}");
+        }
+        catch (Exception)
+        {
+            // Falha honesta e silenciosa — diagnostico nunca pode impedir o comando real de
+            // Pause/Stop/Seek de tentar executar (mesma postura de CrashLogger, Infrastructure).
+        }
+    }
+
     /// <summary>Congela a reproducao no ponto atual. Sem efeito se nao estiver tocando.</summary>
     public void Pause()
     {
+        LogNativeCallTrace("Pause() — inicio");
+
         if (_mediaPlayer.IsPlaying)
         {
+            LogNativeCallTrace("Pause() — antes de _mediaPlayer.Pause()");
             _mediaPlayer.Pause();
+            LogNativeCallTrace("Pause() — depois de _mediaPlayer.Pause()");
         }
 
         var activeFramePlayer = ActiveFramePlayer;
         if (activeFramePlayer.IsPlaying)
         {
+            LogNativeCallTrace("Pause() — antes de activeFramePlayer.Pause()");
             activeFramePlayer.Pause();
+            LogNativeCallTrace("Pause() — depois de activeFramePlayer.Pause()");
         }
 
         CancelSeamlessStandby();
 
+        LogNativeCallTrace("Pause() — antes de _audioCapture.Pause()");
         _audioCapture.Pause();
+        LogNativeCallTrace("Pause() — fim (tudo ok)");
     }
 
     /// <summary>Interrompe a reproducao — o proximo <see cref="Play"/> recomeca do inicio.</summary>
     public void Stop()
     {
+        LogNativeCallTrace("Stop() — inicio");
+
         // Sprint Áudio-Latência-Placa-Local-Sincronismo (2026-09-19): invalida qualquer inicio
         // adiado do par NDI que estivesse pendente (ver StartNdiPairAfterSyncDelayAsync) — um Stop
         // no meio da espera do atraso nao pode deixar o par NDI comecar sozinho depois.
         _ = ++_playSequence;
 
+        LogNativeCallTrace("Stop() — antes de _mediaPlayer.Stop()");
         _mediaPlayer.Stop();
+        LogNativeCallTrace("Stop() — depois de _mediaPlayer.Stop(), antes de _framePlayer.Stop()");
         _framePlayer.Stop();
+        LogNativeCallTrace("Stop() — depois de _framePlayer.Stop()");
 
         // Sprint NDI-Loop-Seamless (2026-09-17): descarta qualquer standby (B) que estivesse
         // armado/tocando — o proximo Play() sempre recomeca do slot A do zero (ver comentario de
         // Play()), entao nao ha motivo pra manter a Media de B viva entre um Stop e o Play seguinte.
+        LogNativeCallTrace("Stop() — antes de _framePlayerB.Stop()");
         _framePlayerB.Stop();
+        LogNativeCallTrace("Stop() — depois de _framePlayerB.Stop()");
         _framePlayerB.Media = null;
         _currentFrameMediaB?.Dispose();
         _currentFrameMediaB = null;
@@ -1361,7 +1421,9 @@ public sealed class PlaybackEngine : IDisposable
         _seamlessStandbyArmedThisCycle = false;
         _standbyHasFrame = false;
 
+        LogNativeCallTrace("Stop() — antes de _audioCapture.Stop()");
         _audioCapture.Stop();
+        LogNativeCallTrace("Stop() — fim (tudo ok)");
     }
 
     /// <summary>Move a posicao de reproducao. Sem efeito se nada foi carregado ou a midia nao for buscavel.</summary>
@@ -1372,17 +1434,23 @@ public sealed class PlaybackEngine : IDisposable
             return;
         }
 
+        LogNativeCallTrace("Seek() — antes de _mediaPlayer.Time =");
         _mediaPlayer.Time = (long)position.TotalMilliseconds;
+        LogNativeCallTrace("Seek() — depois de _mediaPlayer.Time =");
 
         var activeFramePlayer = ActiveFramePlayer;
         if (activeFramePlayer.Media is not null)
         {
+            LogNativeCallTrace("Seek() — antes de activeFramePlayer.Time =");
             activeFramePlayer.Time = (long)position.TotalMilliseconds;
+            LogNativeCallTrace("Seek() — depois de activeFramePlayer.Time =");
         }
 
         CancelSeamlessStandby();
 
+        LogNativeCallTrace("Seek() — antes de _audioCapture.Seek()");
         _audioCapture.Seek(position);
+        LogNativeCallTrace("Seek() — fim (tudo ok)");
     }
 
     /// <summary>

@@ -300,7 +300,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.61";
+    public string VersionLabel => "v1.0.62";
 
     public DeckViewModel DeckA { get; }
 

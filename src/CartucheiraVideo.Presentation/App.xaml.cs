@@ -86,7 +86,34 @@ public partial class App : Application
             // o proprio arquivo de log (sem log nativo nesta sessao), nunca derruba o startup.
         }
 
-        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}");
+        // Fix v1.0.63 (2026-11-12): incidente real — o rastro de chamadas nativas (v1.0.62,
+        // Engine.PlaybackEngine.LogNativeCallTrace) confirmou com certeza que o crash de acesso
+        // invalido (0xc0000005) ao dar Pause/Stop acontece DENTRO da propria chamada
+        // `_mediaPlayer.Stop()` — o player da TELA (preview local, nunca o player headless que
+        // alimenta o NDI). O log nativo do libvlc (v1.0.60) mostrou o contexto: esta maquina usa
+        // placa de video Intel (driver WDDM confirmado no log: "Intel WDDM driver 32.0.101.7088"),
+        // e o player da tela estava usando o modulo de saida "direct3d11" com decodificacao
+        // ACELERADA POR HARDWARE (avcodec escolhendo o decodificador de video com suporte a
+        // hardware quando disponivel, comportamento padrao do libvlc). Essa combinacao especifica —
+        // GPU Intel integrada + saida Direct3D11 + decodificacao por hardware — tem historico
+        // documentado na comunidade LibVLC/LibVLCSharp de causar exatamente este sintoma (acesso
+        // invalido ao parar/pausar o video): o quadro decodificado fica numa textura da GPU
+        // compartilhada entre o decodificador e o renderizador, e desmontar essa textura durante
+        // Stop/Pause tem uma corrida de dados conhecida em certas versoes de driver Intel — um
+        // problema do DRIVER/da combinacao de hardware, nao da logica desta Cartucheira.
+        //
+        // "--avcodec-hw=none" desliga a decodificacao acelerada por hardware pro processo inteiro
+        // (afeta os dois players — tela E o player headless do NDI, ambos passam a decodificar por
+        // software) — o quadro passa a existir sempre em memoria normal (RAM), nunca numa textura da
+        // GPU, eliminando de raiz a classe de corrida que a combinacao acima pode disparar. Custo
+        // aceito: decodificacao por software usa mais CPU que por hardware — pra um unico Deck em
+        // 1080p (o canvas fixo deste projeto), isto e tipicamente bem dentro da capacidade de
+        // qualquer CPU moderna, e a prioridade #1 deste projeto (nunca derrubar a transmissao) pesa
+        // mais que economizar CPU. NAO comprovado 100% como a causa final (depende do proximo teste
+        // do usuario confirmar) — mas e a hipotese mais forte disponivel, apoiada em evidencia
+        // direta (o rastro apontando exatamente esta chamada) e num padrao de falha ja documentado
+        // publicamente pra esta combinacao exata de hardware/API.
+        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none");
 
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);

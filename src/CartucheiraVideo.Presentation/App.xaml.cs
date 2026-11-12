@@ -40,6 +40,33 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // Fix v1.0.71 (2026-11-12): incidente real GRAVE — usuario reportou "mesmo a cartucheira
+        // fechada, o software fechado, ta mandando imagem pro NDI e pra tela". Causa raiz: o
+        // padrao WPF (ShutdownMode.OnLastWindowClose, nunca definido explicitamente neste projeto
+        // antes desta correcao) so chama OnExit() — e portanto todo o Dispose() que destroi o
+        // NdiSender de cada Deck e fecha as ScreenOutputWindow (ver DeckViewModel.Dispose) —
+        // quando a ULTIMA janela da aplicacao fechar. As ScreenOutputWindow (Sprint
+        // Telas-Saida-Direta, 2026-11-10 — sem borda, sem entrada na barra de tarefas, entao
+        // invisveis como "janela" pro operador) sao janelas WPF de verdade, continuam na colecao
+        // Application.Windows mesmo depois do operador fechar a MainWindow — e NADA fechava elas
+        // nesse momento (MainWindow nao tinha nenhum handler de Closing). Resultado: a MainWindow
+        // fecha (parece "fechado" pro operador — sem janela visivel, sem entrada na barra de
+        // tarefas), mas o PROCESSO continua rodando pra sempre em segundo plano, porque ainda
+        // existem ScreenOutputWindow abertas — e so o processo rodando e suficiente pro timer de
+        // Arte de Fundo (DeckViewModel) e o NdiSender continuarem mandando quadro, indefinidamente,
+        // sem ningum conseguir desligar exceto matando o processo no Gerenciador de Tarefas. Isso
+        // tambem explica o sintoma relatado antes desta correcao ("NDI parou, mandando a imagem
+        // padrao"): um processo "zumbi" anterior, parado nesse estado, continua anunciando a MESMA
+        // fonte NDI (mesmo nome de canal) na rede, brigando com a instancia nova que o operador
+        // acabou de abrir — o monitor NDI do usuario pode estar vendo o zumbi antigo (congelado na
+        // arte de fundo), nao a instancia nova. CORRIGIDO: ShutdownMode.OnMainWindowClose — agora a
+        // aplicacao sempre desliga de vez (chamando OnExit, que desliga tudo corretamente, incluindo
+        // fechar as ScreenOutputWindow e destruir cada NdiSender) no instante em que a MainWindow
+        // fechar, independente de quaisquer outras janelas (ScreenOutputWindow ou futuras) ainda
+        // abertas. Ver tambem MainWindow.xaml.cs (handler de Closing, segunda camada de seguranca:
+        // fecha as ScreenOutputWindow na hora, sem depender do timing do Dispose).
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
+
         // Fix v1.0.59 (2026-11-11): registrados o MAIS CEDO possível no startup — antes de
         // qualquer coisa que possa falhar (NDI, LibVLC, Decks) — pra nunca deixar uma janela sem
         // cobertura nenhuma.
@@ -156,6 +183,12 @@ public partial class App : Application
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);
         mainWindow.Show();
+
+        // Fix v1.0.71 (2026-11-12): explicito de proposito, nunca depender do WPF "adivinhar"
+        // sozinho qual janela e a principal (ele normalmente acerta — a primeira Show() da
+        // aplicacao — mas o ShutdownMode.OnMainWindowClose acima depende 100% deste valor estar
+        // certo, entao e barato demais deixar implicito algo tao critico).
+        MainWindow = mainWindow;
 
         // Fix v1.0.54 (2026-11-11): tem que vir DEPOIS do Show() acima, nunca dentro do construtor
         // do MainViewModel — ver comentário completo em MainViewModel.InitializeAfterMainWindowShown

@@ -12,6 +12,27 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = viewModel;
+
+        // Fix v1.0.71 (2026-11-12): incidente real — "mesmo a cartucheira fechada, ta mandando
+        // imagem pro NDI e pra tela". Segunda camada de segurança (a primeira é
+        // App.xaml.cs/ShutdownMode.OnMainWindowClose, que garante que o processo INTEIRO desliga —
+        // e com ele, eventualmente, o Dispose() de cada Deck fecha as ScreenOutputWindow): aqui,
+        // fecha as ScreenOutputWindow dos dois Decks NA HORA que o operador fecha a MainWindow, sem
+        // depender do timing/ordem do Dispose — o operador vê os monitores físicos apagarem no
+        // mesmo instante em que a janela principal fecha, não um instante depois. Mesmo padrão já
+        // usado pelo atalho de emergência Ctrl+Alt+Shift+F9 (ver MainViewModel) —
+        // CloseAllScreenOutputWindowsForSafety já é seguro de chamar a qualquer momento, inclusive
+        // sem nenhuma Tela aberta.
+        Closing += OnMainWindowClosing;
+    }
+
+    private void OnMainWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel)
+        {
+            viewModel.DeckA.CloseAllScreenOutputWindowsForSafety();
+            viewModel.DeckB.CloseAllScreenOutputWindowsForSafety();
+        }
     }
 
     /// <summary>

@@ -679,9 +679,23 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Fix v1.0.61 (2026-11-12): _engine.Load agora pode RECUSAR o arquivo (arquivo corrompido —
+        // ver comentario completo de Engine.PlaybackEngine.TryValidateMediaIsPlayable). Se recusado,
+        // este Deck NUNCA deve aparentar ter algo carregado (LoadedFileName/HasVideo precisam voltar
+        // a "vazio") — senao o operador veria o nome do arquivo na tela e o botao Play habilitado
+        // pra um arquivo que na verdade nunca entrou nos players. OnEngineError (ja disparado
+        // SINCRONAMENTE dentro de _engine.Load, antes dele retornar) ja colocou o Deck em
+        // DeckPlaybackState.Error e mostrou o aviso — aqui so garante que HasVideo volte a false.
+        var loaded = _engine.Load(filePath);
+        if (!loaded)
+        {
+            _loadedFilePath = null;
+            LoadedFileName = "Vazio";
+            return;
+        }
+
         _loadedFilePath = filePath;
         LoadedFileName = Path.GetFileName(filePath);
-        _engine.Load(filePath);
 
         // Sprint NDI-Frame-Rate-Real (2026-09-16): repassa o frame rate REAL detectado pelo Engine
         // (ComputeLetterboxSize, mesmo parse ja usado pra resolucao/orientacao) pro NdiSender deste

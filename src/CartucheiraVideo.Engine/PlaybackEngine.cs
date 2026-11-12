@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using LibVLCSharp.Shared;
 
@@ -671,14 +672,34 @@ public sealed class PlaybackEngine : IDisposable
     public bool IsPlaying => _mediaPlayer.IsPlaying;
 
     /// <summary>
-    /// Associa um arquivo ao player. Sempre aceito, mesmo com uma midia ja tocando (a midia
-    /// anterior e descartada). Nao inicia a reproducao — quem decide iniciar e o chamador (<see cref="Play"/>).
+    /// Associa um arquivo ao player. Quase sempre aceito, mesmo com uma midia ja tocando (a midia
+    /// anterior e descartada) — EXCETO quando <see cref="TryValidateMediaIsPlayable"/> identifica o
+    /// arquivo como corrompido (ver comentario completo la pro incidente real que motivou esta
+    /// recusa, Fix v1.0.61/2026-11-12): nesse caso este metodo nao toca em NADA do estado existente
+    /// (midia anterior, se houver, continua carregada exatamente como estava) e retorna
+    /// <c>false</c> depois de disparar <see cref="ErrorOccurred"/>. Nao inicia a reproducao mesmo
+    /// quando aceito — quem decide iniciar e o chamador (<see cref="Play"/>).
     /// </summary>
-    public void Load(string filePath)
+    /// <returns><c>true</c> se o arquivo foi aceito e carregado nos players; <c>false</c> se foi recusado por estar corrompido (ver <see cref="ErrorOccurred"/> pro motivo exato).</returns>
+    public bool Load(string filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath))
         {
             throw new ArgumentException("Caminho do arquivo nao pode ser vazio.", nameof(filePath));
+        }
+
+        // Fix v1.0.61 (2026-11-12): incidente real — usuario carregou um .mov com o cabecalho do
+        // container corrompido ("PARADISE - DISNEY_OK.mov", confirmado por ele mesmo que nem o
+        // Windows Media Player abre o mesmo arquivo) e o processo inteiro fechava com acesso
+        // invalido nativo (0xc0000005/ntdll.dll — diagnostico completo, incluindo o log nativo do
+        // libvlc que confirmou a causa, em sprint-2026-11-11-investigacao-crash-nativo-play.md e
+        // sprint-2026-11-12-protecao-arquivo-corrompido.md). Esta checagem roda ANTES de tocar em
+        // qualquer estado dos players — ver comentario completo de
+        // <see cref="TryValidateMediaIsPlayable"/> pro racional.
+        if (!TryValidateMediaIsPlayable(filePath, out var invalidReason))
+        {
+            ErrorOccurred?.Invoke(this, $"Arquivo corrompido ou em formato não reconhecido: \"{Path.GetFileName(filePath)}\" ({invalidReason}). Não foi carregado — nada do que já estava tocando foi afetado.");
+            return false;
         }
 
         // Sprint NDI-audio-NAudio (2026-08-11): a hipotese "player de preview monopolizando o audio
@@ -788,6 +809,153 @@ public sealed class PlaybackEngine : IDisposable
         _audioCapture.Load(filePath);
 
         StateChanged?.Invoke(this, new EngineStateChangedEventArgs(EnginePlaybackState.Loaded));
+        return true;
+    }
+
+    /// <summary>
+    /// Fix v1.0.61 (2026-11-12): ver comentario completo de <see cref="Load"/> pro incidente real
+    /// que motivou esta checagem (arquivo .mov corrompido derrubando o processo inteiro com acesso
+    /// invalido nativo — 0xc0000005/ntdll.dll — confirmado via log nativo do libvlc, ver
+    /// sprint-2026-11-12-protecao-arquivo-corrompido.md no projeto).
+    ///
+    /// O libvlc, ao abrir um arquivo, e DELIBERADAMENTE permissivo: se o demuxer "certo" pro
+    /// formato (aqui, "mp4", pro container ISO-BMFF usado por .mov/.mp4) descarta o arquivo por
+    /// inconsistencia, o libvlc cai numa cadeia de FALLBACK tentando outros demuxers completamente
+    /// diferentes (no incidente real: ts, mod, avcodec, e por fim "ps" — Program Stream do MPEG,
+    /// formato sem nenhuma relacao com .mov) — ele foi desenhado pra tentar tocar QUALQUER coisa,
+    /// nunca pra validar. O demuxer errado aceitando o arquivo mesmo incompativel decodifica LIXO
+    /// como se fosse video valido ("garbage at input, trying to resync..." repetido centenas de
+    /// vezes no log nativo do incidente real) — e esse lixo, passando pelo pipeline de callback RAW
+    /// de video deste Engine (<see cref="OnFrameLock"/>/<see cref="OnFrameDisplay"/>, que escreve
+    /// direto em buffers nativos de tamanho fixo sem nenhuma validacao de que o decodificador
+    /// produziu algo que faz sentido), e o candidato mais provavel pra causar a corrupcao de
+    /// memoria real observada.
+    ///
+    /// Em vez de tentar sobreviver a corrupcao depois dela acontecer (impossivel pra uma violacao
+    /// de acesso nativa — ver comentario de classe de <c>CrashLogger</c>, Infrastructure), este
+    /// metodo faz uma analise RASA e BARATA (so le os cabecalhos dos boxes de nivel superior do
+    /// container ISO-BMFF — nunca o conteudo real de video/audio) ANTES de qualquer midia ser
+    /// entregue pro libvlc pra decodificar de verdade. Um arquivo com a classe exata de corrupcao
+    /// de cabecalho confirmada no incidente real (um box que declara tamanho 0 — convencao
+    /// ISO-BMFF pra "estende at o fim do arquivo" — sem realmente ser o ultimo box de verdade) e
+    /// recusado imediatamente, com um aviso honesto pro operador, SEM jamais engajar o pipeline
+    /// nativo de callback de video.
+    ///
+    /// Deliberadamente CONSERVADOR, de proposito — so recusa quando encontra uma inconsistencia
+    /// estrutural CLARA e inequivoca:
+    /// - Qualquer arquivo que nao comece com um box ISO-BMFF reconhecido (outro container
+    ///   qualquer — MKV, AVI, WebM, etc.) passa direto SEM checagem nenhuma: esta validacao e
+    ///   estritamente ADICIONAL ao comportamento ja permissivo do libvlc, nunca mais restritiva
+    ///   pra formatos que sempre funcionaram.
+    /// - Tamanho de box "1" (escape ISO-BMFF pra tamanho de 64 bits, arquivo &gt; 4GB) e qualquer
+    ///   erro de I/O (arquivo bloqueado por outro processo, permissao, etc.) tambem deixam passar
+    ///   sem opiniao — nunca bloqueia um Load por um motivo que nao seja a corrupcao de cabecalho
+    ///   especifica que este metodo sabe detectar com confianca.
+    /// </summary>
+    private static bool TryValidateMediaIsPlayable(string filePath, out string? invalidReason)
+    {
+        invalidReason = null;
+
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            var fileLength = stream.Length;
+
+            // Precisa de pelo menos um cabecalho de box completo (4 bytes de tamanho + 4 de
+            // fourcc) pra tentar qualquer analise — arquivo menor que isso nao e um ISO-BMFF
+            // reconhecivel por esta checagem; deixa passar sem opiniao (ver nota de
+            // conservadorismo no comentario de classe).
+            if (fileLength < 8)
+            {
+                return true;
+            }
+
+            Span<byte> header = stackalloc byte[8];
+            long offset = 0;
+
+            while (offset + 8 <= fileLength)
+            {
+                stream.Position = offset;
+                var read = stream.Read(header);
+                if (read < 8)
+                {
+                    break;
+                }
+
+                // ISO-BMFF: tamanho do box em big-endian (ordem de bytes de rede) nos 4 primeiros
+                // bytes — nunca a ordem nativa da maquina (little-endian em x86/x64). Cada termo
+                // ja convertido pra `long` ANTES do shift, pra nunca arriscar o overflow de int32
+                // que `byte << 24` sofreria pra valores de byte >= 128 (shift em aritmetica de
+                // int, nao de long, se nao fosse convertido primeiro).
+                long boxSize = ((long)header[0] << 24) | ((long)header[1] << 16) | ((long)header[2] << 8) | header[3];
+                var fourCc = Encoding.ASCII.GetString(header.Slice(4, 4));
+
+                var isKnownTopLevelBox = fourCc is "ftyp" or "moov" or "mdat" or "free" or "skip" or "wide" or "pnot" or "uuid" or "moof" or "mfra";
+                if (!isKnownTopLevelBox)
+                {
+                    // Primeiro box nao reconhecido — ou nao e um arquivo ISO-BMFF de verdade
+                    // (outro container, sem relacao com este formato), ou chegamos ao fim da
+                    // cadeia de boxes de nivel superior que esta checagem sabe nomear. Nos dois
+                    // casos, deixa passar sem opiniao daqui em diante (conservador de proposito).
+                    return true;
+                }
+
+                // Tamanho 0 so e valido pro box que REALMENTE e o ultimo do arquivo (convencao
+                // oficial ISO-BMFF pra "estende at o fim do arquivo") — um box de tamanho 0 que
+                // NAO esta no fim real do arquivo e estruturalmente impossivel (ninguem sabe onde
+                // ele termina e o proximo comeca) e e EXATAMENTE a assinatura confirmada pelo log
+                // nativo do libvlc no incidente real que motivou esta correcao.
+                if (boxSize == 0)
+                {
+                    var isLastBoxInFile = offset + 8 >= fileLength;
+                    if (!isLastBoxInFile)
+                    {
+                        invalidReason = $"box \"{fourCc}\" no deslocamento {offset} declara tamanho 0 sem ser o último bloco do arquivo (cabeçalho corrompido/truncado)";
+                        return false;
+                    }
+
+                    break;
+                }
+
+                // Escape ISO-BMFF pra "tamanho real nos proximos 8 bytes" (box maior que 4GB) —
+                // nao suportado por esta checagem rasa; deixa passar sem opiniao em vez de
+                // arriscar um falso positivo.
+                if (boxSize == 1)
+                {
+                    return true;
+                }
+
+                // Tamanho menor que o proprio cabecalho (8 bytes) e impossivel pra qualquer box
+                // real — mesma familia de corrupcao de cabecalho do caso de tamanho 0.
+                if (boxSize < 8)
+                {
+                    invalidReason = $"box \"{fourCc}\" no deslocamento {offset} declara tamanho {boxSize}, menor que o próprio cabeçalho (cabeçalho corrompido)";
+                    return false;
+                }
+
+                // Box declara se estender alem do fim real do arquivo — mesma classe de
+                // corrupcao (tamanho inconsistente com o arquivo de verdade), mesmo nao sendo zero.
+                if (offset + boxSize > fileLength)
+                {
+                    invalidReason = $"box \"{fourCc}\" no deslocamento {offset} declara tamanho {boxSize}, que ultrapassa o tamanho real do arquivo ({fileLength} bytes)";
+                    return false;
+                }
+
+                offset += boxSize;
+            }
+
+            // Fim da leitura (ou bloco final incompleto, comum e inofensivo) sem encontrar
+            // nenhuma inconsistencia — sem motivo pra recusar.
+            return true;
+        }
+        catch (Exception)
+        {
+            // Falha honesta (arquivo bloqueado por outro processo, permissao, I/O, etc.) — nunca
+            // bloqueia um Load por um motivo nao relacionado a corrupcao real do conteudo; deixa o
+            // libvlc tentar normalmente, exatamente o comportamento de antes desta sprint pra
+            // qualquer coisa que esta checagem nao saiba avaliar.
+            return true;
+        }
     }
 
     /// <summary>

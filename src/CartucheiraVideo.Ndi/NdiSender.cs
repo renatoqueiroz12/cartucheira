@@ -161,6 +161,47 @@ public sealed class NdiSender : IDisposable
     // chamada desde a 4ª tentativa, sem estado nativo compartilhado pra proteger).
     private readonly object _audioGate = new();
 
+    /// <summary>
+    /// Fix v1.0.70 (2026-11-12): incidente real — depois de MUITAS tentativas na pilha gerenciada
+    /// (Engine.PlaybackEngine) nao resolverem o crash de Stop ("clica no stop, da um tempinho, ele
+    /// fecha"; Pause continuou 100% seguro o tempo todo), o usuario capturou DOIS dumps nativos reais
+    /// (Visualizador de Erros + WinDbg) do mesmo incidente, em momentos diferentes — e os dois
+    /// mostraram pilhas DIFERENTES: a primeira morrendo dentro de "libavcodec_plugin" (o decoder
+    /// FFmpeg da libvlc, liberando um ponteiro corrompido em RtlFreeHeap), a segunda dentro de
+    /// "Processing_NDI_Lib_x64" (a propria SDK da NDI, lendo um endereco invalido numa instrucao
+    /// vetorial AVX2 de conversao de cor). As duas em threads NAO gerenciadas (`!clrstack` confirmou
+    /// nas duas: "likely not a managed thread"), em MODULOS nativos diferentes. Pilhas diferentes pro
+    /// MESMO sintoma, numa corrida de dados classica, sao exatamente a assinatura de corrupcao de
+    /// memoria cujo ponto de crash real nao e o ponto de origem — quem quer que toque a memoria
+    /// corrompida DEPOIS e quem aparece na pilha, nao quem corrompeu.
+    ///
+    /// Revisando quem chama <see cref="SendFrame"/> (video): hoje sao DUAS fontes concorrentes, sem
+    /// nenhuma trava — <c>DeckViewModel.OnEngineFrameReady</c> (a thread de decodificacao de video do
+    /// LibVLC, UM quadro real por vez, so enquanto o Deck esta tocando) e, desde a Sprint
+    /// Arte-de-Fundo (2026-11-10), <c>DeckViewModel.SendBackgroundArtFrame</c> — um
+    /// <see cref="System.Threading.Timer"/> do ThreadPool, rodando a cada 200ms, que LIGA
+    /// exatamente quando o Deck entra em Cue/Stopped/Finished (ver
+    /// <c>DeckViewModel.IsBackgroundArtIdleState</c> — DELIBERADAMENTE exclui Paused, unica razao
+    /// documentada de Pause nunca ter aparecido travando em nenhum log desta investigacao inteira).
+    /// Ou seja: no exato instante em que o operador clica Stop, o Engine ainda pode ter um quadro de
+    /// video em transito assincrono (contrato documentado em
+    /// <see cref="NdiInterop.NativeMethods.NDIlib_send_send_video_async_v2"/> — so sincroniza no
+    /// PROXIMO evento sincronizante), E o timer de arte de fundo comeca a chamar
+    /// <see cref="SendFrame"/> de novo, de uma thread diferente, no MESMO <see cref="_instance"/> da
+    /// NDI SDK — SEM NENHUMA trava protegendo essa concorrencia. Esta MESMA classe de bug (chamadas
+    /// concorrentes nao protegidas na mesma instancia da NDI SDK) ja tinha causado sete crashes reais
+    /// do lado do AUDIO (ver historico completo no comentario de classe acima) — corrigida la com
+    /// <see cref="_audioGate"/>. <see cref="SendFrame"/> (video) nunca recebeu a mesma protecao,
+    /// porque ate a Sprint Arte-de-Fundo so existia UM chamador possivel (a propria thread de
+    /// decodificacao) — a segunda fonte concorrente so passou a existir depois, sem ninguem conectar
+    /// os pontos com a licao ja aprendida do lado do audio.
+    ///
+    /// CORRIGIDO: <see cref="_videoGate"/>, mesmo padrao exato de <see cref="_audioGate"/>, serializa
+    /// toda chamada a <see cref="SendFrame"/> — a thread de decodificacao e o timer de arte de fundo
+    /// nunca mais entram ao mesmo tempo na API nativa da NDI SDK pro mesmo canal.
+    /// </summary>
+    private readonly object _videoGate = new();
+
     // Buffer gerenciado (array .NET, rastreado/liberado pelo GC) reusado so pra evitar alocar heap
     // gerenciado a cada bloco de audio (caminho QUENTE, dezenas de vezes por segundo) — cresce se um
     // bloco maior que o anterior chegar. Protegido por _audioGate desde a correcao pos-6º-crash (ver
@@ -293,7 +334,13 @@ public sealed class NdiSender : IDisposable
             timestamp = 0
         };
 
-        NativeMethods.NDIlib_send_send_video_async_v2(_instance, ref frame);
+        // Fix v1.0.70 (2026-11-12): ver comentario completo de _videoGate — serializa esta chamada
+        // contra o timer de arte de fundo, que chama este mesmo metodo de uma thread diferente assim
+        // que o Deck entra em Cue/Stopped/Finished.
+        lock (_videoGate)
+        {
+            NativeMethods.NDIlib_send_send_video_async_v2(_instance, ref frame);
+        }
     }
 
     /// <summary>
@@ -477,7 +524,15 @@ public sealed class NdiSender : IDisposable
         // async de video (ver comentario em NdiInterop.NDIlib_send_send_video_async_v2) — nao
         // precisa de nenhuma chamada extra aqui so pra garantir que o ultimo frame em voo termine
         // antes da instancia ser destruida.
-        NativeMethods.NDIlib_send_destroy(_instance);
+        //
+        // Fix v1.0.70 (2026-11-12): ver comentario completo de _videoGate — _disposed vira true ACIMA
+        // antes de pegar a trava, entao qualquer SendFrame que ainda nao tinha passado do "if
+        // (_disposed)" desiste sozinho; se um SendFrame JA estava dentro da trava quando este Dispose
+        // chegou aqui, espera ele terminar antes de destruir a instancia por baixo dele.
+        lock (_videoGate)
+        {
+            NativeMethods.NDIlib_send_destroy(_instance);
+        }
         Marshal.FreeCoTaskMem(_namePtr);
     }
 }

@@ -116,7 +116,42 @@ public partial class App : Application
         // custo real pra um unico Deck 1080p, e nao foi ele quem causou o crash refutado acima, so
         // nao foi suficiente por si so). NAO comprovado 100% ainda — depende do proximo teste do
         // usuario confirmar.
-        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none", "--vout=direct3d9");
+        //
+        // Fix v1.0.69 (2026-11-12): PRIMEIRA PROVA REAL desta investigacao inteira — usuario capturou
+        // um dump nativo de verdade (Visualizador de Erros do Windows + WinDbg, "!analyze -v"/"kb"
+        // depois de ".ecxr") do crash que sobrevivia ate a v1.0.68 (trava _nativeCallLock). O resultado
+        // muda a conclusao de toda a investigacao: a pilha de chamadas nao tem NENHUM frame gerenciado
+        // (`!clrstack` confirmou: "current thread is likely not a managed thread" — ou seja, nao e
+        // nenhuma thread nossa, nem a UI, nem nenhuma Task/Timer deste programa) e mostra, do topo pro
+        // fundo: ntdll!RtlFreeHeap -> msvcrt!free -> msvcrt!aligned_free -> tres frames dentro de
+        // "libavcodec_plugin" (o modulo da libvlc que decodifica video via FFmpeg) -> a thread nativa
+        // sendo iniciada (msvcrt!_threadstartex/kernel32!BaseThreadInitThunk). A excecao: acesso
+        // invalido tentando LER do endereco 0xFFFFFFFFFFFFFFFF (todos os bits ligados — a assinatura
+        // classica de um ponteiro corrompido/invalido sendo passado pra free()), dentro de
+        // RtlFreeHeap — ou seja, CORRUPCAO DE MEMORIA (heap) dentro do proprio decodificador
+        // libavcodec, numa thread de decodificacao interna do FFmpeg, nada a ver com
+        // Play/Pause/Stop/Seek/SetOutputDevice do nosso codigo gerenciado (PlaybackEngine.cs) — nenhum
+        // deles aparece em nenhum lugar desta pilha. Isso explica, em retrospecto, o atraso de "alguns
+        // segundos" que motivou a v1.0.68: corrupcao de heap nao crasha no instante em que acontece,
+        // so na proxima vez que aquele bloco de memoria for tocado de novo (aqui, liberado) — um
+        // Stop/Seek perto no tempo e so coincidencia de quando esse free() seguinte aconteceu de
+        // rodar, nao a causa. A trava `_nativeCallLock` da v1.0.68 continua sendo uma correcao real e
+        // valida (defeito de concorrencia genuino, documentado la), mas a evidencia agora mostra que
+        // ela nao tinha chance de corrigir ESTE crash especifico — ele acontece inteiramente dentro do
+        // FFmpeg, numa thread que nosso codigo nem enxerga.
+        //
+        // "--avcodec-hw=none" (ja aplicado acima desde a v1.0.63) prova que NAO e decodificacao por
+        // HARDWARE — o crash deste dump aconteceu com hardware ja desligado, dentro do caminho de
+        // SOFTWARE do FFmpeg. O proximo suspeito mais provavel pra corrupcao de heap especificamente
+        // dentro do decodificador por software e a DECODIFICACAO MULTI-THREAD do proprio FFmpeg (um
+        // decoder busy pode usar varias threads internas pra decodificar quadros em paralelo —
+        // categoria conhecida de bugs de concorrencia/corrupcao em codecs especificos de certas
+        // versoes do FFmpeg). "--avcodec-threads=1" forca o libavcodec a decodificar numa UNICA thread
+        // interna, eliminando essa classe inteira de bug ao custo de CPU extra (aceitavel pra um unico
+        // Deck 1080p). NAO comprovado ainda — e a primeira tentativa de correcao desta investigacao
+        // baseada em evidencia forense real (dump+WinDbg) em vez de inferencia a partir de log
+        // gerenciado proprio; so o proximo teste do usuario, com outro dump se crashar de novo, confirma.
+        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none", "--vout=direct3d9", "--avcodec-threads=1");
 
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);

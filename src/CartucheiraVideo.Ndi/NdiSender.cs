@@ -344,6 +344,69 @@ public sealed class NdiSender : IDisposable
     }
 
     /// <summary>
+    /// Fix v1.0.72 (2026-11-12): incidente real — mesmo depois da v1.0.70 (trava <see cref="_videoGate"/>
+    /// contra chamadas CONCORRENTES a <see cref="SendFrame"/>), o usuario reproduziu o MESMO crash de
+    /// novo (terceiro dump: pilha morre de novo dentro de "Processing_NDI_Lib_x64", numa instrucao
+    /// vetorial de conversao de cor, lendo memoria invalida — identico em NATUREZA ao segundo dump da
+    /// v1.0.70, so que a v1.0.70 ja estava instalada). Ou seja: a v1.0.70 resolveu a corrida de
+    /// CHAMADAS CONCORRENTES, mas havia uma SEGUNDA violacao do mesmo contrato de lifetime assincrono
+    /// (ver comentario completo em <see cref="NdiInterop.NativeMethods.NDIlib_send_send_video_async_v2"/>),
+    /// desta vez nao entre duas THREADS chamando ao mesmo tempo, e sim entre uma chamada e o que
+    /// acontece DEPOIS dela retornar: o contrato documentado exige um "evento sincronizante" — (a) a
+    /// variante sincrona, (b) chamar esta MESMA funcao assincrona de novo, (c) passar um frame nulo, ou
+    /// (d) <c>NDIlib_send_destroy</c> — antes de reescrever OU LIBERAR a memoria que foi passada numa
+    /// chamada anterior. <c>DeckViewModel._backgroundArtBuffer</c> (o buffer nativo UNICO, reenviado a
+    /// cada 200ms pelo timer de Arte de Fundo) e liberado (<c>Marshal.FreeHGlobal</c>) em dois lugares
+    /// — <c>StopBackgroundArtTimer</c> (sempre que o Deck sai de Cue/Stopped/Finished, ex.: Play depois
+    /// de um Stop) e <c>ReplaceBackgroundArtBuffer</c> (ao trocar a arte ativa enquanto o Deck ja esta
+    /// ocioso) — SEM NENHUM evento sincronizante antes. Se o ULTIMO <see cref="SendFrame"/> daquele
+    /// buffer especifico (antes do timer parar) ainda estiver em processamento assincrono dentro da NDI
+    /// SDK (conversao de cor/compressao/rede, fora desta chamada, ver comentario de classe) no instante
+    /// em que o C# libera essa memoria pro sistema, a SDK fica lendo memoria ja devolvida/reaproveitada
+    /// — corrupcao de heap classica, com o ponto de crash real (qualquer alocacao futura que reuse
+    /// aquele endereco, ou a propria SDK tocando a memoria corrompida depois) podendo ser bem depois e
+    /// num lugar totalmente diferente de onde a corrupcao realmente aconteceu — exatamente o padrao
+    /// documentado nos comentarios da v1.0.70.
+    ///
+    /// CORRIGIDO: este metodo novo manda um frame NULO (<c>p_data = IntPtr.Zero</c>) — a opcao (c) do
+    /// contrato oficial, feita exatamente pra isto — e DEVE ser chamado pelo <c>DeckViewModel</c> SEMPRE
+    /// antes de liberar <c>_backgroundArtBuffer</c>, nos dois lugares citados acima, DENTRO do mesmo
+    /// <c>lock (_backgroundArtGate)</c> que ja protege a troca do ponteiro (garante que nenhum tick do
+    /// timer ainda em voo possa estar no meio de um <see cref="SendFrame"/> com o MESMO buffer quando
+    /// este metodo roda — ou ele ja terminou e liberou a trava antes de chegarmos aqui, ou ainda nao
+    /// comecou porque o timer ja foi parado). Sem efeito (retorna silenciosamente) se ja descartado,
+    /// mesma guarda honesta do resto da classe.
+    /// </summary>
+    public void SyncPendingVideoFrame()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        var nullFrame = new NDIlib_video_frame_v2_t
+        {
+            xres = 0,
+            yres = 0,
+            FourCC = NDIlib_FourCC_video_type_e.NDIlib_FourCC_video_type_UYVY,
+            frame_rate_N = _frameRateNum,
+            frame_rate_D = _frameRateDen,
+            picture_aspect_ratio = 16f / 9f,
+            frame_format_type = NDIlib_frame_format_type_e.NDIlib_frame_format_type_progressive,
+            timecode = long.MaxValue,
+            p_data = IntPtr.Zero,
+            line_stride_in_bytes = 0,
+            p_metadata = IntPtr.Zero,
+            timestamp = 0
+        };
+
+        lock (_videoGate)
+        {
+            NativeMethods.NDIlib_send_send_video_async_v2(_instance, ref nullFrame);
+        }
+    }
+
+    /// <summary>
     /// Sprint NDI-Frame-Rate-Real (2026-09-16): atualiza o frame rate declarado nos proximos
     /// <see cref="SendFrame"/> — ver comentario completo de <see cref="_frameRateNum"/>. Chamado
     /// pelo <c>DeckViewModel</c> a cada <c>Load</c>, com o valor detectado pelo

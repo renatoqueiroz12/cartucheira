@@ -1346,6 +1346,12 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         {
             if (_backgroundArtBuffer != IntPtr.Zero)
             {
+                // Fix v1.0.72 (2026-11-12): ver comentario completo de
+                // Ndi.NdiSender.SyncPendingVideoFrame — NUNCA liberar este buffer sem antes forcar um
+                // "evento sincronizante" na NDI SDK; o ultimo SendFrame que usou este ponteiro pode
+                // ainda estar em processamento assincrono (conversao de cor/compressao/rede) quando
+                // chegamos aqui.
+                _ndiSender?.SyncPendingVideoFrame();
                 Marshal.FreeHGlobal(_backgroundArtBuffer);
                 _backgroundArtBuffer = IntPtr.Zero;
             }
@@ -1403,6 +1409,19 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// Fix v1.0.72 (2026-11-12): incidente real — crash de Stop/Play voltou mesmo depois da v1.0.70
+    /// (terceiro dump, mesma natureza do segundo: corrupção dentro da própria NDI SDK). Causa real
+    /// encontrada: este método libera <see cref="_backgroundArtBuffer"/> (o buffer único, reenviado a
+    /// cada 200ms enquanto o Deck está ocioso) toda vez que o Deck sai de
+    /// Cue/Stopped/Finished (ex.: Play depois de um Stop) — mas o ÚLTIMO <see cref="Ndi.NdiSender.SendFrame"/>
+    /// daquele buffer pode ainda estar em processamento ASSÍNCRONO dentro da NDI SDK (contrato
+    /// documentado em <see cref="Ndi.NdiInterop.NativeMethods.NDIlib_send_send_video_async_v2"/> —
+    /// a memória só é segura de liberar depois de um "evento sincronizante"). Liberar sem sincronizar
+    /// primeiro é corrupção de heap clássica — a SDK fica lendo memória já devolvida ao sistema,
+    /// com o crash real podendo aparecer bem depois, em outro lugar (ver comentário completo de
+    /// <see cref="Ndi.NdiSender.SyncPendingVideoFrame"/>).
+    /// </summary>
     private void StopBackgroundArtTimer()
     {
         _backgroundArtSending = false;
@@ -1412,6 +1431,11 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         {
             if (_backgroundArtBuffer != IntPtr.Zero)
             {
+                // CORRIGIDO (v1.0.72): força a NDI SDK a terminar de usar este buffer ANTES de
+                // liberá-lo — dentro do mesmo lock que já protege contra um tick do timer ainda em
+                // voo (ou ele já terminou seu SendFrame e liberou a trava antes de chegarmos aqui, ou
+                // nunca vai mais rodar porque o Change acima já parou o timer).
+                _ndiSender?.SyncPendingVideoFrame();
                 Marshal.FreeHGlobal(_backgroundArtBuffer);
                 _backgroundArtBuffer = IntPtr.Zero;
             }

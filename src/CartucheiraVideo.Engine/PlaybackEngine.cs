@@ -1158,7 +1158,19 @@ public sealed class PlaybackEngine : IDisposable
     /// </summary>
     public void Clear()
     {
-        _mediaPlayer.Stop();
+        // Fix v1.0.65 (2026-11-12): mesmo motivo do Stop() (ver comentario completo la) — o Stop()
+        // nativo do _mediaPlayer e 100% fatal nesta maquina/driver, confirmado em tres builds
+        // seguidas. Clear() precisa mesmo descarregar a Media (diferente de Stop(), que so rebobina),
+        // mas nao precisa chamar Stop() nativo pra isso: pausar primeiro (se estiver tocando, mesma
+        // chamada comprovada segura) e so depois soltar a Media evita o mesmo caminho de destruicao
+        // de vout que esta travando. NAO testado ainda nesta variante especifica — o usuario so
+        // confirmou o crash no botao Stop, nunca no Clear/"Limpar" — mas e exatamente a mesma chamada
+        // nativa, o mesmo padrao exato, entao corrigido de qualquer forma em vez de deixar uma bomba
+        // identica armada sabendo o que ja se sabe.
+        if (_mediaPlayer.IsPlaying)
+        {
+            _mediaPlayer.Pause();
+        }
         _framePlayer.Stop();
         _framePlayerB.Stop();
         _audioCapture.Clear();
@@ -1392,7 +1404,51 @@ public sealed class PlaybackEngine : IDisposable
         LogNativeCallTrace("Pause() — fim (tudo ok)");
     }
 
-    /// <summary>Interrompe a reproducao — o proximo <see cref="Play"/> recomeca do inicio.</summary>
+    /// <summary>
+    /// Interrompe a reproducao — o proximo <see cref="Play"/> recomeca do inicio.
+    ///
+    /// Fix v1.0.65 (2026-11-12): incidente real, 100% reproduzivel — "clica stop fecha" (confirmado
+    /// pelo usuario em TRES builds seguidas, cada uma com uma hipotese de causa nativa diferente, e
+    /// as tres refutadas por teste real dele mesmo):
+    ///   - v1.0.63 (desligar decodificacao por hardware, "--avcodec-hw=none"): mesmo crash, mesmo
+    ///     ponto exato.
+    ///   - v1.0.64 (forcar o renderizador antigo Direct3D9 em vez do Direct3D11, "--vout=direct3d9"):
+    ///     mesmo crash, mesmo ponto exato de novo — o terceiro <c>native-call-trace.log</c> (o mais
+    ///     completo ate agora) confirma, sem ambiguidade: toda chamada a <see cref="Pause"/> termina
+    ///     com sucesso total ("fim (tudo ok)"), repetidas vezes, em sequencia — mas TODA chamada a
+    ///     Stop() morre exatamente dentro de <c>_mediaPlayer.Stop()</c>, nunca depois.
+    ///
+    /// Isso muda a conclusao: nao e questao de QUAL decoder ou QUAL renderizador o libvlc usa — e a
+    /// propria OPERACAO de destruir/recriar o vout (o que <c>MediaPlayer.Stop()</c> nativo faz,
+    /// diferente de <see cref="Pause"/>, que mantem o vout vivo) que e instavel nesta combinacao de
+    /// maquina/driver, independente de qual implementacao de vout esta em uso por baixo. Trocar de
+    /// vout (v1.0.64) nunca tinha chance de resolver algo que nao depende do vout especifico.
+    ///
+    /// Nova estrategia, bem mais conservadora: em vez de continuar tentando tornar a destruicao do
+    /// vout segura (3 tentativas, 3 falhas), simplesmente PARAR DE CHAMA-LA. <see cref="Pause"/> esta
+    /// comprovado seguro pelo proprio log (dezenas de chamadas bem-sucedidas, zero falhas) — "Stop"
+    /// aqui passa a significar, pro <c>_mediaPlayer</c> (o player da TELA, o unico que tem um vout de
+    /// janela real pra destruir): pausar (se estiver tocando) e rebobinar pra o inicio
+    /// (<c>Time = 0</c>), NUNCA chamar o Stop() nativo de verdade. O proximo Play() so retoma a MESMA
+    /// midia do inicio — visualmente idêntico ao Stop tradicional (o Deck mostra o primeiro quadro,
+    /// parado), sem nunca acionar o caminho de destruicao de vout que esta travando.
+    ///
+    /// <c>_framePlayer</c>/<c>_framePlayerB</c> (o player headless que alimenta o NDI, modulo "vmem",
+    /// SEM janela/HWND nenhum pra destruir) continuam chamando Stop() nativo exatamente como antes —
+    /// nunca foram implicados em nenhum dos tres crashes (o rastro nunca chega nem perto deles, a
+    /// morte e sempre antes, dentro de <c>_mediaPlayer.Stop()</c>) — zero motivo pra mudar esse lado.
+    ///
+    /// Como o Stop() nativo do <c>_mediaPlayer</c> nao e mais chamado, o evento <c>Stopped</c> dele
+    /// (que disparava <see cref="StateChanged"/> com <see cref="EnginePlaybackState.Stopped"/>, ver
+    /// construtor) nunca mais vai disparar por essa via — por isso o StateChanged e levantado
+    /// manualmente no final deste metodo agora, preservando exatamente o mesmo contrato observavel
+    /// pra quem ouve (DeckViewModel.OnEngineStateChanged → ResetToCue).
+    ///
+    /// SENDO HONESTO: esta e a QUARTA tentativa de resolver este crash especifico, mas a primeira que
+    /// nao depende de nenhuma suposicao sobre QUAL mecanismo nativo e o problema — evita por completo
+    /// a UNICA chamada que o rastro de chamadas provou, com certeza, ser sempre fatal. Ainda assim,
+    /// so o teste real do usuario confirma.
+    /// </summary>
     public void Stop()
     {
         LogNativeCallTrace("Stop() — inicio");
@@ -1402,9 +1458,25 @@ public sealed class PlaybackEngine : IDisposable
         // no meio da espera do atraso nao pode deixar o par NDI comecar sozinho depois.
         _ = ++_playSequence;
 
-        LogNativeCallTrace("Stop() — antes de _mediaPlayer.Stop()");
-        _mediaPlayer.Stop();
-        LogNativeCallTrace("Stop() — depois de _mediaPlayer.Stop(), antes de _framePlayer.Stop()");
+        // Fix v1.0.65 (2026-11-12): ver comentario completo da classe/metodo acima — NUNCA MAIS
+        // chama _mediaPlayer.Stop() nativo (comprovado 100% fatal, 3 builds seguidas). Pause() (se
+        // estiver tocando) + rebobinar pra 0 reproduz o mesmo resultado visual/funcional (Deck parado
+        // no inicio, pronto pro proximo Play) sem acionar a destruicao do vout.
+        if (_mediaPlayer.IsPlaying)
+        {
+            LogNativeCallTrace("Stop() — antes de _mediaPlayer.Pause() (fix v1.0.65: substitui _mediaPlayer.Stop())");
+            _mediaPlayer.Pause();
+            LogNativeCallTrace("Stop() — depois de _mediaPlayer.Pause()");
+        }
+
+        if (_mediaPlayer.Media is not null)
+        {
+            LogNativeCallTrace("Stop() — antes de _mediaPlayer.Time = 0");
+            _mediaPlayer.Time = 0;
+            LogNativeCallTrace("Stop() — depois de _mediaPlayer.Time = 0");
+        }
+
+        LogNativeCallTrace("Stop() — antes de _framePlayer.Stop()");
         _framePlayer.Stop();
         LogNativeCallTrace("Stop() — depois de _framePlayer.Stop()");
 
@@ -1424,6 +1496,11 @@ public sealed class PlaybackEngine : IDisposable
         LogNativeCallTrace("Stop() — antes de _audioCapture.Stop()");
         _audioCapture.Stop();
         LogNativeCallTrace("Stop() — fim (tudo ok)");
+
+        // Fix v1.0.65 (2026-11-12): levantado manualmente — ver comentario completo da classe/metodo
+        // acima pro motivo (o evento nativo Stopped do _mediaPlayer nao dispara mais, porque seu
+        // Stop() nativo nao e mais chamado).
+        StateChanged?.Invoke(this, new EngineStateChangedEventArgs(EnginePlaybackState.Stopped));
     }
 
     /// <summary>Move a posicao de reproducao. Sem efeito se nada foi carregado ou a midia nao for buscavel.</summary>
@@ -2214,7 +2291,13 @@ public sealed class PlaybackEngine : IDisposable
         _framePlayer.EndReached -= OnFramePlayerEndReached;
         _framePlayerB.EndReached -= OnFramePlayerBEndReached;
 
-        _mediaPlayer.Stop();
+        // Fix v1.0.65 (2026-11-12): o Stop() nativo explicito que existia aqui foi removido —
+        // comprovado 100% fatal nesta maquina/driver (ver comentario completo em Stop()). Dispose()
+        // precisa liberar os recursos de qualquer forma; chamar Stop() antes so acrescentava uma
+        // chamada ja conhecida como fatal, sem nenhum benefico observado. Nao e garantia de que o
+        // proprio Dispose() nunca vai travar ao fechar o programa com algo tocando (caminho nativo
+        // diferente, nunca testado isoladamente) — mas e estritamente melhor que antes, que travava
+        // SEMPRE nesse caso.
         _mediaPlayer.Dispose();
         _currentMedia?.Dispose();
 

@@ -1574,6 +1574,26 @@ public sealed class PlaybackEngine : IDisposable
     }
 
     /// <summary>Move a posicao de reproducao. Sem efeito se nada foi carregado ou a midia nao for buscavel.</summary>
+    /// <remarks>
+    /// Fix v1.0.67 (2026-11-12): incidente real NOVO — usuario confirmou que mexer na barra de
+    /// progresso durante a reproducao tambem derruba o processo ("agora eu fui fazer um teste
+    /// mexendo na barra de rolagem... e ai parou"), mesmo depois das v1.0.65/v1.0.66 (que corrigiram
+    /// Stop() nos dois players) terem deixado o proprio Stop() comprovadamente estavel (o quarto
+    /// native-call-trace.log, pedido nesta mesma investigacao, mostrou um Stop() recente terminando
+    /// "fim (tudo ok)", sem travar). Isso aponta pra uma causa mais ampla ainda: nao e so Stop() que
+    /// e arriscado nesta maquina/driver — e QUALQUER chamada nativa que mexe na reproducao
+    /// (<c>.Time =</c>, igual <c>.Stop()</c>) enquanto o player esta tocando DE VERDADE (decodificando/
+    /// entregando quadros ativamente). <see cref="Pause"/> continua sendo a UNICA operacao comprovada
+    /// segura em toda esta investigacao, chamada dezenas de vezes sem falhar nenhuma. Corrigido
+    /// pausando (se estiver tocando) ANTES de mexer em <c>.Time</c>, e retomando o <c>Play()</c>
+    /// depois (se estava tocando antes) — mesmo padrao ja aplicado a Stop() nas duas versoes
+    /// anteriores, agora extendido pra Seek(). Efeito colateral honesto: um arraste da barra agora
+    /// pausa e retoma a reproducao por uma fracao de segundo (ao soltar o botao do mouse, nao a cada
+    /// pixel arrastado — <c>SeekToProgress</c> so e chamado uma vez, no
+    /// <c>LostMouseCapture</c>/<c>PreviewMouseLeftButtonUp</c>, ver <c>MainWindow.xaml.cs</c>) — pode
+    /// ser perceptivel como uma micro-interrupcao no video/NDI durante o seek, mas e preferivel a
+    /// derrubar o processo inteiro.
+    /// </remarks>
     public void Seek(TimeSpan position)
     {
         if (_mediaPlayer.Media is null)
@@ -1581,16 +1601,46 @@ public sealed class PlaybackEngine : IDisposable
             return;
         }
 
+        var wasMediaPlayerPlaying = _mediaPlayer.IsPlaying;
+        if (wasMediaPlayerPlaying)
+        {
+            LogNativeCallTrace("Seek() — antes de _mediaPlayer.Pause() (fix v1.0.67: pausa antes de mexer em Time)");
+            _mediaPlayer.Pause();
+            LogNativeCallTrace("Seek() — depois de _mediaPlayer.Pause()");
+        }
+
         LogNativeCallTrace("Seek() — antes de _mediaPlayer.Time =");
         _mediaPlayer.Time = (long)position.TotalMilliseconds;
         LogNativeCallTrace("Seek() — depois de _mediaPlayer.Time =");
 
+        if (wasMediaPlayerPlaying)
+        {
+            LogNativeCallTrace("Seek() — antes de _mediaPlayer.Play() (fix v1.0.67: retoma apos o seek)");
+            _mediaPlayer.Play();
+            LogNativeCallTrace("Seek() — depois de _mediaPlayer.Play()");
+        }
+
         var activeFramePlayer = ActiveFramePlayer;
         if (activeFramePlayer.Media is not null)
         {
+            var wasActiveFramePlayerPlaying = activeFramePlayer.IsPlaying;
+            if (wasActiveFramePlayerPlaying)
+            {
+                LogNativeCallTrace("Seek() — antes de activeFramePlayer.Pause() (fix v1.0.67)");
+                activeFramePlayer.Pause();
+                LogNativeCallTrace("Seek() — depois de activeFramePlayer.Pause()");
+            }
+
             LogNativeCallTrace("Seek() — antes de activeFramePlayer.Time =");
             activeFramePlayer.Time = (long)position.TotalMilliseconds;
             LogNativeCallTrace("Seek() — depois de activeFramePlayer.Time =");
+
+            if (wasActiveFramePlayerPlaying)
+            {
+                LogNativeCallTrace("Seek() — antes de activeFramePlayer.Play() (fix v1.0.67)");
+                activeFramePlayer.Play();
+                LogNativeCallTrace("Seek() — depois de activeFramePlayer.Play()");
+            }
         }
 
         CancelSeamlessStandby();

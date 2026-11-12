@@ -768,7 +768,17 @@ public sealed class PlaybackEngine : IDisposable
         // sequencia) — corrigido de qualquer forma por ser um defeito real e de baixo risco, mas a
         // investigacao do crash continua: ver tambem o log nativo do LibVLC adicionado nesta mesma
         // versao (App.xaml.cs) pra capturar a causa raiz de verdade na proxima reproducao.
-        _framePlayer.Stop();
+        //
+        // Fix v1.0.66 (2026-11-12): o Stop() nativo que existia aqui foi trocado por Pause() —
+        // `_framePlayer.Stop()` foi confirmado 100% fatal nesta maquina/driver (ver comentario
+        // completo no metodo Stop() desta classe), e era exatamente esta mesma chamada. Pause()
+        // atinge o mesmo objetivo (interromper OnFrameLock/OnFrameDisplay ANTES de qualquer campo
+        // novo ser escrito, prevenindo a corrida de dados original desta correcao) sem acionar a
+        // destruicao do vout que esta travando.
+        if (_framePlayer.IsPlaying)
+        {
+            _framePlayer.Pause();
+        }
 
         var previousFrameMedia = _currentFrameMedia;
         _currentFrameMedia = new Media(_libVlc, filePath, FromType.FromPath, ":no-audio");
@@ -792,7 +802,12 @@ public sealed class PlaybackEngine : IDisposable
         // pra ArmStandbySlotA/ArmStandbySlotB poderem recriar a Media do slot em standby mais tarde,
         // sem o chamador precisar passar o caminho nenhuma outra vez.
         _currentFilePath = filePath;
-        _framePlayerB.Stop();
+        // Fix v1.0.66 (2026-11-12): mesmo motivo do _framePlayer logo acima — Stop() nativo trocado
+        // por Pause() (se tocando) antes de descartar a Media de B.
+        if (_framePlayerB.IsPlaying)
+        {
+            _framePlayerB.Pause();
+        }
         _framePlayerB.Media = null;
         _currentFrameMediaB?.Dispose();
         _currentFrameMediaB = null;
@@ -1171,8 +1186,18 @@ public sealed class PlaybackEngine : IDisposable
         {
             _mediaPlayer.Pause();
         }
-        _framePlayer.Stop();
-        _framePlayerB.Stop();
+
+        // Fix v1.0.66 (2026-11-12): mesmo motivo acima — `_framePlayer.Stop()` nativo foi confirmado
+        // 100% fatal (ver comentario completo em Stop()), e esta era a MESMA chamada exata, so que
+        // aqui no Clear(). Pausar antes (se tocando) evita o mesmo caminho de destruicao de vout.
+        if (_framePlayer.IsPlaying)
+        {
+            _framePlayer.Pause();
+        }
+        if (_framePlayerB.IsPlaying)
+        {
+            _framePlayerB.Pause();
+        }
         _audioCapture.Clear();
 
         _mediaPlayer.Media = null;
@@ -1327,7 +1352,15 @@ public sealed class PlaybackEngine : IDisposable
             return;
         }
 
-        IdleFramePlayer.Stop();
+        // Fix v1.0.66 (2026-11-12): mesmo motivo documentado no metodo Stop() desta classe — Stop()
+        // nativo num destes players (headless, "vmem") foi confirmado 100% fatal enquanto tocando.
+        // O standby em preparo pode estar tocando de verdade neste momento (e exatamente o ponto
+        // desta funcao) — Pause() em vez de Stop() evita o mesmo risco.
+        var idleFramePlayer = IdleFramePlayer;
+        if (idleFramePlayer.IsPlaying)
+        {
+            idleFramePlayer.Pause();
+        }
         _seamlessStandbyArmedThisCycle = false;
         _standbyHasFrame = false;
     }
@@ -1448,6 +1481,21 @@ public sealed class PlaybackEngine : IDisposable
     /// nao depende de nenhuma suposicao sobre QUAL mecanismo nativo e o problema — evita por completo
     /// a UNICA chamada que o rastro de chamadas provou, com certeza, ser sempre fatal. Ainda assim,
     /// so o teste real do usuario confirma.
+    ///
+    /// Fix v1.0.66 (2026-11-12): a v1.0.65 ACIMA foi testada pelo usuario — "igual stop crach" — e o
+    /// QUARTO native-call-trace.log provou algo novo e decisivo: `_mediaPlayer.Stop()` deixou de ser
+    /// chamado (confirmado — o rastro mostra `Pause()` e `Time = 0` completando com sucesso, nunca
+    /// vistos antes nesta sequencia), mas o processo morre agora um passo depois, dentro de
+    /// `_framePlayer.Stop()` (o player HEADLESS que alimenta o NDI, modulo "vmem", sem HWND nenhum).
+    /// Essa chamada nunca tinha chance de ser alcancada nas tres tentativas anteriores — o crash em
+    /// `_mediaPlayer.Stop()` sempre matava o processo ANTES de chegar nela. Era uma segunda bomba
+    /// escondida atras da primeira, nunca exercitada de verdade ate agora.
+    ///
+    /// Isso muda a conclusao de novo, numa direcao mais ampla: o problema nao e especifico do vout
+    /// de JANELA (Direct3D11/Direct3D9) — e de QUALQUER chamada Stop() nativa num MediaPlayer deste
+    /// LibVLC enquanto ele esta tocando de verdade, seja o player com janela real ou o headless
+    /// "vmem". Mesma solucao, aplicada agora tambem aqui: `_framePlayer`/`_framePlayerB` passam a ser
+    /// pausados (+ rebobinados/descartados) em vez de ter o Stop() nativo chamado.
     /// </summary>
     public void Stop()
     {
@@ -1476,16 +1524,38 @@ public sealed class PlaybackEngine : IDisposable
             LogNativeCallTrace("Stop() — depois de _mediaPlayer.Time = 0");
         }
 
-        LogNativeCallTrace("Stop() — antes de _framePlayer.Stop()");
-        _framePlayer.Stop();
-        LogNativeCallTrace("Stop() — depois de _framePlayer.Stop()");
+        // Fix v1.0.66 (2026-11-12): ver comentario completo da classe/metodo acima — NUNCA MAIS
+        // chama _framePlayer.Stop() nativo (comprovado 100% fatal pelo quarto native-call-trace.log,
+        // mesma classe de bug do _mediaPlayer.Stop() corrigido na v1.0.65). Mesmo padrao: Pause() (se
+        // tocando, ja comprovado seguro — o proprio rastro mostra "activeFramePlayer.Pause()"
+        // funcionando repetidas vezes) + rebobinar pra 0.
+        if (_framePlayer.IsPlaying)
+        {
+            LogNativeCallTrace("Stop() — antes de _framePlayer.Pause() (fix v1.0.66: substitui _framePlayer.Stop())");
+            _framePlayer.Pause();
+            LogNativeCallTrace("Stop() — depois de _framePlayer.Pause()");
+        }
+
+        if (_framePlayer.Media is not null)
+        {
+            LogNativeCallTrace("Stop() — antes de _framePlayer.Time = 0");
+            _framePlayer.Time = 0;
+            LogNativeCallTrace("Stop() — depois de _framePlayer.Time = 0");
+        }
 
         // Sprint NDI-Loop-Seamless (2026-09-17): descarta qualquer standby (B) que estivesse
         // armado/tocando — o proximo Play() sempre recomeca do slot A do zero (ver comentario de
         // Play()), entao nao ha motivo pra manter a Media de B viva entre um Stop e o Play seguinte.
-        LogNativeCallTrace("Stop() — antes de _framePlayerB.Stop()");
-        _framePlayerB.Stop();
-        LogNativeCallTrace("Stop() — depois de _framePlayerB.Stop()");
+        //
+        // Fix v1.0.66 (2026-11-12): mesmo motivo do slot A acima — nunca mais Stop() nativo aqui.
+        // Como B ja vai ser descartado (Media = null) na sequencia, so precisa de Pause() antes,
+        // nunca de rebobinar.
+        if (_framePlayerB.IsPlaying)
+        {
+            LogNativeCallTrace("Stop() — antes de _framePlayerB.Pause() (fix v1.0.66: substitui _framePlayerB.Stop())");
+            _framePlayerB.Pause();
+            LogNativeCallTrace("Stop() — depois de _framePlayerB.Pause()");
+        }
         _framePlayerB.Media = null;
         _currentFrameMediaB?.Dispose();
         _currentFrameMediaB = null;
@@ -2301,17 +2371,18 @@ public sealed class PlaybackEngine : IDisposable
         _mediaPlayer.Dispose();
         _currentMedia?.Dispose();
 
-        _framePlayer.Stop();
+        // Fix v1.0.66 (2026-11-12): mesmo motivo da v1.0.65 acima, aplicado aqui tambem —
+        // `_framePlayer.Stop()` foi confirmado 100% fatal enquanto tocando (ver Stop()). Removido
+        // pelo mesmo raciocinio: Dispose() libera os recursos de qualquer forma.
         _framePlayer.Dispose();
         _currentFrameMedia?.Dispose();
         Marshal.FreeHGlobal(_frameBuffers[0]);
         Marshal.FreeHGlobal(_frameBuffers[1]);
 
         // Sprint NDI-Loop-Seamless (2026-09-17): descarte simetrico do segundo player/buffers —
-        // seguro mesmo se o modo sem-corte nunca chegou a ligar (B nunca recebeu Media, Stop/Dispose
+        // seguro mesmo se o modo sem-corte nunca chegou a ligar (B nunca recebeu Media, Dispose
         // num player parado nao tem efeito nenhum, Marshal.FreeHGlobal libera memoria alocada no
         // construtor de qualquer forma, usada ou nao).
-        _framePlayerB.Stop();
         _framePlayerB.Dispose();
         _currentFrameMediaB?.Dispose();
         Marshal.FreeHGlobal(_frameBuffersB[0]);

@@ -179,22 +179,26 @@ public partial class App : Application
         // baseada em evidencia forense real (dump+WinDbg) em vez de inferencia a partir de log
         // gerenciado proprio; so o proximo teste do usuario, com outro dump se crashar de novo, confirma.
         //
-        // REVERTIDO na v1.0.73 (2026-11-13): usuario testou e confirmou "tudo igual" — nao resolveu o
-        // crash (o dump SEGUINTE, ja sem esta opcao ter ajudado em nada, mostrou que a causa real
-        // sempre esteve em CartucheiraVideo.Ndi/NdiSender.cs — ver _videoGate/v1.0.70 e
-        // SyncPendingVideoFrame/v1.0.72, as correcoes que de fato tinham evidencia forense apontando
-        // pra elas). "--avcodec-threads=1" nunca contribuiu pra corrigir nada, so ficou "de defesa" —
-        // mas o custo de CPU extra citado acima como "aceitavel" na v1.0.69 se mostrou REAL: usuario
-        // reportou video "picotando" durante a reproducao normal (nao em Stop/Play — no MEIO da
-        // reproducao), comecando exatamente nesta janela de versoes. Decodificacao de software
-        // FORCADA numa unica thread e bem mais pesada pra CPU que decodificacao multi-thread (o
-        // comportamento padrao do FFmpeg, usado por qualquer outro player), especialmente competindo
-        // por CPU com a conversao de cor/compressao da NDI rodando no mesmo processo — suficiente pra
-        // derrubar quadros em momentos de pico. Sem nenhuma evidencia de que esta opcao jamais ajudou
-        // em algo real, e com uma regressao de performance real e relatada, a decisao e remove-la —
-        // mantidos "--avcodec-hw=none"/"--vout=direct3d9" (nao relacionados a decodificacao
-        // multi-thread, sem nenhum sintoma de regressao relatado contra eles).
-        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none", "--vout=direct3d9");
+        // REVERTIDO na v1.0.73 (2026-11-13), RESTAURADO na v1.0.74 (2026-11-13, mesmo dia): a v1.0.73
+        // removeu esta opcao baseada na teoria de que o custo de CPU da decodificacao numa unica
+        // thread estava causando um "picotando em alguns momentos" relatado pelo usuario. Essa teoria
+        // era FRACA (ver nota de honestidade da v1.0.73 — nenhuma evidencia forense real, so
+        // eliminacao por exclusao) e se mostrou ERRADA na pratica: o usuario testou a v1.0.73 e
+        // reportou que PIOROU muito — video "craquelando" o tempo inteiro, nao so "em alguns
+        // momentos". Isso e evidencia forte, direta, de que a decodificacao MULTI-THREAD do FFmpeg
+        // (o padrao, sem esta opcao) e GENUINAMENTE instavel nesta maquina especifica — exatamente a
+        // conclusao original da v1.0.69, que o Dump #1 desta investigacao ja tinha apontado (crash
+        // dentro do proprio libavcodec, em RtlFreeHeap, liberando um ponteiro corrompido, numa thread
+        // INTERNA de decodificacao — nao a mesma classe de corrupcao achada depois em NdiSender.cs).
+        // A v1.0.73 assumiu, sem prova, que o Dump #1 era so "memoria corrompida em outro lugar,
+        // tocada aqui por acaso" (o padrao confirmado nos dumps #2/#3, do lado da NDI) — mas o teste
+        // real agora mostra que NAO: a decodificacao multi-thread tem, ela mesma, um problema real
+        // nesta maquina (hardware/driver especifico — ver comentario de v1.0.64 sobre o driver Intel
+        // WDDM integrado desta maquina, ja documentado como fonte de instabilidade noutro contexto).
+        // RESTAURADA esta opcao. O "picotando em alguns momentos" ORIGINAL (relatado ja COM esta
+        // opcao ativa, antes da v1.0.73) continua SEM explicacao — e um problema genuinamente
+        // separado, que nao deve ser investigado mexendo nesta opcao de novo.
+        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none", "--vout=direct3d9", "--avcodec-threads=1");
 
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);

@@ -178,7 +178,23 @@ public partial class App : Application
         // Deck 1080p). NAO comprovado ainda — e a primeira tentativa de correcao desta investigacao
         // baseada em evidencia forense real (dump+WinDbg) em vez de inferencia a partir de log
         // gerenciado proprio; so o proximo teste do usuario, com outro dump se crashar de novo, confirma.
-        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none", "--vout=direct3d9", "--avcodec-threads=1");
+        //
+        // REVERTIDO na v1.0.73 (2026-11-13): usuario testou e confirmou "tudo igual" — nao resolveu o
+        // crash (o dump SEGUINTE, ja sem esta opcao ter ajudado em nada, mostrou que a causa real
+        // sempre esteve em CartucheiraVideo.Ndi/NdiSender.cs — ver _videoGate/v1.0.70 e
+        // SyncPendingVideoFrame/v1.0.72, as correcoes que de fato tinham evidencia forense apontando
+        // pra elas). "--avcodec-threads=1" nunca contribuiu pra corrigir nada, so ficou "de defesa" —
+        // mas o custo de CPU extra citado acima como "aceitavel" na v1.0.69 se mostrou REAL: usuario
+        // reportou video "picotando" durante a reproducao normal (nao em Stop/Play — no MEIO da
+        // reproducao), comecando exatamente nesta janela de versoes. Decodificacao de software
+        // FORCADA numa unica thread e bem mais pesada pra CPU que decodificacao multi-thread (o
+        // comportamento padrao do FFmpeg, usado por qualquer outro player), especialmente competindo
+        // por CPU com a conversao de cor/compressao da NDI rodando no mesmo processo — suficiente pra
+        // derrubar quadros em momentos de pico. Sem nenhuma evidencia de que esta opcao jamais ajudou
+        // em algo real, e com uma regressao de performance real e relatada, a decisao e remove-la —
+        // mantidos "--avcodec-hw=none"/"--vout=direct3d9" (nao relacionados a decodificacao
+        // multi-thread, sem nenhum sintoma de regressao relatado contra eles).
+        _libVlc = new LibVLC("--verbose=2", "--file-logging", $"--logfile={libVlcLogPath}", "--avcodec-hw=none", "--vout=direct3d9");
 
         _mainViewModel = new MainViewModel(_libVlc);
         var mainWindow = new MainWindow(_mainViewModel);

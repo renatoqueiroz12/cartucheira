@@ -56,6 +56,25 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 public sealed class MainViewModel : ViewModelBase, IDisposable
 {
     private string _statusMessage = "Pronto.";
+
+    /// <summary>
+    /// Fix v1.0.75 (2026-11-13): incidente real — investigando por que o Deck 1 não manda vídeo
+    /// pras Telas (enquanto o Deck 2 manda normal), pedi pro usuário checar a aba "Logs" por um
+    /// aviso específico que o programa já emite (<see cref="StatusMessage"/>) quando decide, por
+    /// segurança, NÃO abrir uma Tela. Usuário respondeu: "o sistema não tem uma mensagem de
+    /// configuração salva quando salva qualquer coisa" — e looking at <c>OpenLogsCommand</c>
+    /// (abaixo), confirmei: a aba "Logs" nunca foi implementada de verdade, só mostra "Tela de Logs
+    /// ainda não implementada." Pior: <see cref="StatusMessage"/> é uma string ÚNICA (não um
+    /// histórico) — cada aviso novo SOBRESCREVE o anterior na hora, então mesmo avisos importantes
+    /// (como o de Telas) são estruturalmente impossíveis de ler depois, mesmo olhando com atenção,
+    /// porque o `Save()` das Configurações dispara VÁRIOS desses avisos em sequência rapidíssima e
+    /// só o ÚLTIMO ("Configurações salvas.") sobrevive visível. Esse bug de base estava escondendo
+    /// qualquer diagnóstico real desta investigação. Corrigido: todo valor atribuído a
+    /// <see cref="StatusMessage"/> agora também entra, com timestamp, em
+    /// <see cref="StatusHistory"/> — um histórico de verdade, que a aba Logs (agora implementada,
+    /// ver <see cref="OpenLogsCommand"/>/<c>Views.LogsWindow</c>) exibe na íntegra.
+    /// </summary>
+    private readonly ObservableCollection<string> _statusHistory = new();
     private string _clock = DateTime.Now.ToString("HH:mm:ss");
     private readonly DispatcherTimer _clockTimer;
     private readonly SettingsStore _settingsStore;
@@ -110,6 +129,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// <summary>Falso até a primeira <see cref="ReapplyNdiNetworkAdapter"/> — mesmo motivo do <see cref="_livewireAdvertiserStarted"/> acima (nulo inicial indistinguível de "configurado = deixar o NDI escolher").</summary>
     private bool _ndiNetworkAdapterApplied;
     private SettingsWindow? _settingsWindow;
+
+    /// <summary>Fix v1.0.75 (2026-11-13): ver comentario completo de _statusHistory/OpenLogsCommand.</summary>
+    private LogsWindow? _logsWindow;
     private int? _vinhetasHotkeyId;
     private int? _trilhasHotkeyId;
 
@@ -252,7 +274,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         OpenSettingsCommand = new RelayCommand(_ => OpenSettings());
         OpenAboutCommand = new RelayCommand(_ => StatusMessage = "Cartucheira Vídeo — protótipo de interface.");
         OpenBanksManagerCommand = new RelayCommand(_ => StatusMessage = "Gerenciador de bancos ainda não implementado — use Renomear/Recarregar em cada metade da Botoneira, ou a pasta configurada em Configurações → Cartucheira, por enquanto.");
-        OpenLogsCommand = new RelayCommand(_ => StatusMessage = "Tela de Logs ainda não implementada.");
+        OpenLogsCommand = new RelayCommand(_ => OpenLogs());
 
         _clockTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _clockTimer.Tick += (_, _) => Clock = DateTime.Now.ToString("HH:mm:ss");
@@ -300,7 +322,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.74";
+    public string VersionLabel => "v1.0.75";
 
     public DeckViewModel DeckA { get; }
 
@@ -340,8 +362,28 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     public string StatusMessage
     {
         get => _statusMessage;
-        private set => SetProperty(ref _statusMessage, value);
+        private set
+        {
+            if (SetProperty(ref _statusMessage, value))
+            {
+                // Fix v1.0.75 (2026-11-13): ver comentario completo de _statusHistory — ponto UNICO
+                // por onde toda StatusMessage passa (setter privado), entao basta gravar aqui pra
+                // capturar TUDO, de qualquer lugar do programa, sem precisar achar/duplicar cada
+                // chamador. Limite de 500 linhas (ListBox com milhares de itens sem virtualizacao
+                // custaria memoria/UI a toa — 500 ja cobre bem mais que uma sessao inteira de uso
+                // tipico) — remove a mais antiga ao estourar, mesmo padrao "nunca deixar fila
+                // crescer sem limite" ja usado noutros lugares deste projeto.
+                _statusHistory.Add($"{System.DateTime.Now:HH:mm:ss} — {value}");
+                if (_statusHistory.Count > 500)
+                {
+                    _statusHistory.RemoveAt(0);
+                }
+            }
+        }
     }
+
+    /// <summary>Historico completo (ate 500 linhas) de tudo que ja passou por <see cref="StatusMessage"/>, com timestamp — ver comentario completo em <see cref="_statusHistory"/>. Exposto pra <c>Views.LogsWindow</c> exibir.</summary>
+    public ObservableCollection<string> StatusHistory => _statusHistory;
 
     public string Clock
     {
@@ -621,6 +663,32 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ReapplyUdpListenerPort();
         };
         _settingsWindow.Show();
+    }
+
+    /// <summary>
+    /// Fix v1.0.75 (2026-11-13): incidente real — a aba "Logs" nunca tinha sido implementada de
+    /// verdade (só mostrava "Tela de Logs ainda não implementada."), e isso escondeu um bug mais
+    /// sério: <see cref="StatusMessage"/> é uma string única, sobrescrita a cada novo aviso — um
+    /// aviso importante (ex.: Telas não abertas por segurança) nunca tinha como sobreviver visível
+    /// até alguém conseguir ler, porque o Salvar das Configurações dispara vários avisos em
+    /// sequência e só o último fica. Ver comentário completo em <see cref="_statusHistory"/>.
+    /// Não-modal de propósito (<c>Show()</c>, nunca <c>ShowDialog()</c>) — o operador precisa
+    /// continuar usando o programa (clicar Salvar em Configurações, por exemplo) enquanto observa o
+    /// histórico atualizar ao vivo (<see cref="StatusHistory"/> é um <c>ObservableCollection</c>,
+    /// então a lista na janela atualiza sozinha). Mesmo padrão de instância única de
+    /// <see cref="OpenSettings"/> (reaproveita/ativa a janela já aberta em vez de abrir duplicada).
+    /// </summary>
+    private void OpenLogs()
+    {
+        if (_logsWindow is not null)
+        {
+            _logsWindow.Activate();
+            return;
+        }
+
+        _logsWindow = new LogsWindow(this) { Owner = Application.Current?.MainWindow };
+        _logsWindow.Closed += (_, _) => _logsWindow = null;
+        _logsWindow.Show();
     }
 
     /// <summary>

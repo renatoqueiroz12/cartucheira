@@ -1,0 +1,33 @@
+<Window x:Class="CartucheiraVideo.Presentation.Views.LogsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Cartucheira Vídeo — Logs"
+        Height="520" Width="720"
+        MinHeight="300" MinWidth="420"
+        WindowStartupLocation="CenterOwner">
+
+    <!--
+        Fix v1.0.75 (2026-11-13): ver comentário completo em MainViewModel._statusHistory/OpenLogs
+        — antes desta versão, "Logs" só mostrava uma mensagem fixa ("ainda não implementada"). Esta
+        janela mostra o histórico real de todas as mensagens de status já emitidas nesta sessão
+        (StatusHistory, mais recente embaixo), inclusive avisos importantes que antes desapareciam
+        na hora por StatusMessage ser uma string única sobrescrita a cada novo aviso. ListBox comum
+        (não precisa de nada mais sofisticado pra texto simples) — ScrollIntoView no code-behind
+        mantém a última linha sempre visível conforme novas entradas chegam.
+    -->
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Histórico de mensagens desta sessão (mais recente embaixo)" Foreground="{DynamicResource Brush.TextLow}" FontSize="{StaticResource FontSize.Body}" Margin="0,0,0,8" />
+
+        <ListBox x:Name="HistoryListBox" Grid.Row="1" ItemsSource="{Binding StatusHistory}" FontFamily="Consolas" FontSize="12" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Fechar" Width="90" Padding="8" Click="Close_Click" IsDefault="True" IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>

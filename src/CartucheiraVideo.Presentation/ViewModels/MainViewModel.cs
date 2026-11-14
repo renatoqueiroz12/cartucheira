@@ -322,7 +322,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.75";
+    public string VersionLabel => "v1.0.76";
 
     public DeckViewModel DeckA { get; }
 
@@ -419,6 +419,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void OnDeckPlay(DeckViewModel deck)
     {
         StatusMessage = $"{deck.Name} tocando \"{deck.LoadedFileName}\".";
+
+        // Fix v1.0.76 (2026-11-13): ver comentário completo em DeckViewModel.BringScreenOutputsToFront
+        // — quando os dois Decks mandam pra mesma Tela física, o Deck que está indo ao ar agora
+        // precisa ficar visualmente por cima de qualquer Tela do outro Deck disputando o mesmo monitor.
+        deck.BringScreenOutputsToFront();
 
         PauseCartucheiraFor(deck);
         SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnPlayCommand);

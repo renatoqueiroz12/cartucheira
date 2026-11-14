@@ -1588,6 +1588,41 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// Fix v1.0.76 (2026-11-13): achado real investigando por que o DECK 1 "não manda pra Tela"
+    /// enquanto o DECK 2, com a mesma configuração de Telas, manda normal. Não é bug de
+    /// configuração nem de envio de frame — os dois Decks têm, cada um, sua própria
+    /// <see cref="_screenOutputWindows"/> (nunca compartilhada entre Decks), e CADA Deck realmente
+    /// abre e desenha na sua própria <see cref="ScreenOutputWindow"/> corretamente. O problema é
+    /// de EMPILHAMENTO (Z-order) quando os dois Decks têm a MESMA tela física marcada (cenário comum
+    /// — só existe uma Tela de saída de verdade na operação) com "Enviar para Telas" ligado: as duas
+    /// <see cref="ScreenOutputWindow"/> (uma de cada Deck) são <c>Topmost</c>, sem borda, cobrindo o
+    /// mesmo monitor inteiro — e <see cref="MainViewModel"/> sempre chama
+    /// <c>DeckA.RefreshScreenOutputs()</c> antes de <c>DeckB.RefreshScreenOutputs()</c> (ver
+    /// construtor do <see cref="MainViewModel"/>), então a janela do DECK 2 é sempre criada/mostrada
+    /// DEPOIS — e entre duas janelas igualmente Topmost, quem foi mostrada por último fica por cima.
+    /// Como essas janelas são criadas uma vez só e reaproveitadas (nunca recriadas enquanto a
+    /// seleção não muda, ver <see cref="RefreshScreenOutputs"/>), o DECK 2 fica permanentemente por
+    /// cima — o DECK 1 continua desenhando frames de verdade na própria janela (por isso ele "só
+    /// manda pra NDI": o NDI não passa por Tela nenhuma, então nunca foi afetado), só que essa janela
+    /// nunca é vista, encoberta pela do DECK 2 o tempo todo, mesmo parado só mostrando arte de fundo.
+    ///
+    /// Corrigido chamando este método em <see cref="MainViewModel.OnDeckPlay"/>: ao dar Play, o Deck
+    /// que está realmente ao ar agora traz suas próprias Telas pra frente de qualquer outra Tela
+    /// (de outro Deck) que esteja disputando o mesmo monitor — truque padrão WPF/Win32 pra forçar
+    /// reordenação dentro do grupo Topmost (desliga e religa <c>Topmost</c>, não existe outra forma
+    /// pública de "subir" uma janela já Topmost sem isso). Decks que não compartilham tela com
+    /// nenhum outro Deck não sofrem nenhuma mudança visível — chamar isso sempre é seguro.
+    /// </summary>
+    public void BringScreenOutputsToFront()
+    {
+        foreach (var window in _screenOutputWindows)
+        {
+            window.Topmost = false;
+            window.Topmost = true;
+        }
+    }
+
+    /// <summary>
     /// Nomes de dispositivo (<see cref="System.Windows.Forms.Screen.DeviceName"/>) de todo monitor
     /// que hospeda AGORA alguma janela de verdade da própria Cartucheira (MainWindow, SettingsWindow,
     /// diálogos etc.) — nunca as próprias <see cref="ScreenOutputWindow"/> (seria sempre verdade e

@@ -23,9 +23,11 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// que <see cref="ApplyTo"/> escreve de volta no Deck de verdade — fechar a janela sem salvar
 /// descarta as edições em memória sem tocar no Deck.
 ///
-/// Os campos de vMix/Resolume/Automação SALVAM de verdade (não são fictícios), mas ainda não
-/// disparam nenhuma chamada de rede — não existe cliente TCP/HTTP ainda (Frame Pipeline → NDI
-/// Sender → vMix/Resolume Controller são os próximos passos do roteiro, status-implementacao.md).
+/// Os campos de vMix/Resolume/Automação SALVAM de verdade (não são fictícios). Desde a v1.0.77
+/// (Sprint vMix Controller, 2026-11-14), os campos de vMix TAMBÉM disparam chamada de rede de
+/// verdade (ver <c>CartucheiraVideo.Infrastructure.VMixClient</c> e
+/// <c>DeckViewModel.TriggerVMixOnPlay</c>/<c>TriggerVMixOnEnd</c>) — Resolume continua só dado
+/// salvo, sem cliente REST/WebSocket ainda (próximo passo do roteiro, status-implementacao.md).
 ///
 /// Sprint Livewire-4 (2026-09-14): <see cref="AudioDevices"/> ("Dispositivo de áudio") ganha as
 /// Saídas Livewire nativas configuradas em Configurações → Saídas Livewire, além dos dispositivos

@@ -2,6 +2,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -9,6 +10,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Core;
+using CartucheiraVideo.Infrastructure;
 using CartucheiraVideo.Infrastructure.Livewire;
 using CartucheiraVideo.Ndi;
 using CartucheiraVideo.Presentation.Mvvm;
@@ -158,6 +160,18 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     /// — escrever nele uma vez atualiza todas as telas ao mesmo tempo, sem laço nenhum aqui.
     /// </summary>
     private readonly List<ScreenOutputWindow> _screenOutputWindows = new();
+
+    /// <summary>
+    /// Sprint vMix Controller (2026-11-14, v1.0.77): Input que estava ativo no PGM do vMix no
+    /// instante exato ANTES do corte de "Ao dar Play" deste Deck — capturado em
+    /// <see cref="TriggerVMixOnPlay"/>, consumido e limpo em <see cref="TriggerVMixOnEnd"/> pra
+    /// voltar o vMix pro que estava no ar antes deste VT (pedido explícito do usuário: "quando
+    /// terminar o vmix voltar para a ultimo sinal que tava no ar antes de entrar o vt"). <c>null</c>
+    /// sempre que não há nada capturado pra restaurar (vMix desligado, consulta ao vMix falhou, ou
+    /// já foi restaurado) — <see cref="TriggerVMixOnEnd"/> NUNCA adivinha um Input pra voltar: sem
+    /// valor capturado, não manda comando nenhum.
+    /// </summary>
+    private int? _vMixInputBeforePlay;
 
     /// <summary>
     /// Bitmap ÚNICO (1920x1080, Bgra32), criado sob demanda na UI thread, compartilhado por todas
@@ -452,9 +466,10 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     /// Exibido como "pill" no cabecalho do Deck (mockup v8, nota #8) — reflete
     /// <see cref="DomainDeck"/>.OutputRoutes (vMix). Desde a Sprint Config, o setter e publico e de
     /// verdade: quem escreve aqui e a tela de Configuracao (engrenagem), nao mais um checkbox no
-    /// proprio card do Deck. Continua sem conexao real (vMix Controller e um proximo item do
-    /// roadmap) — "marcado" ainda significa so "este Deck deve ir ao ar por este destino quando a
-    /// integracao existir", nao "conectado de verdade".
+    /// proprio card do Deck. Desde a v1.0.77 (Sprint vMix Controller), "marcado" JA significa "este
+    /// Deck corta o vMix de verdade ao dar Play/terminar" — ver <see cref="TriggerVMixOnPlay"/>/
+    /// <see cref="TriggerVMixOnEnd"/>. A cor da pill em si continua so refletindo este bool (nao um
+    /// "conectado" de verdade — nao ha handshake persistente com o vMix, so chamadas HTTP pontuais).
     /// </summary>
     public bool SendToVMix
     {
@@ -488,6 +503,124 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
             OnPropertyChanged();
             RaiseOutputDependentPropertiesChanged();
         }
+    }
+
+    /// <summary>
+    /// Sprint vMix Controller (2026-11-14, v1.0.77) — primeira chamada de rede de verdade pro vMix
+    /// deste projeto (ver <see cref="VMixClient"/> pro porquê de HTTP em vez de TCP). Chamado pelo
+    /// <c>MainViewModel.OnDeckPlay</c> assim que este Deck entra em Play. Comportamento: com
+    /// <see cref="SendToVMix"/> ligado e Host+Input preenchidos na aba vMix, (1) pergunta ao vMix
+    /// qual Input está no PGM AGORA (antes de qualquer corte — é o valor que
+    /// <see cref="TriggerVMixOnEnd"/> vai restaurar depois) e guarda em
+    /// <see cref="_vMixInputBeforePlay"/>; (2) espera um pré-roll curto (~150ms, arquitetura/
+    /// pesquisa-ndi-switching.md §3 — nunca cortar simultâneo ao início do playback, garante frame
+    /// NDI real fluindo antes do vMix ver o corte); (3) corta o PGM pro Input configurado deste Deck.
+    /// Transição/duração vêm de uma ação "Ao dar Play → vMix" cadastrada na aba Automação deste Deck,
+    /// se existir — senão usa Corte seco por padrão (nenhuma ação cadastrada é suficiente pro
+    /// disparo funcionar; a aba Automação é só pra customizar, nunca obrigatória). Tudo em
+    /// fire-and-forget assíncrono (nunca bloqueia o Play local) — qualquer falha de rede vira só uma
+    /// linha no Logs (<see cref="_onStatus"/>), nunca uma exceção.
+    /// </summary>
+    public void TriggerVMixOnPlay()
+    {
+        if (!SendToVMix)
+        {
+            return;
+        }
+
+        var route = GetOutputRoute(OutputRouteType.VMix);
+        var host = GetRouteConfigValue(route, "Host");
+        var input = GetRouteConfigValue(route, "Input");
+        if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(input))
+        {
+            _onStatus($"{Name}: \"Enviar para vMix\" está marcado mas Host/Input não foram preenchidos em Configurações → vMix — nenhum comando foi enviado.");
+            return;
+        }
+
+        var port = ResolveVMixPort(route);
+        var action = DomainDeck.AutomationActions.FirstOrDefault(a => a.Trigger == AutomationTrigger.OnPlay && a.Destination == OutputRouteType.VMix);
+        var useFade = action?.Transition == TransitionType.Fade;
+        var durationMs = action?.TransitionDurationMs ?? 0;
+
+        _ = RunVMixOnPlayAsync(host, port, input, useFade, durationMs);
+    }
+
+    private async Task RunVMixOnPlayAsync(string host, string port, string input, bool useFade, int durationMs)
+    {
+        var previousInput = await VMixClient.GetActiveInputAsync(host, port).ConfigureAwait(false);
+        _vMixInputBeforePlay = previousInput;
+
+        await Task.Delay(150).ConfigureAwait(false);
+
+        var (ok, error) = await VMixClient.CutToInputAsync(host, port, input, useFade, durationMs).ConfigureAwait(false);
+        RunOnUiThread(() => _onStatus(ok
+            ? $"{Name}: vMix cortado pro Input \"{input}\"{(previousInput is int p ? $" (estava no Input {p})" : " (não foi possível ler o Input anterior — nada será restaurado ao terminar)")}."
+            : $"{Name}: falha ao comandar o vMix ao dar Play: {error}."));
+    }
+
+    /// <summary>
+    /// Sprint vMix Controller (2026-11-14, v1.0.77) — contrapartida de <see cref="TriggerVMixOnPlay"/>.
+    /// Chamado pelo <c>MainViewModel</c> de <c>OnDeckStop</c> E <c>OnDeckMediaEnded</c> (mesmo
+    /// critério de "terminou" já usado em todo o programa — arquitetura "Comportamento do Stop":
+    /// Stop dispara as mesmas ações de Fim, nunca deixa o vMix apontado pro Deck parado/congelado).
+    /// Só manda comando se <see cref="_vMixInputBeforePlay"/> tiver um valor capturado de verdade —
+    /// de propósito NUNCA inventa um Input pra voltar (vMix desligado, nunca deu Play, ou a consulta
+    /// em <see cref="TriggerVMixOnPlay"/> falhou são todos "nada a fazer", silenciosamente corretos).
+    /// Transição/duração vêm de uma ação "Ao terminar → vMix" cadastrada na aba Automação, se
+    /// existir — senão Corte seco por padrão, mesmo critério de <see cref="TriggerVMixOnPlay"/>.
+    /// </summary>
+    public void TriggerVMixOnEnd()
+    {
+        if (!SendToVMix)
+        {
+            return;
+        }
+
+        if (_vMixInputBeforePlay is not int previousInput)
+        {
+            return;
+        }
+
+        _vMixInputBeforePlay = null;
+
+        var route = GetOutputRoute(OutputRouteType.VMix);
+        var host = GetRouteConfigValue(route, "Host");
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return;
+        }
+
+        var port = ResolveVMixPort(route);
+        var action = DomainDeck.AutomationActions.FirstOrDefault(a => a.Trigger == AutomationTrigger.OnEnd && a.Destination == OutputRouteType.VMix);
+        var useFade = action?.Transition == TransitionType.Fade;
+        var durationMs = action?.TransitionDurationMs ?? 0;
+
+        _ = RunVMixOnEndAsync(host, port, previousInput, useFade, durationMs);
+    }
+
+    private async Task RunVMixOnEndAsync(string host, string port, int previousInput, bool useFade, int durationMs)
+    {
+        var (ok, error) = await VMixClient.CutToInputAsync(host, port, previousInput.ToString(System.Globalization.CultureInfo.InvariantCulture), useFade, durationMs).ConfigureAwait(false);
+        RunOnUiThread(() => _onStatus(ok
+            ? $"{Name}: vMix restaurado pro Input {previousInput} (o que estava no ar antes deste VT)."
+            : $"{Name}: falha ao comandar o vMix ao terminar: {error}."));
+    }
+
+    /// <summary>Lê um valor de <see cref="OutputRoute.Configuration"/>, nunca lança se a chave não existir (dicionário "formato livre", ver comentário de classe de <see cref="OutputRoute"/>).</summary>
+    private static string GetRouteConfigValue(OutputRoute route, string key) =>
+        route.Configuration.TryGetValue(key, out var value) ? value : string.Empty;
+
+    /// <summary>
+    /// Porta configurada na aba vMix, com fallback pra 8088 (porta padrão da API HTTP do vMix — ver
+    /// <see cref="VMixClient"/>) quando o campo está vazio. Decks configurados ANTES desta sprint
+    /// podem ter "8099" salvo (o rótulo antigo do campo sugeria a porta da TCP API, nunca usada de
+    /// verdade até agora) — não sobrescrevemos o valor salvo automaticamente, só avisamos no LEIA-ME
+    /// da versão pro usuário conferir/corrigir esse campo pra 8088 em cada Deck que usa vMix.
+    /// </summary>
+    private static string ResolveVMixPort(OutputRoute route)
+    {
+        var configured = GetRouteConfigValue(route, "Port");
+        return string.IsNullOrWhiteSpace(configured) ? "8088" : configured.Trim();
     }
 
     public string LoadedFileName

@@ -258,14 +258,14 @@
                         <TextBox Text="{Binding VMixHost, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 127.0.0.1" />
                     </StackPanel>
                     <StackPanel Style="{StaticResource Theme.FieldGroup}">
-                        <TextBlock Text="Porta (TCP API)" Style="{StaticResource Theme.FieldLabel}" />
-                        <TextBox Text="{Binding VMixPort, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 8099" />
+                        <TextBlock Text="Porta (API HTTP)" Style="{StaticResource Theme.FieldLabel}" />
+                        <TextBox Text="{Binding VMixPort, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: 8088" />
                     </StackPanel>
                     <StackPanel Style="{StaticResource Theme.FieldGroup}">
                         <TextBlock Text="Input" Style="{StaticResource Theme.FieldLabel}" />
-                        <TextBox Text="{Binding VMixInput, UpdateSourceTrigger=PropertyChanged}" Tag="número ou nome do input no vMix" />
+                        <TextBox Text="{Binding VMixInput, UpdateSourceTrigger=PropertyChanged}" Tag="número ou nome do input no vMix (a fonte NDI deste Deck)" />
                     </StackPanel>
-                    <TextBlock Text="Nenhuma conexão real ainda — o vMix Controller (Infrastructure) entra numa sprint futura. Estes valores só ficam salvos, prontos pra quando ele existir."
+                    <TextBlock Text="v1.0.77: já corta de verdade. Ao dar Play, corta o PGM do vMix pro Input acima; ao terminar (fim natural ou Stop), volta sozinho pro Input que estava no ar antes deste VT entrar — não precisa configurar um &quot;input padrão de volta&quot;, o programa lembra sozinho. Configure Corte/Fade (e duração) na aba Automação — sem nenhuma ação lá, usa Corte seco. Configurou antes desta versão? Confira se a Porta é 8088 (API HTTP) — o rótulo antigo deste campo sugeria 8099 (TCP), nunca usada de verdade."
                                Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" />
                 </StackPanel>
             </ScrollViewer>
@@ -394,7 +394,7 @@
                         </ItemsControl>
                         <Button Content="+ Adicionar ação" HorizontalAlignment="Left" Padding="10,6" Margin="0,0,0,8" Command="{Binding AddOnEndActionCommand}" />
 
-                        <TextBlock Text="Destino vMix/Resolume: nenhum disparo real ainda — o vMix/Resolume Controller (Infrastructure) entra numa sprint futura, estas ações só ficam salvas no Deck. Destino Cartucheira (só em &quot;Ao dar Play&quot;): já funciona de verdade — pausa as duas Cartucheiras (Vinhetas/Trilhas), que retomam sozinhas do mesmo ponto assim que este vídeo terminar ou for parado. O campo Tempo (ms) dessa linha vira o fade da pausa/retomada (0 = corte seco; o mesmo tempo é usado pra pausar e pra retomar)."
+                        <TextBlock Text="Destino vMix (v1.0.77): já dispara de verdade — corta o PGM do vMix pro Input configurado na aba vMix deste Deck (precisa &quot;Enviar para vMix&quot; marcado lá, com Host/Input preenchidos). Não é obrigatório cadastrar uma linha aqui pra funcionar — sem nenhuma, usa Corte seco por padrão; cadastre só se quiser Fade com duração. Destino Resolume: nenhum disparo real ainda — entra numa sprint futura, estas ações só ficam salvas no Deck. Destino Cartucheira (só em &quot;Ao dar Play&quot;): já funciona de verdade — pausa as duas Cartucheiras (Vinhetas/Trilhas), que retomam sozinhas do mesmo ponto assim que este vídeo terminar ou for parado. O campo Tempo (ms) dessa linha vira o fade da pausa/retomada (0 = corte seco; o mesmo tempo é usado pra pausar e pra retomar)."
                                    Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" Margin="0,8,0,0" />
                     </StackPanel>
                 </ScrollViewer>

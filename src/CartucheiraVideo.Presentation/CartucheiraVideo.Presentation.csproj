@@ -52,6 +52,21 @@
   </ItemGroup>
 
   <!--
+    Sprint Playlist-Dashboard (2026-11-14): a página web da dashboard (HTML/CSS/JS puro, servida
+    pelo PlaylistDashboardHost via HttpListener) mora fisicamente dentro do projeto Api
+    (Api/PlaylistDashboard/wwwroot), mas precisa existir do LADO DE FORA no diretório de saída do
+    .exe de verdade — quem produz o .exe é esta Presentation, não o Api (biblioteca). Copiado pra
+    "PlaylistDashboardWebRoot" dentro do diretório de saída, nome que
+    MainViewModel.BuildPlaylistDashboardWebRootPath precisa bater exatamente.
+  -->
+  <ItemGroup>
+    <None Include="..\CartucheiraVideo.Api\PlaylistDashboard\wwwroot\**\*.*">
+      <Link>PlaylistDashboardWebRoot\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!--
     Sprint Engine (2026-08-08): render de video em tela (VideoView) e responsabilidade da
     Presentation, nao do Engine — por isso o pacote WPF-specific fica aqui, nao no projeto Engine.
     VideoLAN.LibVLC.Windows traz os binarios nativos do libvlc pro Windows (o unico SO que este

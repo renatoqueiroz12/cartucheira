@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cartucheira — Playlist</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header>
+  <h1>Cartucheira — Playlist</h1>
+  <p class="subtitle">Organização de materiais por Programa e Data — Sprint 1 (ainda sem ingest de vídeo nem GC).</p>
+</header>
+
+<main>
+  <section id="programs-section">
+    <h2>Programas</h2>
+    <form id="new-program-form">
+      <input type="text" id="new-program-name" placeholder="Nome do Programa (ex.: Jornal da Tarde)" required />
+      <button type="submit">Criar Programa</button>
+    </form>
+    <ul id="programs-list" class="list"></ul>
+  </section>
+
+  <section id="editions-section" class="hidden">
+    <h2>Playlist de <span id="selected-program-name"></span></h2>
+    <button id="back-button" type="button">&larr; Voltar pros Programas</button>
+    <form id="new-edition-form">
+      <input type="date" id="new-edition-date" required />
+      <button type="submit">Criar Playlist para esta Data</button>
+    </form>
+    <ul id="editions-list" class="list"></ul>
+    <p class="hint">Ingest de vídeo e campos de GC ainda não entraram nesta sprint — a pasta já é criada de verdade no disco, mas a lista de itens fica sempre vazia por enquanto.</p>
+  </section>
+
+  <p id="error-message" class="error hidden"></p>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

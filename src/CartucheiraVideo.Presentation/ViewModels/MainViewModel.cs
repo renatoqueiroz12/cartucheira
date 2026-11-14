@@ -8,6 +8,7 @@ using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Core;
 using CartucheiraVideo.Infrastructure;
 using CartucheiraVideo.Infrastructure.Livewire;
+using CartucheiraVideo.Infrastructure.Playlist;
 using CartucheiraVideo.Ndi;
 using CartucheiraVideo.Presentation.Mvvm;
 using CartucheiraVideo.Presentation.Views;
@@ -83,6 +84,14 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly GlobalHotkeyService _hotkeyService = new();
     /// <summary>Porta/rotas vêm de <see cref="LocalTriggerApiHost"/> (fonte única de verdade) — correção (2026-08-10) pra <see cref="CartridgeSettingsViewModel"/> exibir a mesma URL sem duplicar o número da porta.</summary>
     private readonly LocalTriggerApiHost _triggerApiHost = new(LocalTriggerApiHost.DefaultPort);
+    /// <summary>
+    /// Sprint Playlist-Dashboard (2026-11-14): servidor HTTP da dashboard web pra produtores
+    /// (Programa/Data/ingest) — ver <see cref="ReapplyPlaylistDashboardSettings"/>. Construído no
+    /// corpo do construtor (não como inicializador de campo), mesmo cuidado de
+    /// <see cref="_udpTriggerListener"/>: o callback de status (<see cref="SetStatus"/>) é um método
+    /// de instância, mais simples/seguro referenciar depois que o resto do construtor já rodou.
+    /// </summary>
+    private readonly PlaylistDashboardCoordinator _playlistDashboardCoordinator;
     /// <summary>
     /// Comando externo da mesa de áudio via UDP — Sprint Comando Externo, correção pós-entrega
     /// (2026-08-10), protocolo confirmado pelo usuário. UMA porta só, compartilhada por TUDO — as
@@ -255,6 +264,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             ? $"Comando externo por mesa de áudio (UDP) pronto em 127.0.0.1:{udpStart.Port}."
             : $"Comando externo por mesa de áudio (UDP) indisponível: {udpStart.ErrorMessage}";
 
+        // Sprint Playlist-Dashboard (2026-11-14): sobe a dashboard web (ou fica honestamente
+        // desligada, se a pasta raiz ainda não foi configurada) — ver ReapplyPlaylistDashboardSettings.
+        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus);
+        ReapplyPlaylistDashboardSettings();
+
         ApplyExternalTriggerSettings();
 
         // Fix v1.0.56 (2026-11-11): atalho de emergência "fechar todas as Telas" — sempre ativo,
@@ -322,7 +336,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.77";
+    public string VersionLabel => "v1.0.79";
 
     public DeckViewModel DeckA { get; }
 
@@ -672,6 +686,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             // trocar a porta em Configurações só valia depois de reiniciar o programa (o socket já
             // estava aberto na porta antiga desde a construção). Mesmo gatilho dos dois de cima.
             ReapplyUdpListenerPort();
+
+            // Sprint Playlist-Dashboard (2026-11-14): idem pra dashboard web — pasta raiz/porta
+            // podem ter mudado (ou o módulo pode ter sido ligado/desligado agora).
+            ReapplyPlaylistDashboardSettings();
         };
         _settingsWindow.Show();
     }
@@ -1010,6 +1028,42 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// Sprint Playlist-Dashboard (2026-11-14): sobe/resobe o <see cref="_playlistDashboardCoordinator"/>
+    /// com a pasta raiz/porta atuais — sempre chamado (barato: o coordinator só descarta e recria o
+    /// host HTTP se já existia um, ver <see cref="PlaylistDashboardCoordinator.ApplySettings"/>). A
+    /// regra de Firewall é mais cara (pode pedir UAC), por isso só é reaplicada quando a porta
+    /// desejada OU o desenho da regra (<see cref="PlaylistDashboardFirewallGuard.RuleSchemaVersion"/>)
+    /// mudaram desde a última vez que funcionou — mesmo princípio de <see cref="ReapplyNdiFirewallGuard"/>.
+    /// Porta nula (pasta raiz vazia, módulo desligado) remove a regra em vez de criar.
+    /// </summary>
+    private void ReapplyPlaylistDashboardSettings()
+    {
+        _playlistDashboardCoordinator.ApplySettings(_persistedSettings.Playlist);
+
+        var desiredPort = string.IsNullOrWhiteSpace(_persistedSettings.Playlist.RootFolder)
+            ? (int?)null
+            : _persistedSettings.Playlist.DashboardPort;
+
+        if (_persistedSettings.PlaylistDashboardFirewallAppliedForPort == desiredPort
+            && _persistedSettings.PlaylistDashboardFirewallAppliedRuleSchemaVersion == PlaylistDashboardFirewallGuard.RuleSchemaVersion)
+        {
+            return;
+        }
+
+        var (ok, error) = PlaylistDashboardFirewallGuard.ApplyAllowRule(desiredPort);
+        if (ok)
+        {
+            _persistedSettings.PlaylistDashboardFirewallAppliedForPort = desiredPort;
+            _persistedSettings.PlaylistDashboardFirewallAppliedRuleSchemaVersion = PlaylistDashboardFirewallGuard.RuleSchemaVersion;
+            _settingsStore.Save(_persistedSettings);
+        }
+        else
+        {
+            StatusMessage = $"Não foi possível liberar a porta da dashboard de Playlist no Firewall: {error}";
+        }
+    }
+
+    /// <summary>
     /// Handler das duas rotas HTTP do <see cref="LocalTriggerApiHost"/> (registradas uma vez na
     /// construção) — chamado na thread do listener HTTP, nunca na UI, por isso marcha pra
     /// <c>Dispatcher.Invoke</c> antes de tocar em <see cref="AudioBankViewModel.TriggerExternalCommand"/>
@@ -1267,5 +1321,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _outboundUdpSender.Dispose();
         // Sprint Livewire-3 (2026-09-13): sexto canal a encerrar — anunciador Livewire (ADVT1/ADVT2).
         _livewireAdvertiser.Dispose();
+        // Sprint Playlist-Dashboard (2026-11-14): sétimo canal a encerrar — servidor HTTP da dashboard web.
+        _playlistDashboardCoordinator.Dispose();
     }
 }

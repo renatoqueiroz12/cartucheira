@@ -117,4 +117,20 @@ public sealed class AppSettingsSnapshot
     /// preenchido de uma versão anterior).
     /// </summary>
     public int? NdiFirewallGuardAppliedRuleSchemaVersion { get; set; }
+
+    /// <summary>Configuração do módulo Playlist (dashboard web) — Sprint Playlist-Dashboard (2026-11-14). Ver <see cref="PlaylistSettingsSnapshot"/>.</summary>
+    public PlaylistSettingsSnapshot Playlist { get; set; } = new();
+
+    /// <summary>
+    /// Versão do DESENHO da regra de Firewall da dashboard de Playlist
+    /// (<c>CartucheiraVideo.Infrastructure.Playlist.PlaylistDashboardFirewallGuard.RuleSchemaVersion</c>)
+    /// pra qual a regra já foi aplicada com sucesso — mesmo princípio de
+    /// <see cref="NdiFirewallGuardAppliedRuleSchemaVersion"/> (evita pedir UAC de novo à toa a cada
+    /// abertura do programa, só reaplica quando a porta configurada ou o desenho da regra mudarem).
+    /// Nulo até a primeira aplicação bem-sucedida.
+    /// </summary>
+    public int? PlaylistDashboardFirewallAppliedRuleSchemaVersion { get; set; }
+
+    /// <summary>Porta pra qual <see cref="PlaylistDashboardFirewallAppliedRuleSchemaVersion"/> foi gravado — junto com ele, decide se a regra precisa ser reaplicada (porta mudou desde a última vez que funcionou).</summary>
+    public int? PlaylistDashboardFirewallAppliedForPort { get; set; }
 }

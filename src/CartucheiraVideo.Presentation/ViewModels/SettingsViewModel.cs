@@ -44,7 +44,8 @@ public sealed class SettingsViewModel : ViewModelBase
         Cartridges,
         LivewireOutputs,
         NdiNetwork,
-        BackgroundArt
+        BackgroundArt,
+        Playlist
     }
 
     private readonly DeckViewModel _deckA;
@@ -99,12 +100,17 @@ public sealed class SettingsViewModel : ViewModelBase
         // dentro de um Deck específico).
         BackgroundArtSettings = new BackgroundArtSettingsViewModel(currentSnapshot);
 
+        // Sprint Playlist-Dashboard (2026-11-14): mesmo padrão simples de NdiNetworkSettings/
+        // BackgroundArtSettings acima — só o snapshot, sem lista compartilhada com outra seção.
+        PlaylistSettings = new PlaylistSettingsViewModel(currentSnapshot);
+
         SelectDeck1Command = new RelayCommand(_ => SelectedSection = Section.Deck1);
         SelectDeck2Command = new RelayCommand(_ => SelectedSection = Section.Deck2);
         SelectCartridgesCommand = new RelayCommand(_ => SelectedSection = Section.Cartridges);
         SelectLivewireOutputsCommand = new RelayCommand(_ => SelectedSection = Section.LivewireOutputs);
         SelectNdiNetworkCommand = new RelayCommand(_ => SelectedSection = Section.NdiNetwork);
         SelectBackgroundArtCommand = new RelayCommand(_ => SelectedSection = Section.BackgroundArt);
+        SelectPlaylistCommand = new RelayCommand(_ => SelectedSection = Section.Playlist);
 
         SaveCommand = new RelayCommand(_ => Save());
     }
@@ -130,6 +136,9 @@ public sealed class SettingsViewModel : ViewModelBase
     /// <summary>Sprint Arte-de-Fundo (2026-11-10): artes de espera cadastradas + qual está ativa agora.</summary>
     public BackgroundArtSettingsViewModel BackgroundArtSettings { get; }
 
+    /// <summary>Sprint Playlist-Dashboard (2026-11-14): pasta raiz + porta da dashboard web pra produtores.</summary>
+    public PlaylistSettingsViewModel PlaylistSettings { get; }
+
     private Section SelectedSection
     {
         get => _selectedSection;
@@ -143,6 +152,7 @@ public sealed class SettingsViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsLivewireOutputsSelected));
                 OnPropertyChanged(nameof(IsNdiNetworkSelected));
                 OnPropertyChanged(nameof(IsBackgroundArtSelected));
+                OnPropertyChanged(nameof(IsPlaylistSelected));
             }
         }
     }
@@ -159,6 +169,8 @@ public sealed class SettingsViewModel : ViewModelBase
 
     public bool IsBackgroundArtSelected => SelectedSection == Section.BackgroundArt;
 
+    public bool IsPlaylistSelected => SelectedSection == Section.Playlist;
+
     public ICommand SelectDeck1Command { get; }
 
     public ICommand SelectDeck2Command { get; }
@@ -170,6 +182,8 @@ public sealed class SettingsViewModel : ViewModelBase
     public ICommand SelectNdiNetworkCommand { get; }
 
     public ICommand SelectBackgroundArtCommand { get; }
+
+    public ICommand SelectPlaylistCommand { get; }
 
     /// <summary>Aplica os dois painéis de Deck e a Cartucheira nos objetos reais, grava o snapshot inteiro no disco e avisa o operador — sem fechar a janela.</summary>
     public ICommand SaveCommand { get; }
@@ -185,6 +199,7 @@ public sealed class SettingsViewModel : ViewModelBase
         LivewireOutputsSettings.ApplyTo(_currentSnapshot);
         NdiNetworkSettings.ApplyTo(_currentSnapshot);
         BackgroundArtSettings.ApplyTo(_currentSnapshot);
+        PlaylistSettings.ApplyTo(_currentSnapshot);
         _currentSnapshot.UdpTriggerPort = SharedUdpPort.Port;
 
         // Sprint Arte-de-Fundo (2026-11-10): a lista de artes/qual está ativa (linha acima) e o

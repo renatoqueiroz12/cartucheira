@@ -37,4 +37,24 @@ public partial class LogsWindow : Window
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    /// <summary>
+    /// Fix v1.0.81 (2026-11-15): novo, junto com a releitura visual da janela (ver comentário
+    /// completo no XAML) — copia o histórico inteiro (uma linha por entrada de
+    /// <see cref="MainViewModel.StatusHistory"/>) pra área de transferência, pra colar direto numa
+    /// conversa de suporte em vez de print/retranscrever à mão. `Clipboard.SetText` lança se a área
+    /// de transferência estiver ocupada por outro processo no instante exato (falha transitória
+    /// documentada do Windows) — nunca derruba a janela de Logs por causa disso, só avisa.
+    /// </summary>
+    private void CopyAll_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Clipboard.SetText(string.Join(Environment.NewLine, _viewModel.StatusHistory));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Não foi possível copiar pra área de transferência: {ex.Message}", "Cartucheira Vídeo", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 }

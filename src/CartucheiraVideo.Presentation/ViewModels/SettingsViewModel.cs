@@ -1,4 +1,5 @@
 using System.Windows.Input;
+using System.Windows.Threading;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Presentation.Mvvm;
 
@@ -218,8 +219,55 @@ public sealed class SettingsViewModel : ViewModelBase
         _deckA.RefreshBackgroundArt();
         _deckB.RefreshBackgroundArt();
 
-        _onStatus(_settingsStore.Save(_currentSnapshot)
+        var saved = _settingsStore.Save(_currentSnapshot);
+        _onStatus(saved
             ? "Configurações salvas."
             : "Não foi possível salvar as configurações em disco (verifique permissão/espaço) — os valores continuam aplicados nesta sessão.");
+        ShowSaveFeedback(saved);
     }
+
+    /// <summary>
+    /// Fix v1.0.81 (2026-11-15): até esta versão, clicar Salvar não dava NENHUM sinal visível na
+    /// própria janela de Configurações — só a aba Logs (uma janela separada, o operador precisa abrir
+    /// por conta própria) recebia a confirmação/erro. Usuário reportou em teste real ("cliquei em
+    /// salvar, isso precisa ser corrigido, pois não dá msg e nem sinal nenhum") depois de configurar
+    /// a Playlist e não ter certeza se o Salvar tinha realmente feito efeito. O próprio botão Salvar
+    /// agora muda de texto/cor por alguns segundos ("Salvo ✓" verde, ou "Erro ao salvar" vermelho se
+    /// `_settingsStore.Save` falhar) e volta sozinho ao normal — sem precisar abrir mais nada.
+    /// </summary>
+    private void ShowSaveFeedback(bool succeeded)
+    {
+        SaveButtonLabel = succeeded ? "Salvo ✓" : "Erro ao salvar";
+        SaveFeedbackState = succeeded ? "Success" : "Error";
+
+        _saveFeedbackTimer?.Stop();
+        _saveFeedbackTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2.5) };
+        _saveFeedbackTimer.Tick += (_, _) =>
+        {
+            _saveFeedbackTimer!.Stop();
+            SaveButtonLabel = "Salvar";
+            SaveFeedbackState = "Idle";
+        };
+        _saveFeedbackTimer.Start();
+    }
+
+    private string _saveButtonLabel = "Salvar";
+
+    /// <summary>Texto do botão Salvar — "Salvar" em repouso, "Salvo ✓"/"Erro ao salvar" por ~2,5s depois de um clique, ver <see cref="ShowSaveFeedback"/>.</summary>
+    public string SaveButtonLabel
+    {
+        get => _saveButtonLabel;
+        private set => SetProperty(ref _saveButtonLabel, value);
+    }
+
+    private string _saveFeedbackState = "Idle";
+
+    /// <summary>"Idle"/"Success"/"Error" — liga o `DataTrigger` de cor do botão Salvar no XAML, ver <see cref="ShowSaveFeedback"/>.</summary>
+    public string SaveFeedbackState
+    {
+        get => _saveFeedbackState;
+        private set => SetProperty(ref _saveFeedbackState, value);
+    }
+
+    private DispatcherTimer? _saveFeedbackTimer;
 }

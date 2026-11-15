@@ -192,7 +192,32 @@
         <Border Grid.Row="1" Background="{DynamicResource Brush.Bg3}" BorderBrush="{DynamicResource Brush.LineSoft}" BorderThickness="0,1,0,0" Padding="20,14">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Fechar" Width="100" Padding="8" Margin="0,0,8,0" Click="Close_Click" />
-                <Button Content="Salvar" Width="100" Padding="8" Command="{Binding SaveCommand}" IsDefault="True" />
+                <!--
+                    Fix v1.0.81 (2026-11-15): antes desta versão, clicar Salvar não dava nenhum sinal
+                    visível aqui — só a aba Logs (janela separada) recebia a confirmação. O Content
+                    agora reflete SettingsViewModel.SaveButtonLabel ("Salvar" → "Salvo ✓"/"Erro ao
+                    salvar" por ~2,5s, ver SettingsViewModel.ShowSaveFeedback) e o botão muda de cor
+                    pelo mesmo tempo via SaveFeedbackState. MinWidth (não mais Width fixo) porque
+                    "Erro ao salvar" é mais longo que "Salvar".
+                -->
+                <Button Content="{Binding SaveButtonLabel}" MinWidth="100" Padding="8" Command="{Binding SaveCommand}" IsDefault="True">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding SaveFeedbackState}" Value="Success">
+                                    <Setter Property="Background" Value="{DynamicResource Brush.Green}" />
+                                    <Setter Property="Foreground" Value="White" />
+                                    <Setter Property="FontWeight" Value="Bold" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding SaveFeedbackState}" Value="Error">
+                                    <Setter Property="Background" Value="{DynamicResource Brush.Red}" />
+                                    <Setter Property="Foreground" Value="White" />
+                                    <Setter Property="FontWeight" Value="Bold" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
             </StackPanel>
         </Border>
     </Grid>

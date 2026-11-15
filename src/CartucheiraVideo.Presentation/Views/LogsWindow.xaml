@@ -1,9 +1,11 @@
 <Window x:Class="CartucheiraVideo.Presentation.Views.LogsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:CartucheiraVideo.Presentation.Converters"
         Title="Cartucheira Vídeo — Logs"
-        Height="520" Width="720"
+        Height="560" Width="820"
         MinHeight="300" MinWidth="420"
+        Background="{DynamicResource Brush.Bg1}"
         WindowStartupLocation="CenterOwner">
 
     <!--
@@ -14,7 +16,25 @@
         na hora por StatusMessage ser uma string única sobrescrita a cada novo aviso. ListBox comum
         (não precisa de nada mais sofisticado pra texto simples) — ScrollIntoView no code-behind
         mantém a última linha sempre visível conforme novas entradas chegam.
+
+        Fix v1.0.81 (2026-11-15): usuário reportou "o log está bem ruim pra visualizar" ao caçar um
+        erro real de Firewall/urlacl da Playlist no meio de várias linhas de inicialização — até
+        esta versão a janela usava as cores padrão do Windows (fundo branco, texto preto), destoando
+        do resto do app TODO escuro, sem quebra de linha (mensagens longas cortavam na borda da
+        janela, exigindo rolagem horizontal) e sem nenhum destaque pra linha de erro em meio às
+        dezenas de linhas neutras. Três mudanças, nenhuma mexe em StatusHistory em si (continua só
+        uma lista de strings): (1) fundo/texto escuros, mesmo tema do resto do app; (2)
+        TextWrapping="Wrap" por item — mensagem comprida agora quebra em várias linhas em vez de
+        cortar; (3) cor por linha via LogLineSeverityToBrushConverter (vermelho pra "não foi
+        possível"/"erro"/"falha"/"recusou", verde pra "salvas"/"pronto"/"disponível", neutro pro
+        resto) — a linha de erro que o usuário precisava achar agora salta aos olhos sozinha. Também
+        novo: botão "Copiar tudo" (`Clipboard.SetText`), pra colar o histórico inteiro em vez de
+        print/retranscrever à mão, como vinha acontecendo nas sessões de suporte.
     -->
+    <Window.Resources>
+        <conv:LogLineSeverityToBrushConverter x:Key="LogSeverityToBrush" />
+    </Window.Resources>
+
     <Grid Margin="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -24,9 +44,25 @@
 
         <TextBlock Grid.Row="0" Text="Histórico de mensagens desta sessão (mais recente embaixo)" Foreground="{DynamicResource Brush.TextLow}" FontSize="{StaticResource FontSize.Body}" Margin="0,0,0,8" />
 
-        <ListBox x:Name="HistoryListBox" Grid.Row="1" ItemsSource="{Binding StatusHistory}" FontFamily="Consolas" FontSize="12" />
+        <ListBox x:Name="HistoryListBox" Grid.Row="1" ItemsSource="{Binding StatusHistory}"
+                 Background="{DynamicResource Brush.Bg2}" BorderBrush="{DynamicResource Brush.Line}"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding}" TextWrapping="Wrap" FontFamily="Consolas" FontSize="13"
+                               Foreground="{Binding Converter={StaticResource LogSeverityToBrush}}" />
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="Padding" Value="4,3" />
+                </Style>
+            </ListBox.ItemContainerStyle>
+        </ListBox>
 
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Content="Copiar tudo" Width="110" Padding="8" Margin="0,0,8,0" Click="CopyAll_Click" />
             <Button Content="Fechar" Width="90" Padding="8" Click="Close_Click" IsDefault="True" IsCancel="True" />
         </StackPanel>
     </Grid>

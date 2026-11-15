@@ -57,7 +57,8 @@
     (Api/PlaylistDashboard/wwwroot), mas precisa existir do LADO DE FORA no diretório de saída do
     .exe de verdade — quem produz o .exe é esta Presentation, não o Api (biblioteca). Copiado pra
     "PlaylistDashboardWebRoot" dentro do diretório de saída, nome que
-    MainViewModel.BuildPlaylistDashboardWebRootPath precisa bater exatamente.
+    PlaylistDashboardCoordinator.ApplySettings precisa bater exatamente (é lá, não no
+    MainViewModel, que o caminho é montado — comentário anterior citava o lugar errado).
   -->
   <ItemGroup>
     <None Include="..\CartucheiraVideo.Api\PlaylistDashboard\wwwroot\**\*.*">

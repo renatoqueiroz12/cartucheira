@@ -100,3 +100,60 @@ button:hover { opacity: 0.9; }
   color: var(--error);
   font-size: 13px;
 }
+
+#new-lauda-form {
+  flex-direction: column;
+  gap: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.field-row label {
+  font-size: 12px;
+  color: var(--text-low);
+}
+
+textarea {
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  resize: vertical;
+}
+
+input[type="file"] {
+  padding: 6px 0;
+  background: transparent;
+  border: none;
+  color: var(--text-low);
+}
+
+#new-lauda-form button {
+  align-self: flex-start;
+}
+
+.laudas-list li {
+  cursor: default;
+}
+
+.lauda-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.lauda-details {
+  color: var(--text-low);
+  font-size: 12px;
+}

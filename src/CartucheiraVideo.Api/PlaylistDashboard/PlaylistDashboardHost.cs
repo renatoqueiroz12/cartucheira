@@ -41,6 +41,19 @@ public sealed class PlaylistDashboardHost : IDisposable
     /// <summary>Recebe a query string crua (sem o "?") e o corpo cru da requisição (nulo em GET) — devolve a resposta HTTP completa.</summary>
     public delegate PlaylistDashboardResponse PlaylistApiHandler(string? queryString, string? requestBody);
 
+    /// <summary>
+    /// Mesmo papel de <see cref="PlaylistApiHandler"/>, mas pra upload de arquivo (VT/imagem) — Sprint
+    /// Playlist-Dashboard, Sprint 2 (2026-11-15). Recebe o corpo da requisição como <see cref="Stream"/>
+    /// CRU em vez de texto: um upload de vídeo/imagem decodificado como UTF-8 (o que
+    /// <see cref="PlaylistApiHandler"/> faz) corromperia os bytes binários. O navegador manda o
+    /// arquivo puro no corpo da requisição (<c>fetch(url, {{ method: "PUT", body: file }})</c> do lado
+    /// do <c>app.js</c> — SEM multipart/form-data, deliberado: evita escrever um parser de multipart à
+    /// mão só pra isto, mesmo princípio de "o mínimo necessário" já seguido no resto da dashboard).
+    /// Quem chama é responsável por ler o quanto precisar do stream (tipicamente copiando pra um
+    /// arquivo) — o host fecha a conexão depois que o handler retorna, nunca antes.
+    /// </summary>
+    public delegate PlaylistDashboardResponse PlaylistUploadHandler(string? queryString, Stream requestBodyStream);
+
     private static readonly Dictionary<string, string> ContentTypesByExtension = new(StringComparer.OrdinalIgnoreCase)
     {
         [".html"] = "text/html; charset=utf-8",
@@ -56,6 +69,7 @@ public sealed class PlaylistDashboardHost : IDisposable
 
     private readonly HttpListener _listener = new();
     private readonly Dictionary<string, PlaylistApiHandler> _apiRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PlaylistUploadHandler> _uploadRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _routesLock = new();
     private readonly int _port;
     private readonly string _webRootFolder;
@@ -81,6 +95,17 @@ public sealed class PlaylistDashboardHost : IDisposable
         lock (_routesLock)
         {
             _apiRoutes[RouteKey(method, path)] = handler;
+        }
+    }
+
+    /// <summary>Registra uma rota de upload de arquivo — ver <see cref="PlaylistUploadHandler"/> pro porquê de ser uma rota separada das de <see cref="RegisterApiRoute"/>.</summary>
+    public void RegisterUploadRoute(string method, string path, PlaylistUploadHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        lock (_routesLock)
+        {
+            _uploadRoutes[RouteKey(method, path)] = handler;
         }
     }
 
@@ -163,6 +188,22 @@ public sealed class PlaylistDashboardHost : IDisposable
         var response = context.Response;
 
         var path = NormalizePath(request.Url?.AbsolutePath ?? string.Empty);
+
+        PlaylistUploadHandler? uploadHandler;
+        lock (_routesLock)
+        {
+            _uploadRoutes.TryGetValue(RouteKey(request.HttpMethod, path), out uploadHandler);
+        }
+
+        if (uploadHandler is not null)
+        {
+            // Nunca passa pelo StreamReader/UTF-8 do bloco de baixo — leitura crua de bytes direto do
+            // stream da requisição, ver comentário de PlaylistUploadHandler pro porquê.
+            var uploadQuery = request.Url?.Query is { Length: > 0 } uq ? uq.TrimStart('?') : null;
+            var uploadResponse = uploadHandler(uploadQuery, request.InputStream);
+            WriteResponse(response, uploadResponse.StatusCode, uploadResponse.ContentType, uploadResponse.Body);
+            return;
+        }
 
         PlaylistApiHandler? apiHandler;
         lock (_routesLock)

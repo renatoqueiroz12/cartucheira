@@ -64,6 +64,10 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         host.RegisterApiRoute("POST", "/api/playlist/programs", (_, body) => HandleCreateProgram(rootFolder, body));
         host.RegisterApiRoute("GET", "/api/playlist/editions", (query, _) => HandleListEditions(rootFolder, query));
         host.RegisterApiRoute("POST", "/api/playlist/editions", (_, body) => HandleCreateEdition(rootFolder, body));
+        host.RegisterApiRoute("GET", "/api/playlist/laudas", (query, _) => HandleListLaudas(rootFolder, query));
+        host.RegisterApiRoute("POST", "/api/playlist/laudas", (_, body) => HandleCreateLauda(rootFolder, body));
+        host.RegisterUploadRoute("PUT", "/api/playlist/laudas/vt", (query, stream) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Video));
+        host.RegisterUploadRoute("PUT", "/api/playlist/laudas/imagem", (query, stream) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Image));
 
         var result = host.Start();
         if (result.Succeeded)
@@ -165,6 +169,118 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new EditionDto(edition.Id, edition.DateIso), JsonOptions), 201);
     }
 
+    /// <summary>
+    /// Sprint 2 (2026-11-15) — lista as Laudas do Espelho de uma Edição. Exige <c>programId</c> E
+    /// <c>editionId</c> na query (não dá pra achar a pasta de uma Edição só pelo Id dela, porque
+    /// <c>editions.json</c> vive dentro da pasta do Programa — ver
+    /// <c>PlaylistFileStore.ResolveEditionFolder</c>), mesmo padrão de parâmetros já usado por
+    /// <see cref="HandleListEditions"/>.
+    /// </summary>
+    private static PlaylistDashboardResponse HandleListLaudas(string rootFolder, string? queryString)
+    {
+        var programId = ParseQueryValue(queryString, "programId");
+        var editionId = ParseQueryValue(queryString, "editionId");
+        if (string.IsNullOrWhiteSpace(programId) || string.IsNullOrWhiteSpace(editionId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "parâmetros \"programId\" e \"editionId\" são obrigatórios.");
+        }
+
+        var (ok, error, laudas) = PlaylistFileStore.ListLaudas(rootFolder, programId, editionId);
+        if (!ok)
+        {
+            return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
+        }
+
+        var dtos = laudas.Select(ToLaudaDto).ToList();
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
+    }
+
+    /// <summary>Sprint 2 (2026-11-15) — cria uma Lauda nova (só metadados; VT/Imagens entram depois, via <see cref="HandleUploadFile"/>, já com o Id devolvido aqui).</summary>
+    private static PlaylistDashboardResponse HandleCreateLauda(string rootFolder, string? body)
+    {
+        CreateLaudaRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<CreateLaudaRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.EditionId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"editionId\" são obrigatórios.");
+        }
+
+        if (string.IsNullOrWhiteSpace(request.Title))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"title\" não pode ser vazio.");
+        }
+
+        var (ok, error, lauda) = PlaylistFileStore.CreateLauda(
+            rootFolder,
+            request.ProgramId,
+            request.EditionId,
+            request.Title,
+            request.Type,
+            request.GcFields,
+            request.TpText,
+            request.OffText,
+            request.DurationPlanned,
+            request.Notes);
+
+        if (!ok || lauda is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToLaudaDto(lauda), JsonOptions), 201);
+    }
+
+    /// <summary>
+    /// Sprint 2 (2026-11-15) — recebe o arquivo (VT ou imagem) direto no corpo cru da requisição PUT
+    /// (ver comentário de <c>PlaylistDashboardHost.PlaylistUploadHandler</c> pro porquê de não ser
+    /// multipart/form-data). Query esperada: <c>programId</c>, <c>editionId</c>, <c>laudaId</c>,
+    /// <c>filename</c> (nome original do arquivo, só pra preservar a extensão — o nome final em disco
+    /// pode ficar diferente se já existir um igual, ver <c>PlaylistFileStore.SaveUploadedFile</c>).
+    /// </summary>
+    private static PlaylistDashboardResponse HandleUploadFile(string rootFolder, string? queryString, Stream requestBodyStream, PlaylistUploadKind kind)
+    {
+        var programId = ParseQueryValue(queryString, "programId");
+        var editionId = ParseQueryValue(queryString, "editionId");
+        var laudaId = ParseQueryValue(queryString, "laudaId");
+        var fileName = ParseQueryValue(queryString, "filename") ?? "arquivo";
+
+        if (string.IsNullOrWhiteSpace(programId) || string.IsNullOrWhiteSpace(editionId) || string.IsNullOrWhiteSpace(laudaId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "parâmetros \"programId\", \"editionId\" e \"laudaId\" são obrigatórios.");
+        }
+
+        var (ok, error, savedFileName) = PlaylistFileStore.SaveUploadedFile(rootFolder, programId, editionId, laudaId, kind, fileName, requestBodyStream);
+        if (!ok || savedFileName is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new UploadResultDto(savedFileName), JsonOptions));
+    }
+
+    private static LaudaDto ToLaudaDto(PlaylistLaudaRecord lauda) => new(
+        lauda.Id,
+        lauda.Order,
+        lauda.Title,
+        lauda.Type,
+        lauda.FileName,
+        lauda.GcFields,
+        lauda.TpText,
+        lauda.OffText,
+        lauda.ImageFileNames,
+        lauda.DurationPlanned,
+        lauda.Duration,
+        lauda.Status,
+        lauda.Notes);
+
     /// <summary>Leitura de query string bem simples (só pares "chave=valor" separados por "&amp;") — suficiente pro único parâmetro usado nesta sprint (<c>programId</c>), sem puxar nenhuma dependência de parsing de URL maior.</summary>
     private static string? ParseQueryValue(string? queryString, string key)
     {
@@ -198,4 +314,33 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     private sealed record CreateProgramRequest(string? Name);
 
     private sealed record CreateEditionRequest(string? ProgramId, string? Date);
+
+    /// <summary>Formato de uma Lauda devolvido pra dashboard — Sprint 2 (2026-11-15). <c>gcFields</c> continua um dicionário livre nome→valor, mesmo formato já usado desde a Sprint 1.</summary>
+    private sealed record LaudaDto(
+        string Id,
+        int Order,
+        string Title,
+        string Type,
+        string FileName,
+        IReadOnlyDictionary<string, string> GcFields,
+        string? TpText,
+        string? OffText,
+        IReadOnlyList<string> Images,
+        string? DurationPlanned,
+        string? Duration,
+        string Status,
+        string? Notes);
+
+    private sealed record CreateLaudaRequest(
+        string? ProgramId,
+        string? EditionId,
+        string? Title,
+        string? Type,
+        Dictionary<string, string>? GcFields,
+        string? TpText,
+        string? OffText,
+        string? DurationPlanned,
+        string? Notes);
+
+    private sealed record UploadResultDto(string FileName);
 }

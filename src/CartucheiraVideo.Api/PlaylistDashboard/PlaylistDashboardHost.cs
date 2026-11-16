@@ -169,15 +169,29 @@ public sealed class PlaylistDashboardHost : IDisposable
         {
             ProcessRequest(context);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            // Achado na Sprint 2 (2026-11-15), testando upload de VT: esta captura só fechava a
+            // conexão sem escrever nada — o cliente via um 200 "OK" com corpo vazio (o StatusCode
+            // padrão do HttpListenerResponse é 200), e o app.js quebrava com "Unexpected end of
+            // JSON input" ao tentar `response.json()` numa resposta vazia — mensagem real do erro
+            // completamente perdida, impossível de diagnosticar. Corrigido pra bater com o que a
+            // documentação da classe já prometia ("vira resposta HTTP 500 com a mensagem"), usando
+            // o mesmo WriteResponse de sempre.
             try
             {
-                context.Response.Close();
+                WriteResponse(context.Response, 500, "text/plain; charset=utf-8", $"Erro interno: {ex.Message}");
             }
             catch (Exception)
             {
-                // conexão já perdida — nada mais a fazer.
+                try
+                {
+                    context.Response.Close();
+                }
+                catch (Exception)
+                {
+                    // conexão já perdida — nada mais a fazer.
+                }
             }
         }
     }

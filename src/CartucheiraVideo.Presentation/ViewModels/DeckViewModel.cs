@@ -426,10 +426,12 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         PreviewCommand = new RelayCommand(_ => Preview(), _ => HasVideo && State != DeckPlaybackState.Playing);
 
         // Auto/Manual (mockup v8, nota #13): cada Deck decide se aceita receber o proximo item da
-        // Playlist sozinho (Auto) ou so quando o operador carregar manualmente (Manual). O estado
-        // e real e persiste (IsAutoMode), mas o comportamento de avanco automatico em si depende
-        // de uma Playlist real tocando — ainda nao existe, entao a troca de modo e honesta sobre
-        // isso ao avisar o operador.
+        // Playlist sozinho (Auto) ou so quando o operador carregar manualmente (Manual). Desde a
+        // Sprint 4 (2026-11-16, v1.0.89, pedido do usuario apos testar a Playlist de verdade) isto
+        // avanca de fato: junto com o "disjuntor geral" da Playlist (PlaylistViewModel.AutoModeEnabled),
+        // quando este Deck termina de tocar sozinho (fim natural, nunca Stop/Clear manual) a proxima
+        // Lauda da sequencia CARREGA sozinha aqui — nunca aperta Play sozinho, o operador continua
+        // decidindo a hora de ir ao ar. Ver MainViewModel.TryAutoAdvancePlaylist.
         SetAutoModeCommand = new RelayCommand(_ => SetAutoMode(true));
         SetManualModeCommand = new RelayCommand(_ => SetAutoMode(false));
     }
@@ -444,8 +446,9 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// "Auto" (aceita o proximo item da Playlist sozinho) ou "Manual" (so por comando do
-    /// operador) — ver comentario do construtor sobre o que isto ja faz de verdade hoje.
+    /// "Auto" (aceita o proximo item da Playlist sozinho, quando o Modo Automatico geral da
+    /// Playlist tambem estiver ligado) ou "Manual" (so por comando do operador) — ver comentario
+    /// do construtor sobre o que isto ja faz de verdade desde a Sprint 4.
     /// </summary>
     public bool IsAutoMode
     {
@@ -1127,7 +1130,7 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
 
         IsAutoMode = autoMode;
         _onStatus(autoMode
-            ? $"{Name} em modo Auto — avanço automático pela Playlist ainda não implementado (entra numa sprint futura)."
+            ? $"{Name} em modo Auto — quando o Modo Automático da Playlist também estiver ligado, a próxima Lauda carrega sozinha neste Deck ao terminar a atual (sem apertar Play sozinho)."
             : $"{Name} em modo Manual.");
     }
 

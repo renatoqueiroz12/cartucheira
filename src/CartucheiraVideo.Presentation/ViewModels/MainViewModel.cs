@@ -340,7 +340,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.88";
+    public string VersionLabel => "v1.0.89";
 
     public DeckViewModel DeckA { get; }
 
@@ -494,6 +494,36 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ResumeCartucheiraFor(deck);
         SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnEndCommand);
         deck.TriggerVMixOnEnd();
+        TryAutoAdvancePlaylist(deck);
+    }
+
+    /// <summary>
+    /// Avanço automático da Playlist — Sprint 4 (2026-11-16, pedido do usuário depois de testar a
+    /// v1.0.88: "toca no deck 1, quando acabar ele carrega no deck a próxima lauda"). Chamado só de
+    /// <see cref="OnDeckMediaEnded"/> (fim NATURAL, nunca Stop/Clear manual — <see cref="OnDeckStop"/>
+    /// nunca chama isto). Os dois "disjuntores" (geral da Playlist + Auto/Manual deste Deck
+    /// específico) são checados AQUI, no ponto de chamada — decisão deliberada pra ficar óbvio, lendo
+    /// só este método, exatamente o que precisa estar ligado pro avanço acontecer, sem precisar
+    /// entrar em <see cref="PlaylistViewModel"/> pra descobrir. Pergunta objetiva confirmada com o
+    /// usuário antes de implementar: o avanço só CARREGA a próxima Lauda no Deck (reaproveitando
+    /// <see cref="LoadIntoDeck"/>, que nunca chama Play) — nunca aperta Play sozinho, o operador
+    /// continua decidindo a hora de ir ao ar.
+    /// </summary>
+    private void TryAutoAdvancePlaylist(DeckViewModel deck)
+    {
+        if (!FileExplorer.Playlist.AutoModeEnabled || !deck.IsAutoMode)
+        {
+            return;
+        }
+
+        var next = FileExplorer.Playlist.TryGetNextItemForAutoAdvance(deck);
+        if (next is null)
+        {
+            return;
+        }
+
+        LoadIntoDeck(deck, next.FilePath);
+        FileExplorer.Playlist.MarkLoadedInDeck(deck, next);
     }
 
     /// <summary>
@@ -1246,6 +1276,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         LoadIntoDeck(target, item.FilePath);
+
+        // Sprint 4 (2026-11-16): grava qual Lauda ficou em qual Deck, pra o avanço automático
+        // (ver TryAutoAdvancePlaylist) saber de onde continuar quando este Deck terminar sozinho.
+        FileExplorer.Playlist.MarkLoadedInDeck(target, item);
     }
 
     private void OnExplorerFileActivated(FileSystemItemViewModel item)
@@ -1264,11 +1298,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// aí abre o programa e carrega"). Abre o diálogo de escolha Programa/Data
     /// (<see cref="OpenPlaylistWindow"/>), lê as Laudas reais daquela Edição direto do
     /// <see cref="PlaylistFileStore"/> (Infrastructure) e entrega pra
-    /// <see cref="PlaylistViewModel.LoadReal"/> — o operador continua tocando cada item
-    /// manualmente, duplo clique carrega no Deck igual a qualquer outro item da Playlist (ver
-    /// <see cref="OnPlaylistItemActivated"/>, reaproveitado sem nenhuma mudança: decisão explícita
-    /// do usuário nesta mesma Sprint 3, "operador plays one at a time manually", não um modo Auto
-    /// de verdade).
+    /// <see cref="PlaylistViewModel.LoadReal"/> — o operador carrega cada item com duplo clique
+    /// igual a qualquer outro item da Playlist (ver <see cref="OnPlaylistItemActivated"/>,
+    /// reaproveitado sem nenhuma mudança). Desde a Sprint 4 (2026-11-16, v1.0.89) um Deck em modo
+    /// Auto (com o Modo Automático da Playlist também ligado) carrega a Lauda seguinte sozinho
+    /// quando a atual termina de tocar — ver <see cref="TryAutoAdvancePlaylist"/> — mas nunca
+    /// aperta Play sozinho, o operador continua decidindo a hora de ir ao ar.
     ///
     /// Também aplica a Arte de Fundo padrão do Programa (<see cref="PlaylistProgramRecord.DefaultBackgroundArtId"/>,
     /// pedido do usuário "cada programa vai ter o seu fundo") reaproveitando o mecanismo já

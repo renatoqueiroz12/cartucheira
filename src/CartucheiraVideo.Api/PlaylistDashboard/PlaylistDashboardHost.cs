@@ -178,17 +178,15 @@ public sealed class PlaylistDashboardHost : IDisposable
             // completamente perdida, impossível de diagnosticar. Corrigido pra bater com o que a
             // documentação da classe já prometia ("vira resposta HTTP 500 com a mensagem"), usando
             // o mesmo WriteResponse de sempre.
-            // Diagnóstico (2026-11-16): a v1.0.83 corrigiu o sintoma (resposta vazia), mas só
-            // devolvia `ex.Message`, texto genérico demais pra achar a causa raiz de verdade — ex.:
-            // "Object reference not set to an instance of an object." não diz QUAL linha/método.
-            // Temporário, só pra achar a causa raiz real de um NullReferenceException relatado pelo
-            // usuário ao abrir o Espelho: devolve `ex.ToString()` (stack trace completo + exceção
-            // interna, se houver) em vez de só `ex.Message`. Reverter pra só `ex.Message` depois de
-            // achar e corrigir a causa raiz — stack trace completo não deveria ir pra produção pra
-            // sempre (nenhum dado sensível aqui, mas é verboso sem necessidade depois de corrigido).
+            // Diagnóstico temporário da v1.0.85 (devolvia `ex.ToString()`, stack trace completo)
+            // cumpriu seu papel: achou a causa raiz real (NullReferenceException em
+            // PlaylistFileStore.CreateLauda, linha ~261, manifest.Laudas nulo após desserializar —
+            // ver fix em PlaylistFileStore.ReadManifest, v1.0.86). Revertido pra só `ex.Message`
+            // agora que a causa está corrigida — stack trace completo não precisa mais ir pra
+            // produção o tempo todo.
             try
             {
-                WriteResponse(context.Response, 500, "text/plain; charset=utf-8", $"Erro interno: {ex}");
+                WriteResponse(context.Response, 500, "text/plain; charset=utf-8", $"Erro interno: {ex.Message}");
             }
             catch (Exception)
             {

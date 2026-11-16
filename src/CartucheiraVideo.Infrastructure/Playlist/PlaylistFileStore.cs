@@ -344,16 +344,22 @@ public static class PlaylistFileStore
         }
     }
 
+    // Mesma cautela do fix em ReadManifest (ver comentário lá): dto.GcFields/dto.ImageFileNames
+    // também são listas/dicionários não anuláveis só em tempo de compilação — um manifesto com
+    // alguma Lauda sem essas chaves no JSON os deserializaria como null, e os construtores de
+    // Dictionary/List lançam ArgumentNullException (não captado em lugar nenhum daqui pra cima)
+    // se receberem null. Protegido aqui também, mesmo sem confirmação de que já aconteceu de
+    // verdade com algum campo de Lauda (só o Laudas da raiz do manifesto, ver ReadManifest).
     private static PlaylistLaudaRecord ToRecord(PlaylistLaudaDto dto) => new(
         dto.Id,
         dto.Order,
         dto.Title,
         dto.Type,
         dto.FileName,
-        new Dictionary<string, string>(dto.GcFields),
+        new Dictionary<string, string>(dto.GcFields ?? new Dictionary<string, string>()),
         dto.TpText,
         dto.OffText,
-        new List<string>(dto.ImageFileNames),
+        new List<string>(dto.ImageFileNames ?? new List<string>()),
         dto.DurationPlanned,
         dto.Duration,
         dto.Status,
@@ -382,8 +388,32 @@ public static class PlaylistFileStore
         return (true, null, edition.FolderPath);
     }
 
-    private static (bool Ok, string? Error, PlaylistManifestDto? Manifest) ReadManifest(string editionFolder) =>
-        ReadJson<PlaylistManifestDto>(Path.Combine(editionFolder, ManifestFileName), new PlaylistManifestDto(new List<PlaylistLaudaDto>()));
+    /// <summary>
+    /// Causa raiz real do NullReferenceException relatado pelo usuário (2026-11-16, achado via
+    /// stack trace completo da v1.0.85 — <c>CreateLauda</c> linha 261, <c>manifest!.Laudas.Count</c>):
+    /// pra alguma Edição de teste específica, <c>playlist.json</c> no disco não tinha a chave
+    /// "Laudas" (ou tinha ela como <c>null</c>) — o mecanismo exato de como isso aconteceu não foi
+    /// confirmado (nenhum lugar deste arquivo grava um manifesto assim de propósito, ver os dois
+    /// únicos construtores de <see cref="PlaylistManifestDto"/> acima), mas o <c>record</c> em si
+    /// não impede isso em tempo de execução — <c>System.Text.Json</c> não aplica anotação de
+    /// nulidade (só é checada em tempo de compilação), então uma chave ausente/nula no JSON vira
+    /// silenciosamente uma propriedade <c>null</c> sem lançar exceção nenhuma na hora de ler.
+    /// Normalizado aqui, no único lugar que lê o manifesto, em vez de em cada chamador
+    /// (<see cref="ListLaudas"/>/<see cref="CreateLauda"/>/<see cref="SaveUploadedFile"/> todos
+    /// ficam protegidos de uma vez) — mesmo princípio "nunca lança" já seguido no resto desta
+    /// camada: nunca confiar que um dado externo (arquivo em disco) satisfaz uma garantia que só
+    /// existe em tempo de compilação.
+    /// </summary>
+    private static (bool Ok, string? Error, PlaylistManifestDto? Manifest) ReadManifest(string editionFolder)
+    {
+        var (ok, error, manifest) = ReadJson<PlaylistManifestDto>(Path.Combine(editionFolder, ManifestFileName), new PlaylistManifestDto(new List<PlaylistLaudaDto>()));
+        if (ok && manifest is not null && manifest.Laudas is null)
+        {
+            manifest = manifest with { Laudas = new List<PlaylistLaudaDto>() };
+        }
+
+        return (ok, error, manifest);
+    }
 
     private static string? WriteManifest(string editionFolder, PlaylistManifestDto manifest) =>
         WriteJson(Path.Combine(editionFolder, ManifestFileName), manifest);

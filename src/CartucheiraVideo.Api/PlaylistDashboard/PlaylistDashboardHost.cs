@@ -1,5 +1,7 @@
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 
 namespace CartucheiraVideo.Api.PlaylistDashboard;
@@ -22,24 +24,39 @@ namespace CartucheiraVideo.Api.PlaylistDashboard;
 /// mesma rede local consegue alcançar este servidor, não só processos da própria máquina — por isso
 /// depende de uma regra de Firewall de ENTRADA liberando a porta
 /// (<c>CartucheiraVideo.Infrastructure.Playlist.PlaylistDashboardFirewallGuard</c>, aplicada pela
-/// Presentation) e, sem nenhuma autenticação nesta v1 (decisão do usuário: dashboard só pra rede
-/// local do estúdio, mesmo princípio já aceito pro vMix/NDI/Resolume) — qualquer um na mesma rede
-/// consegue ler/criar Programas e Datas. Risco aceito nesta sprint, registrado pra se alguém revisitar
-/// mais pra frente.
+/// Presentation).
 ///
-/// Vocabulário 100% HTTP puro, mesmo princípio de isolamento do <c>LocalTriggerApiHost</c>: nenhuma
-/// referência a <c>Core</c>/<c>Infrastructure</c>/<c>Configuration</c> — as rotas de API são só
-/// "método+caminho → função que recebe query string e corpo cru, devolve status+corpo" (ver
-/// <see cref="PlaylistApiHandler"/>); quem liga uma rota a lógica de verdade (ler/criar
-/// Programa/Edição em disco) é a Presentation (<c>PlaylistDashboardCoordinator</c>).
+/// **Login/permissão — Sprint 5 (2026-11-16, pedido do usuário "precisamos de uma barra de
+/// login... criar usuários... dando permissão")**: substitui a v1 sem nenhuma autenticação. Toda
+/// rota registrada via <see cref="RegisterApiRoute"/>/<see cref="RegisterUploadRoute"/> agora exige
+/// uma sessão válida (cookie <c>cartucheira_session</c>, 12h de validade a partir do login,
+/// resolvida por <see cref="TryResolveSession"/> ANTES de chamar o handler — 401 sem nem chamar o
+/// handler se não houver sessão válida) — só <see cref="RegisterLoginRoute"/>/
+/// <see cref="RegisterLogoutRoute"/> ficam de fora desse gate, por definição (não dá pra exigir
+/// login pra poder logar). Arquivos estáticos (HTML/CSS/JS, ver <see cref="ServeStaticFile"/>)
+/// continuam sem gate nenhum — é a própria dashboard (app.js) que decide mostrar só a tela de login
+/// ou o resto da UI, com base na resposta de <c>GET /api/auth/me</c> (uma rota comum, protegida,
+/// registrada pela Presentation como qualquer outra). Sessão guardada só em memória
+/// (<see cref="_sessions"/>) — reiniciar a Cartucheira desloga todo mundo, aceitável pro tamanho
+/// desta dashboard. Sem HTTPS nesta v1 (mesmo princípio aceito pro resto da dashboard: rede local
+/// do estúdio, não exposta à internet) — o cookie não tem a flag <c>Secure</c> de propósito (exigiria
+/// HTTPS, que não existe aqui), mas tem <c>HttpOnly</c> (JS da própria dashboard não lê o cookie,
+/// só o navegador manda de volta) e <c>SameSite=Lax</c>.
+///
+/// Vocabulário 100% HTTP/sessão puro, mesmo princípio de isolamento do <c>LocalTriggerApiHost</c>:
+/// nenhuma referência a <c>Core</c>/<c>Infrastructure</c>/<c>Configuration</c> — as rotas de API são
+/// só "método+caminho → função que recebe query string, corpo cru e o usuário autenticado da sessão,
+/// devolve status+corpo" (ver <see cref="PlaylistApiHandler"/>); quem liga uma rota a lógica de
+/// verdade (ler/criar Programa/Edição em disco, verificar usuário/senha) é a Presentation
+/// (<c>PlaylistDashboardCoordinator</c>).
 ///
 /// Nunca lança: erro processando UMA requisição nunca derruba o servidor inteiro, mesma defesa já
 /// usada pelo <see cref="LocalTriggerApiHost"/>.
 /// </summary>
 public sealed class PlaylistDashboardHost : IDisposable
 {
-    /// <summary>Recebe a query string crua (sem o "?") e o corpo cru da requisição (nulo em GET) — devolve a resposta HTTP completa.</summary>
-    public delegate PlaylistDashboardResponse PlaylistApiHandler(string? queryString, string? requestBody);
+    /// <summary>Recebe a query string crua (sem o "?"), o corpo cru da requisição (nulo em GET) e o usuário autenticado da sessão (nunca nulo — rota só é chamada com sessão válida, ver comentário de classe) — devolve a resposta HTTP completa.</summary>
+    public delegate PlaylistDashboardResponse PlaylistApiHandler(string? queryString, string? requestBody, AuthenticatedDashboardUser user);
 
     /// <summary>
     /// Mesmo papel de <see cref="PlaylistApiHandler"/>, mas pra upload de arquivo (VT/imagem) — Sprint
@@ -52,7 +69,13 @@ public sealed class PlaylistDashboardHost : IDisposable
     /// Quem chama é responsável por ler o quanto precisar do stream (tipicamente copiando pra um
     /// arquivo) — o host fecha a conexão depois que o handler retorna, nunca antes.
     /// </summary>
-    public delegate PlaylistDashboardResponse PlaylistUploadHandler(string? queryString, Stream requestBodyStream);
+    public delegate PlaylistDashboardResponse PlaylistUploadHandler(string? queryString, Stream requestBodyStream, AuthenticatedDashboardUser user);
+
+    /// <summary>Rota pública de login (ver <see cref="RegisterLoginRoute"/>) — recebe o corpo cru (usuário/senha, formato decidido pela Presentation) e devolve a resposta HTTP junto com quem autenticou, se alguém autenticou (ver <see cref="PlaylistLoginAttemptResult"/>).</summary>
+    public delegate PlaylistLoginAttemptResult PlaylistLoginHandler(string? requestBody);
+
+    private const string SessionCookieName = "cartucheira_session";
+    private static readonly TimeSpan SessionLifetime = TimeSpan.FromHours(12);
 
     private static readonly Dictionary<string, string> ContentTypesByExtension = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -70,7 +93,11 @@ public sealed class PlaylistDashboardHost : IDisposable
     private readonly HttpListener _listener = new();
     private readonly Dictionary<string, PlaylistApiHandler> _apiRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PlaylistUploadHandler> _uploadRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PlaylistLoginHandler> _loginRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _logoutRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _routesLock = new();
+    private readonly Dictionary<string, SessionEntry> _sessions = new(StringComparer.Ordinal);
+    private readonly object _sessionsLock = new();
     private readonly int _port;
     private readonly string _webRootFolder;
     private CancellationTokenSource? _cts;
@@ -106,6 +133,37 @@ public sealed class PlaylistDashboardHost : IDisposable
         lock (_routesLock)
         {
             _uploadRoutes[RouteKey(method, path)] = handler;
+        }
+    }
+
+    /// <summary>
+    /// Registra a rota pública de login (ver <see cref="PlaylistLoginHandler"/>) — Sprint 5
+    /// (2026-11-16). A ÚNICA rota de API que nunca exige sessão válida (senão seria impossível
+    /// logar). Quando o handler devolve um <see cref="AuthenticatedDashboardUser"/> não-nulo, o Host
+    /// mesmo cria a sessão nova e manda o cookie — o handler (Presentation) só precisa verificar
+    /// usuário/senha, nunca lida com cookie/token.
+    /// </summary>
+    public void RegisterLoginRoute(string method, string path, PlaylistLoginHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+
+        lock (_routesLock)
+        {
+            _loginRoutes[RouteKey(method, path)] = handler;
+        }
+    }
+
+    /// <summary>
+    /// Registra a rota pública de logout — Sprint 5 (2026-11-16). Sem handler: o próprio Host limpa
+    /// a sessão (se existir) e manda um cookie vazio/expirado de volta. Pública pelo mesmo motivo do
+    /// login (se já expirou/não existe sessão, só devolve sucesso mesmo assim — "já estava
+    /// deslogado" não é um erro).
+    /// </summary>
+    public void RegisterLogoutRoute(string method, string path)
+    {
+        lock (_routesLock)
+        {
+            _logoutRoutes.Add(RouteKey(method, path));
         }
     }
 
@@ -208,31 +266,67 @@ public sealed class PlaylistDashboardHost : IDisposable
         var response = context.Response;
 
         var path = NormalizePath(request.Url?.AbsolutePath ?? string.Empty);
+        var routeKey = RouteKey(request.HttpMethod, path);
 
-        PlaylistUploadHandler? uploadHandler;
+        // Login/logout são as ÚNICAS rotas públicas (ver comentário de classe) — resolvidas ANTES
+        // de qualquer checagem de sessão, senão seria impossível logar/deslogar.
+        PlaylistLoginHandler? loginHandler;
+        bool isLogoutRoute;
         lock (_routesLock)
         {
-            _uploadRoutes.TryGetValue(RouteKey(request.HttpMethod, path), out uploadHandler);
+            _loginRoutes.TryGetValue(routeKey, out loginHandler);
+            isLogoutRoute = _logoutRoutes.Contains(routeKey);
         }
 
-        if (uploadHandler is not null)
+        if (loginHandler is not null)
         {
-            // Nunca passa pelo StreamReader/UTF-8 do bloco de baixo — leitura crua de bytes direto do
-            // stream da requisição, ver comentário de PlaylistUploadHandler pro porquê.
-            var uploadQuery = request.Url?.Query is { Length: > 0 } uq ? uq.TrimStart('?') : null;
-            var uploadResponse = uploadHandler(uploadQuery, request.InputStream);
-            WriteResponse(response, uploadResponse.StatusCode, uploadResponse.ContentType, uploadResponse.Body);
+            ProcessLogin(loginHandler, request, response);
             return;
         }
 
+        if (isLogoutRoute)
+        {
+            ProcessLogout(request, response);
+            return;
+        }
+
+        PlaylistUploadHandler? uploadHandler;
         PlaylistApiHandler? apiHandler;
         lock (_routesLock)
         {
-            _apiRoutes.TryGetValue(RouteKey(request.HttpMethod, path), out apiHandler);
+            _uploadRoutes.TryGetValue(routeKey, out uploadHandler);
+            if (uploadHandler is null)
+            {
+                _apiRoutes.TryGetValue(routeKey, out apiHandler);
+            }
+            else
+            {
+                apiHandler = null;
+            }
         }
 
-        if (apiHandler is not null)
+        if (uploadHandler is not null || apiHandler is not null)
         {
+            // Sprint 5 (2026-11-16): toda rota de API/upload (fora login/logout) agora exige sessão
+            // válida — resolvida ANTES de chamar o handler, 401 sem nem tocar na lógica de
+            // Programa/Edição/Lauda/Usuário se não houver sessão (ver comentário de classe).
+            var user = TryResolveSession(request);
+            if (user is null)
+            {
+                WriteResponse(response, 401, "text/plain; charset=utf-8", "não autenticado — faça login.");
+                return;
+            }
+
+            if (uploadHandler is not null)
+            {
+                // Nunca passa pelo StreamReader/UTF-8 do bloco de baixo — leitura crua de bytes direto
+                // do stream da requisição, ver comentário de PlaylistUploadHandler pro porquê.
+                var uploadQuery = request.Url?.Query is { Length: > 0 } uq ? uq.TrimStart('?') : null;
+                var uploadResponse = uploadHandler(uploadQuery, request.InputStream, user);
+                WriteResponse(response, uploadResponse.StatusCode, uploadResponse.ContentType, uploadResponse.Body);
+                return;
+            }
+
             var query = request.Url?.Query is { Length: > 0 } q ? q.TrimStart('?') : null;
             string? body = null;
             if (string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
@@ -242,7 +336,7 @@ public sealed class PlaylistDashboardHost : IDisposable
                 body = reader.ReadToEnd();
             }
 
-            var apiResponse = apiHandler(query, body);
+            var apiResponse = apiHandler!(query, body, user);
             WriteResponse(response, apiResponse.StatusCode, apiResponse.ContentType, apiResponse.Body);
             return;
         }
@@ -255,6 +349,100 @@ public sealed class PlaylistDashboardHost : IDisposable
 
         ServeStaticFile(response, path);
     }
+
+    /// <summary>Executa a tentativa de login e, se autenticou, cria a sessão nova e manda o cookie — ver comentário de classe.</summary>
+    private void ProcessLogin(PlaylistLoginHandler handler, HttpListenerRequest request, HttpListenerResponse response)
+    {
+        using var reader = new StreamReader(request.InputStream, Encoding.UTF8);
+        var body = reader.ReadToEnd();
+
+        var attempt = handler(body);
+        if (attempt.AuthenticatedUser is { } user)
+        {
+            var token = GenerateSessionToken();
+            lock (_sessionsLock)
+            {
+                PruneExpiredSessions();
+                _sessions[token] = new SessionEntry(user.Id, user.Username, user.IsAdmin, user.AllowedProgramIds, DateTime.UtcNow.Add(SessionLifetime));
+            }
+
+            AppendSetCookieHeader(response, token, SessionLifetime);
+        }
+
+        var result = attempt.Response;
+        WriteResponse(response, result.StatusCode, result.ContentType, result.Body);
+    }
+
+    /// <summary>Limpa a sessão (se o cookie mandado bater com alguma) e manda um cookie já expirado de volta — nunca falha mesmo se não houver sessão nenhuma pra limpar.</summary>
+    private void ProcessLogout(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        var token = request.Cookies[SessionCookieName]?.Value;
+        if (!string.IsNullOrEmpty(token))
+        {
+            lock (_sessionsLock)
+            {
+                _sessions.Remove(token);
+            }
+        }
+
+        AppendSetCookieHeader(response, string.Empty, TimeSpan.Zero);
+        WriteResponse(response, 200, "application/json; charset=utf-8", "{}");
+    }
+
+    /// <summary>Resolve o usuário da sessão a partir do cookie da requisição — nulo se não houver cookie, a sessão não existir, ou já tiver expirado (e, nesse caso, remove a sessão vencida — limpeza "de passagem", sem thread de fundo nenhuma).</summary>
+    private AuthenticatedDashboardUser? TryResolveSession(HttpListenerRequest request)
+    {
+        var token = request.Cookies[SessionCookieName]?.Value;
+        if (string.IsNullOrEmpty(token))
+        {
+            return null;
+        }
+
+        lock (_sessionsLock)
+        {
+            if (!_sessions.TryGetValue(token, out var session))
+            {
+                return null;
+            }
+
+            if (session.ExpiresAtUtc <= DateTime.UtcNow)
+            {
+                _sessions.Remove(token);
+                return null;
+            }
+
+            return new AuthenticatedDashboardUser(session.UserId, session.Username, session.IsAdmin, session.AllowedProgramIds);
+        }
+    }
+
+    /// <summary>Chamado sempre dentro de <see cref="_sessionsLock"/> — remove sessões já vencidas (ex.: a Cartucheira ficou aberta dias), evita o dicionário crescer sem limite.</summary>
+    private void PruneExpiredSessions()
+    {
+        var now = DateTime.UtcNow;
+        var expired = _sessions.Where(kv => kv.Value.ExpiresAtUtc <= now).Select(kv => kv.Key).ToList();
+        foreach (var key in expired)
+        {
+            _sessions.Remove(key);
+        }
+    }
+
+    /// <summary><paramref name="lifetime"/> zero expira o cookie imediatamente (logout) — <c>HttpOnly</c> sempre, sem <c>Secure</c> (ver comentário de classe pro porquê), <c>SameSite=Lax</c>.</summary>
+    private static void AppendSetCookieHeader(HttpListenerResponse response, string token, TimeSpan lifetime)
+    {
+        var maxAgeSeconds = lifetime <= TimeSpan.Zero ? 0 : (int)lifetime.TotalSeconds;
+        response.Headers.Add("Set-Cookie", $"{SessionCookieName}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={maxAgeSeconds}");
+    }
+
+    private static string GenerateSessionToken()
+    {
+        var bytes = RandomNumberGenerator.GetBytes(32);
+        // Base64url (RFC 4648 §5) em vez de Base64 padrão — evita "+"/"/" no valor do cookie, que
+        // alguns clientes/proxies tratam mal mesmo sendo tecnicamente permitidos.
+        return Convert.ToBase64String(bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=');
+    }
+
+    /// <summary>Sessão guardada em memória (ver comentário de classe) — vocabulário primitivo, nunca um tipo de domínio.</summary>
+    private sealed record SessionEntry(string UserId, string Username, bool IsAdmin, IReadOnlyList<string> AllowedProgramIds, DateTime ExpiresAtUtc);
 
     private void ServeStaticFile(HttpListenerResponse response, string path)
     {

@@ -1,6 +1,7 @@
 <UserControl x:Class="CartucheiraVideo.Presentation.Views.PlaylistSettingsPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="clr-namespace:CartucheiraVideo.Presentation.Converters">
 
     <!--
         Sprint Playlist-Dashboard (2026-11-14): sétima seção da janela de Configurações, ao lado de
@@ -25,6 +26,11 @@
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Margin" Value="0,0,0,10" />
         </Style>
+
+        <!-- Sprint 5 (2026-11-16, Usuários da Dashboard) -->
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+        <conv:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis" />
+        <conv:StringToVisibilityConverter x:Key="StringToVis" />
     </UserControl.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -55,10 +61,43 @@
                 <TextBox Text="{Binding DashboardUrlDisplay, Mode=OneWay}" IsReadOnly="True" />
             </StackPanel>
 
-            <TextBlock Text="SEM autenticação nesta v1 — qualquer computador na mesma rede local da Cartucheira consegue abrir essa URL e criar/ver Programas e Datas, mesmo princípio já aceito hoje pro vMix/NDI/Resolume (rede de estúdio, não exposta à internet)."
+            <TextBlock Text="Desde a Sprint 5, a dashboard exige login — ver &quot;Usuários da Dashboard&quot; abaixo pra criar o primeiro Administrador. Continua só pra rede local do estúdio (não exposta à internet), mesmo princípio já aceito hoje pro vMix/NDI/Resolume."
                        Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" FontWeight="Bold" />
             <TextBlock Text="Depois de salvar com uma porta nova, o Windows pode pedir permissão de Administrador (UAC) uma vez, pra liberar essa porta no Firewall."
                        Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,6,0,0" TextWrapping="Wrap" />
+
+            <TextBlock Text="Usuários da Dashboard" Style="{StaticResource Theme.SectionTitle}" Margin="0,24,0,10" />
+            <TextBlock Text="Crie aqui o primeiro usuário Administrador (acesso total) antes de passar a URL pro produtor. O Admin entra na própria dashboard web e, se quiser, cria os demais usuários (Produtores) por aqui também, liberando pra cada um só os Programas que ele deve ver/editar. Grava direto no disco a cada ação — não depende do &quot;Salvar&quot; desta janela."
+                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,0,0,12" TextWrapping="Wrap" />
+
+            <TextBlock Text="Salve a pasta raiz acima (e feche/reabra Configurações) antes de criar usuários."
+                       Foreground="{DynamicResource Brush.Red}" FontSize="{StaticResource FontSize.Small}" Margin="0,0,0,10" TextWrapping="Wrap"
+                       Visibility="{Binding HasPersistedRootFolder, Converter={StaticResource InverseBoolToVis}}" />
+
+            <TextBlock Text="Nenhum Administrador cadastrado ainda — crie o primeiro usuário abaixo marcando &quot;Administrador&quot; antes de passar a URL pro produtor."
+                       Foreground="{DynamicResource Brush.TextHi}" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Margin="0,0,0,10" TextWrapping="Wrap"
+                       Visibility="{Binding ShowNoAdminYetHint, Converter={StaticResource BoolToVis}}" />
+
+            <ListBox ItemsSource="{Binding DashboardUsers}" SelectedItem="{Binding SelectedDashboardUser}" Height="140" Margin="0,0,0,10">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Username}" FontWeight="Bold" Margin="0,0,10,0" />
+                            <TextBlock Text="{Binding RoleDisplay}" Foreground="{DynamicResource Brush.TextLow}" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <Button Content="+ Novo usuário" Command="{Binding AddDashboardUserCommand}" Padding="10,6" Margin="0,0,8,0" />
+                <Button Content="Editar" Command="{Binding EditDashboardUserCommand}" Padding="10,6" Margin="0,0,8,0" />
+                <Button Content="Remover" Command="{Binding RemoveDashboardUserCommand}" Padding="10,6" />
+            </StackPanel>
+
+            <TextBlock Text="{Binding DashboardUsersError}" Foreground="{DynamicResource Brush.Red}" FontSize="{StaticResource FontSize.Small}"
+                       TextWrapping="Wrap" Margin="0,0,0,6"
+                       Visibility="{Binding DashboardUsersError, Converter={StaticResource StringToVis}}" />
         </StackPanel>
     </ScrollViewer>
 </UserControl>

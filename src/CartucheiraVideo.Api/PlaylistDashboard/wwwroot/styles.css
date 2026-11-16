@@ -4,7 +4,7 @@
   src/CartucheiraVideo.Presentation/Resources/Theme.xaml) — decisão confirmada com o usuário
   (perguntas objetivas, "mesma identidade visual da Cartucheira") pra dashboard e app desktop
   parecerem o mesmo sistema, não duas coisas diferentes coladas. Valores copiados 1:1 dos
-  Color.Bg0-5/Brush.Text*/Blue/Red/Amber/Green de lá — qualquer ajuste de tema na Cartucheira deveria,
+  Color.Bg0-5, Brush.Text, Blue, Red, Amber, Green de lá — qualquer ajuste de tema na Cartucheira deveria,
   a rigor, ser replicado aqui também (não há um jeito de compartilhar o XAML com CSS puro).
 */
 

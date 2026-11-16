@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
@@ -266,7 +268,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         // Sprint Playlist-Dashboard (2026-11-14): sobe a dashboard web (ou fica honestamente
         // desligada, se a pasta raiz ainda não foi configurada) — ver ReapplyPlaylistDashboardSettings.
-        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus);
+        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus, () => _persistedSettings.BackgroundArtPresets);
         ReapplyPlaylistDashboardSettings();
 
         ApplyExternalTriggerSettings();
@@ -284,6 +286,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         FileExplorer = new FileExplorerViewModel();
         FileExplorer.FileActivated += OnExplorerFileActivated;
         FileExplorer.Playlist.ItemActivated += OnPlaylistItemActivated;
+        // Sprint 3 (2026-11-16): ver comentário de OnOpenPlaylistRequested.
+        FileExplorer.Playlist.OpenPlaylistRequested += OnOpenPlaylistRequested;
 
         OpenSettingsCommand = new RelayCommand(_ => OpenSettings());
         OpenAboutCommand = new RelayCommand(_ => StatusMessage = "Cartucheira Vídeo — protótipo de interface.");
@@ -336,7 +340,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.86";
+    public string VersionLabel => "v1.0.87";
 
     public DeckViewModel DeckA { get; }
 
@@ -1253,6 +1257,92 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         }
 
         LoadIntoDeck(target, item.FullPath);
+    }
+
+    /// <summary>
+    /// "Abrir o dia" — Sprint 3 (2026-11-16, pedido do usuário "tem que ter lá a opção abrir o dia,
+    /// aí abre o programa e carrega"). Abre o diálogo de escolha Programa/Data
+    /// (<see cref="OpenPlaylistWindow"/>), lê as Laudas reais daquela Edição direto do
+    /// <see cref="PlaylistFileStore"/> (Infrastructure) e entrega pra
+    /// <see cref="PlaylistViewModel.LoadReal"/> — o operador continua tocando cada item
+    /// manualmente, duplo clique carrega no Deck igual a qualquer outro item da Playlist (ver
+    /// <see cref="OnPlaylistItemActivated"/>, reaproveitado sem nenhuma mudança: decisão explícita
+    /// do usuário nesta mesma Sprint 3, "operador plays one at a time manually", não um modo Auto
+    /// de verdade).
+    ///
+    /// Também aplica a Arte de Fundo padrão do Programa (<see cref="PlaylistProgramRecord.DefaultBackgroundArtId"/>,
+    /// pedido do usuário "cada programa vai ter o seu fundo") reaproveitando o mecanismo já
+    /// existente de UMA arte ativa global (<see cref="AppSettingsSnapshot.ActiveBackgroundArtId"/>)
+    /// em vez de inventar um mecanismo por Programa — decisão explícita do usuário: só troca a
+    /// arte ativa em memória (nunca grava em disco; é uma troca operacional de "abrir o dia", não
+    /// uma mudança de configuração permanente) e manda os dois Decks reavaliar
+    /// (<see cref="DeckViewModel.RefreshBackgroundArt"/>, mesmo gatilho já usado por
+    /// Configurações → Arte de Fundo).
+    /// </summary>
+    private void OnOpenPlaylistRequested()
+    {
+        var rootFolder = _persistedSettings.Playlist.RootFolder;
+        if (string.IsNullOrWhiteSpace(rootFolder))
+        {
+            StatusMessage = "Playlist: configure a pasta raiz em Configurações → Playlist antes de abrir uma Playlist.";
+            return;
+        }
+
+        var dialog = new OpenPlaylistWindow(rootFolder) { Owner = Application.Current?.MainWindow };
+        if (dialog.ShowDialog() != true || dialog.SelectedProgram is null || dialog.SelectedEdition is null)
+        {
+            return;
+        }
+
+        var program = dialog.SelectedProgram;
+        var edition = dialog.SelectedEdition;
+
+        var (ok, error, laudas) = PlaylistFileStore.ListLaudas(rootFolder, program.Id, edition.Id);
+        if (!ok)
+        {
+            StatusMessage = $"Playlist: não consegui ler o Espelho de \"{program.Name}\" ({edition.DateIso}) — {error}.";
+            return;
+        }
+
+        var items = laudas
+            .OrderBy(l => l.Order)
+            .Select((lauda, index) => new PlaylistItemViewModel(
+                index + 1,
+                lauda.Title,
+                TryParseDurationPlanned(lauda.DurationPlanned),
+                string.IsNullOrWhiteSpace(lauda.FileName) ? string.Empty : Path.Combine(edition.FolderPath, lauda.FileName),
+                isCurrent: index == 0,
+                isNext: index == 1))
+            .ToList();
+
+        FileExplorer.Playlist.LoadReal(program.Name, edition.DateIso, items);
+
+        if (!string.IsNullOrWhiteSpace(program.DefaultBackgroundArtId))
+        {
+            _persistedSettings.ActiveBackgroundArtId = program.DefaultBackgroundArtId;
+            DeckA.RefreshBackgroundArt();
+            DeckB.RefreshBackgroundArt();
+        }
+    }
+
+    /// <summary>
+    /// Sprint 3 (2026-11-16): <see cref="PlaylistLaudaRecord.DurationPlanned"/> é texto livre
+    /// digitado pelo produtor na dashboard (placeholder "Ex.: 02:30") — nunca validado na escrita
+    /// (ver comentário de <c>PlaylistFileStore.CreateLauda</c>), então o parse aqui é só honesto:
+    /// aceita "mm:ss" ou "hh:mm:ss", qualquer outra coisa (vazio, texto livre, formato diferente)
+    /// vira duração desconhecida (exibe "—" em <see cref="PlaylistItemViewModel.DurationDisplay"/>)
+    /// em vez de lançar.
+    /// </summary>
+    private static TimeSpan? TryParseDurationPlanned(string? durationPlanned)
+    {
+        if (string.IsNullOrWhiteSpace(durationPlanned))
+        {
+            return null;
+        }
+
+        return TimeSpan.TryParseExact(durationPlanned.Trim(), new[] { "mm\\:ss", "hh\\:mm\\:ss", "h\\:mm\\:ss" }, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
     }
 
     /// <summary>

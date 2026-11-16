@@ -17,6 +17,9 @@
     <h2>Programas</h2>
     <form id="new-program-form">
       <input type="text" id="new-program-name" placeholder="Nome do Programa (ex.: Jornal da Tarde)" required />
+      <select id="new-program-background-art">
+        <option value="">Sem fundo padrão</option>
+      </select>
       <button type="submit">Criar Programa</button>
     </form>
     <ul id="programs-list" class="list"></ul>
@@ -37,7 +40,10 @@
     <h2>Espelho de <span id="selected-program-name-2"></span> — <span id="selected-edition-date"></span></h2>
     <button id="back-to-editions-button" type="button">&larr; Voltar pras Datas</button>
 
-    <form id="new-lauda-form">
+    <button id="toggle-new-lauda-button" type="button">+ Nova Lauda</button>
+
+    <form id="new-lauda-form" class="hidden">
+      <h3 id="lauda-form-title">Nova Lauda</h3>
       <div class="field-row">
         <label for="new-lauda-title">Título</label>
         <input type="text" id="new-lauda-title" placeholder="Ex.: Abertura, Matéria sobre trânsito, Entrevista prefeito (opcional)" />
@@ -74,12 +80,15 @@
         <label for="new-lauda-images">Imagens de apoio — opcional (pode escolher várias)</label>
         <input type="file" id="new-lauda-images" accept="image/*" multiple />
       </div>
-      <button type="submit">Criar Lauda</button>
+      <div class="field-row-buttons">
+        <button type="submit" id="lauda-form-submit">Criar Lauda</button>
+        <button type="button" id="lauda-form-cancel" class="secondary">Cancelar</button>
+      </div>
       <p id="lauda-upload-status" class="hint hidden"></p>
     </form>
 
     <ul id="laudas-list" class="list laudas-list"></ul>
-    <p class="hint">Ainda sem reordenação por arrastar — toda Lauda nova entra no fim do Espelho. Sem validação real de VT/imagens ainda (duração/resolução/codec ficam em branco até uma sprint futura).</p>
+    <p class="hint">Clique numa Lauda pra abrir e editar. Arraste pelas setas (⠿) pra reordenar. Sem validação real de VT/imagens ainda (duração/resolução/codec ficam em branco até uma sprint futura).</p>
   </section>
 
   <p id="error-message" class="error hidden"></p>

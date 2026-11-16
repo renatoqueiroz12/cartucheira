@@ -30,11 +30,22 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     };
 
     private readonly Action<string> _onStatus;
+    private readonly Func<IReadOnlyList<BackgroundArtPreset>> _getBackgroundArtPresets;
     private PlaylistDashboardHost? _host;
 
-    public PlaylistDashboardCoordinator(Action<string> onStatus)
+    /// <summary>
+    /// <paramref name="getBackgroundArtPresets"/> — Sprint 3 (2026-11-16, pedido do usuário "cada
+    /// programa vai ter o seu fundo"): lido de novo a cada requisição (nunca cacheado), mesmo
+    /// princípio já usado pro resto das Configurações — reflete qualquer preset criado/removido em
+    /// Configurações → Arte de Fundo sem precisar reiniciar a dashboard. Esta camada não guarda o
+    /// Id ativo nenhum, só expõe a LISTA pra dashboard poder montar o &lt;select&gt; do formulário
+    /// "Novo Programa"; quem decide qual fundo fica ativo ao abrir a Playlist é o
+    /// <c>MainViewModel</c> (ver <c>PlaylistViewModel</c>/Sprint 4), não esta classe.
+    /// </summary>
+    public PlaylistDashboardCoordinator(Action<string> onStatus, Func<IReadOnlyList<BackgroundArtPreset>> getBackgroundArtPresets)
     {
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
+        _getBackgroundArtPresets = getBackgroundArtPresets ?? throw new ArgumentNullException(nameof(getBackgroundArtPresets));
     }
 
     /// <summary>
@@ -66,6 +77,9 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         host.RegisterApiRoute("POST", "/api/playlist/editions", (_, body) => HandleCreateEdition(rootFolder, body));
         host.RegisterApiRoute("GET", "/api/playlist/laudas", (query, _) => HandleListLaudas(rootFolder, query));
         host.RegisterApiRoute("POST", "/api/playlist/laudas", (_, body) => HandleCreateLauda(rootFolder, body));
+        host.RegisterApiRoute("PUT", "/api/playlist/laudas", (_, body) => HandleUpdateLauda(rootFolder, body));
+        host.RegisterApiRoute("PUT", "/api/playlist/laudas/reorder", (_, body) => HandleReorderLaudas(rootFolder, body));
+        host.RegisterApiRoute("GET", "/api/playlist/background-art-presets", (_, _) => HandleListBackgroundArtPresets());
         host.RegisterUploadRoute("PUT", "/api/playlist/laudas/vt", (query, stream) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Video));
         host.RegisterUploadRoute("PUT", "/api/playlist/laudas/imagem", (query, stream) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Image));
 
@@ -111,13 +125,20 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             return PlaylistDashboardResponse.PlainTextError(400, "nome do Programa não pode ser vazio.");
         }
 
-        var (ok, error, program) = PlaylistFileStore.CreateProgram(rootFolder, request.Name);
+        var (ok, error, program) = PlaylistFileStore.CreateProgram(rootFolder, request.Name, request.DefaultBackgroundArtId);
         if (!ok || program is null)
         {
             return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
         }
 
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new ProgramDto(program.Id, program.Name), JsonOptions), 201);
+    }
+
+    /// <summary>Sprint 3 (2026-11-16) — presets de Arte de Fundo já cadastrados em Configurações → Arte de Fundo, pro &lt;select&gt; do formulário "Novo Programa" na dashboard.</summary>
+    private PlaylistDashboardResponse HandleListBackgroundArtPresets()
+    {
+        var dtos = _getBackgroundArtPresets().Select(p => new BackgroundArtPresetDto(p.Id, p.Name)).ToList();
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
     }
 
     private static PlaylistDashboardResponse HandleListEditions(string rootFolder, string? queryString)
@@ -237,6 +258,73 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToLaudaDto(lauda), JsonOptions), 201);
     }
 
+    /// <summary>Sprint 3 (2026-11-16) — edita os campos de metadado de uma Lauda já existente (pedido do usuário "poder abrir cada lauda e poder editar ela e salvar"). VT/Imagens não mudam por aqui, ver <see cref="HandleUploadFile"/>.</summary>
+    private static PlaylistDashboardResponse HandleUpdateLauda(string rootFolder, string? body)
+    {
+        UpdateLaudaRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<UpdateLaudaRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.LaudaId) || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.EditionId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"laudaId\", \"programId\" e \"editionId\" são obrigatórios.");
+        }
+
+        var (ok, error, lauda) = PlaylistFileStore.UpdateLauda(
+            rootFolder,
+            request.ProgramId,
+            request.EditionId,
+            request.LaudaId,
+            request.Title,
+            request.Type,
+            request.GcFields,
+            request.TpText,
+            request.OffText,
+            request.DurationPlanned,
+            request.Notes);
+
+        if (!ok || lauda is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToLaudaDto(lauda), JsonOptions));
+    }
+
+    /// <summary>Sprint 3 (2026-11-16) — reordena as Laudas do Espelho conforme a sequência arrastada na dashboard (pedido do usuário "poder mover ela para cima e para baixo").</summary>
+    private static PlaylistDashboardResponse HandleReorderLaudas(string rootFolder, string? body)
+    {
+        ReorderLaudasRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<ReorderLaudasRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.EditionId) || request.OrderedIds is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\", \"editionId\" e \"orderedIds\" são obrigatórios.");
+        }
+
+        var (ok, error, laudas) = PlaylistFileStore.ReorderLaudas(rootFolder, request.ProgramId, request.EditionId, request.OrderedIds);
+        if (!ok)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        var dtos = laudas.Select(ToLaudaDto).ToList();
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
+    }
+
     /// <summary>
     /// Sprint 2 (2026-11-15) — recebe o arquivo (VT ou imagem) direto no corpo cru da requisição PUT
     /// (ver comentário de <c>PlaylistDashboardHost.PlaylistUploadHandler</c> pro porquê de não ser
@@ -310,7 +398,24 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
     private sealed record EditionDto(string Id, string DateIso);
 
-    private sealed record CreateProgramRequest(string? Name);
+    /// <summary><see cref="DefaultBackgroundArtId"/> — Sprint 3 (2026-11-16): opcional, Id de um preset já cadastrado (ver <see cref="HandleListBackgroundArtPresets"/>); vazio/nulo significa "sem fundo padrão".</summary>
+    private sealed record CreateProgramRequest(string? Name, string? DefaultBackgroundArtId);
+
+    private sealed record BackgroundArtPresetDto(string Id, string Name);
+
+    private sealed record UpdateLaudaRequest(
+        string? LaudaId,
+        string? ProgramId,
+        string? EditionId,
+        string? Title,
+        string? Type,
+        Dictionary<string, string>? GcFields,
+        string? TpText,
+        string? OffText,
+        string? DurationPlanned,
+        string? Notes);
+
+    private sealed record ReorderLaudasRequest(string? ProgramId, string? EditionId, List<string>? OrderedIds);
 
     private sealed record CreateEditionRequest(string? ProgramId, string? Date);
 

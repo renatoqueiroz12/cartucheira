@@ -2,8 +2,15 @@ using System.Text.Json;
 
 namespace CartucheiraVideo.Infrastructure.Playlist;
 
-/// <summary>Um Programa cadastrado, no vocabulário cru desta camada (só strings — quem traduz pro <c>Core.PlaylistProgram</c> é a Presentation).</summary>
-public sealed record PlaylistProgramRecord(string Id, string Name, string FolderName);
+/// <summary>
+/// Um Programa cadastrado, no vocabulário cru desta camada (só strings — quem traduz pro
+/// <c>Core.PlaylistProgram</c> é a Presentation). <see cref="DefaultBackgroundArtId"/> — Sprint 3
+/// (2026-11-16, pedido do usuário "cada programa vai ter o seu fundo") — é o <c>Id</c> de um
+/// <c>BackgroundArtPreset</c> já cadastrado em Configurações → Arte de Fundo (Presentation/
+/// Configuration; esta camada nunca conhece esse tipo, só guarda o Id cru) — nulo/vazio quando o
+/// Programa não tem um fundo padrão escolhido.
+/// </summary>
+public sealed record PlaylistProgramRecord(string Id, string Name, string FolderName, string? DefaultBackgroundArtId);
 
 /// <summary>Uma Edição (Data) de um Programa, no vocabulário cru desta camada.</summary>
 public sealed record PlaylistEditionRecord(string Id, string DateIso, string FolderName, string FolderPath);
@@ -83,11 +90,12 @@ public static class PlaylistFileStore
 
         var (ok, error, index) = ReadProgramsIndex(rootFolder);
         return ok
-            ? (true, null, index!.Programs.Select(p => new PlaylistProgramRecord(p.Id, p.Name, p.FolderName)).ToList())
+            ? (true, null, index!.Programs.Select(ToProgramRecord).ToList())
             : (false, error, Array.Empty<PlaylistProgramRecord>());
     }
 
-    public static (bool Ok, string? Error, PlaylistProgramRecord? Program) CreateProgram(string rootFolder, string name)
+    /// <summary><paramref name="defaultBackgroundArtId"/> — Sprint 3 (2026-11-16): opcional, Id de um preset de Arte de Fundo já cadastrado (esta camada não valida se o Id existe de verdade — quem tem a lista de presets é a Presentation; um Id que não bate com nenhum preset mais tarde é só ignorado na hora de usar, nunca vira erro aqui).</summary>
+    public static (bool Ok, string? Error, PlaylistProgramRecord? Program) CreateProgram(string rootFolder, string name, string? defaultBackgroundArtId = null)
     {
         if (string.IsNullOrWhiteSpace(rootFolder))
         {
@@ -112,7 +120,7 @@ public static class PlaylistFileStore
             var folderName = MakeUniqueFolderName(rootFolder, name.Trim());
             Directory.CreateDirectory(Path.Combine(rootFolder, folderName));
 
-            var entry = new ProgramEntryDto(Guid.NewGuid().ToString(), name.Trim(), folderName);
+            var entry = new ProgramEntryDto(Guid.NewGuid().ToString(), name.Trim(), folderName, string.IsNullOrWhiteSpace(defaultBackgroundArtId) ? null : defaultBackgroundArtId);
             index!.Programs.Add(entry);
 
             var writeError = WriteJson(Path.Combine(rootFolder, ProgramsIndexFileName), index);
@@ -121,13 +129,25 @@ public static class PlaylistFileStore
                 return (false, writeError, null);
             }
 
-            return (true, null, new PlaylistProgramRecord(entry.Id, entry.Name, entry.FolderName));
+            return (true, null, ToProgramRecord(entry));
         }
         catch (Exception ex)
         {
             return (false, ex.Message, null);
         }
     }
+
+    private static PlaylistProgramRecord ToProgramRecord(ProgramEntryDto dto) =>
+        new(dto.Id, dto.Name, dto.FolderName, dto.DefaultBackgroundArtId);
+
+    /// <summary>
+    /// Busca um Programa pelo Id — Sprint 3 (2026-11-16): exposto publicamente (até então
+    /// <see cref="FindProgram"/> era só uso interno) porque a Presentation precisa ler
+    /// <see cref="PlaylistProgramRecord.DefaultBackgroundArtId"/> na hora de "abrir o dia" (carregar
+    /// a Playlist real num Deck), pra saber se troca a Arte de Fundo ativa.
+    /// </summary>
+    public static (bool Ok, string? Error, PlaylistProgramRecord? Program) GetProgram(string rootFolder, string programId) =>
+        FindProgram(rootFolder, programId);
 
     public static (bool Ok, string? Error, IReadOnlyList<PlaylistEditionRecord> Editions) ListEditions(string rootFolder, string programId)
     {
@@ -279,6 +299,109 @@ public static class PlaylistFileStore
 
         var writeError = WriteManifest(editionFolder, manifest);
         return writeError is not null ? (false, writeError, null) : (true, null, ToRecord(entry));
+    }
+
+    /// <summary>
+    /// Atualiza os campos de metadado de uma Lauda já existente — Sprint 3 (2026-11-16, pedido do
+    /// usuário "poder abrir cada lauda e poder editar ela e salvar"). Só os campos que o produtor
+    /// edita no formulário mudam aqui (mesmo princípio "nenhum campo é obrigatório" da v1.0.84,
+    /// vale também editando: título em branco também cai pra "(sem título)"); FileName/
+    /// ImageFileNames/Status/Duration/Resolution/Codec (tudo que é preenchido pelo upload de VT/
+    /// imagem, não pelo formulário) ficam intocados.
+    /// </summary>
+    public static (bool Ok, string? Error, PlaylistLaudaRecord? Lauda) UpdateLauda(
+        string rootFolder,
+        string programId,
+        string editionId,
+        string laudaId,
+        string? title,
+        string? type,
+        Dictionary<string, string>? gcFields,
+        string? tpText,
+        string? offText,
+        string? durationPlanned,
+        string? notes)
+    {
+        var resolvedTitle = string.IsNullOrWhiteSpace(title) ? "(sem título)" : title.Trim();
+
+        var (resolveOk, resolveError, editionFolder) = ResolveEditionFolder(rootFolder, programId, editionId);
+        if (!resolveOk || editionFolder is null)
+        {
+            return (false, resolveError, null);
+        }
+
+        var (ok, error, manifest) = ReadManifest(editionFolder);
+        if (!ok)
+        {
+            return (false, error, null);
+        }
+
+        var index = manifest!.Laudas.FindIndex(l => string.Equals(l.Id, laudaId, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            return (false, "Lauda não encontrada.", null);
+        }
+
+        var current = manifest.Laudas[index];
+        var updated = current with
+        {
+            Title = resolvedTitle,
+            Type = (type ?? string.Empty).Trim(),
+            GcFields = gcFields ?? new Dictionary<string, string>(),
+            TpText = tpText,
+            OffText = offText,
+            DurationPlanned = durationPlanned,
+            Notes = notes
+        };
+        manifest.Laudas[index] = updated;
+
+        var writeError = WriteManifest(editionFolder, manifest);
+        return writeError is not null ? (false, writeError, null) : (true, null, ToRecord(updated));
+    }
+
+    /// <summary>
+    /// Reordena as Laudas do Espelho conforme uma sequência de Ids dada pelo cliente (arrastar e
+    /// soltar na dashboard) — Sprint 3 (2026-11-16). Nunca lança: se <paramref name="orderedIds"/>
+    /// não bater exatamente com o conjunto de Ids existentes (faltando algum, repetido, ou com Id
+    /// desconhecido), rejeita com erro em vez de aplicar uma reordenação parcial/inconsistente.
+    /// </summary>
+    public static (bool Ok, string? Error, IReadOnlyList<PlaylistLaudaRecord> Laudas) ReorderLaudas(
+        string rootFolder,
+        string programId,
+        string editionId,
+        IReadOnlyList<string> orderedIds)
+    {
+        var (resolveOk, resolveError, editionFolder) = ResolveEditionFolder(rootFolder, programId, editionId);
+        if (!resolveOk || editionFolder is null)
+        {
+            return (false, resolveError, Array.Empty<PlaylistLaudaRecord>());
+        }
+
+        var (ok, error, manifest) = ReadManifest(editionFolder);
+        if (!ok)
+        {
+            return (false, error, Array.Empty<PlaylistLaudaRecord>());
+        }
+
+        var currentIds = manifest!.Laudas.Select(l => l.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var givenIds = orderedIds.ToList();
+        if (givenIds.Count != currentIds.Count || !givenIds.All(id => currentIds.Contains(id)) || givenIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != givenIds.Count)
+        {
+            return (false, "a lista de Laudas enviada para reordenar não bate com as Laudas existentes dessa Edição.", Array.Empty<PlaylistLaudaRecord>());
+        }
+
+        var byId = manifest.Laudas.ToDictionary(l => l.Id, l => l, StringComparer.OrdinalIgnoreCase);
+        var reordered = new List<PlaylistLaudaDto>();
+        for (var i = 0; i < givenIds.Count; i++)
+        {
+            reordered.Add(byId[givenIds[i]] with { Order = i + 1 });
+        }
+        var updatedManifest = manifest with { Laudas = reordered };
+
+        var writeError = WriteManifest(editionFolder, updatedManifest);
+        return writeError is not null
+            ? (false, writeError, Array.Empty<PlaylistLaudaRecord>())
+            : (true, null, reordered.OrderBy(l => l.Order).Select(ToRecord).ToList());
     }
 
     /// <summary>
@@ -519,7 +642,7 @@ public static class PlaylistFileStore
         return candidate;
     }
 
-    private sealed record ProgramEntryDto(string Id, string Name, string FolderName);
+    private sealed record ProgramEntryDto(string Id, string Name, string FolderName, string? DefaultBackgroundArtId = null);
 
     private sealed record ProgramsIndexDto(List<ProgramEntryDto> Programs);
 

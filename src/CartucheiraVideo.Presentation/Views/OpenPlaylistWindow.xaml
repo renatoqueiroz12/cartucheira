@@ -1,0 +1,56 @@
+<Window x:Class="CartucheiraVideo.Presentation.Views.OpenPlaylistWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Abrir Playlist"
+        Height="440" Width="420"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize">
+
+    <!--
+        Sprint 3 (2026-11-16, pedido do usuário "tem que ter lá a opção abrir o dia") — ver
+        comentário de classe no code-behind pro porquê deste diálogo não ter ViewModel dedicado
+        (mesmo "mínimo necessário" do RenameBankWindow/AdminAuthWindow). Dois passos na mesma
+        janela: ProgramsPanel (escolher o Programa) depois EditionsPanel (escolher a Data daquele
+        Programa) — mesmo fluxo de dois passos já usado pela dashboard web (index.html:
+        programs-section → editions-section).
+    -->
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Escolha um Programa e uma Data pra carregar a Playlist real num Deck."
+                   Foreground="{DynamicResource Brush.TextLow}" FontSize="{StaticResource FontSize.Body}"
+                   TextWrapping="Wrap" Margin="0,0,0,12" />
+
+        <Grid Grid.Row="1">
+            <StackPanel x:Name="ProgramsPanel">
+                <TextBlock Text="Programas" FontWeight="Bold" Margin="0,0,0,8" />
+                <ListBox x:Name="ProgramsListBox" Height="250" MouseDoubleClick="ProgramsListBox_MouseDoubleClick" />
+            </StackPanel>
+
+            <StackPanel x:Name="EditionsPanel" Visibility="Collapsed">
+                <Button Content="&#8592; Voltar pros Programas" HorizontalAlignment="Left" Padding="4" Margin="0,0,0,8" Click="BackToProgramsButton_Click" />
+                <TextBlock x:Name="EditionsTitle" Text="Datas" FontWeight="Bold" Margin="0,0,0,8" />
+                <ListBox x:Name="EditionsListBox" Height="210" MouseDoubleClick="EditionsListBox_MouseDoubleClick" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" x:Name="ErrorText" Foreground="{DynamicResource Brush.Red}" FontSize="{StaticResource FontSize.Small}"
+                       TextWrapping="Wrap" VerticalAlignment="Center" Visibility="Collapsed" Margin="0,0,8,0" />
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Cancelar" Width="90" Padding="8" Margin="0,0,8,0" Click="CancelButton_Click" />
+                <Button x:Name="PrimaryActionButton" Content="Avançar" Width="90" Padding="8" Click="PrimaryActionButton_Click" IsDefault="True" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

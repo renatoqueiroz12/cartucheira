@@ -213,11 +213,10 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"editionId\" são obrigatórios.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.Title))
-        {
-            return PlaylistDashboardResponse.PlainTextError(400, "\"title\" não pode ser vazio.");
-        }
-
+        // Pedido do usuário (2026-11-15): nenhum campo da Lauda é obrigatório pra salvar, inclusive
+        // o Título — "programId"/"editionId" continuam exigidos porque são amarração interna (qual
+        // Edição recebe a Lauda), nunca algo que o produtor digita. Ver PlaylistFileStore.CreateLauda
+        // pro "(sem título)" só de exibição quando o Título vem vazio.
         var (ok, error, lauda) = PlaylistFileStore.CreateLauda(
             rootFolder,
             request.ProgramId,

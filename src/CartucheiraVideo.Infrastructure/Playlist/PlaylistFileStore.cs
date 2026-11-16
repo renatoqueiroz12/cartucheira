@@ -230,7 +230,7 @@ public static class PlaylistFileStore
         string rootFolder,
         string programId,
         string editionId,
-        string title,
+        string? title,
         string? type,
         Dictionary<string, string>? gcFields,
         string? tpText,
@@ -238,10 +238,13 @@ public static class PlaylistFileStore
         string? durationPlanned,
         string? notes)
     {
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            return (false, "título da Lauda não pode ser vazio.", null);
-        }
+        // Pedido do usuário (2026-11-15): nenhum campo da Lauda, inclusive o Título, é obrigatório
+        // de verdade pra salvar — qualquer campo em branco (Tipo, GC, TP, OFF, Duração, Observações
+        // e, desde esta mudança, também o Título) é um caso válido, não um erro. Uma Lauda sem
+        // Título nenhum ainda precisa de algo pra mostrar na lista — "(sem título)" só na exibição,
+        // nunca grava um valor inventado no lugar do que o produtor realmente digitou (ou não
+        // digitou).
+        var resolvedTitle = string.IsNullOrWhiteSpace(title) ? "(sem título)" : title.Trim();
 
         var (resolveOk, resolveError, editionFolder) = ResolveEditionFolder(rootFolder, programId, editionId);
         if (!resolveOk || editionFolder is null)
@@ -259,7 +262,7 @@ public static class PlaylistFileStore
         var entry = new PlaylistLaudaDto(
             Guid.NewGuid().ToString(),
             nextOrder,
-            title.Trim(),
+            resolvedTitle,
             (type ?? string.Empty).Trim(),
             string.Empty,
             gcFields ?? new Dictionary<string, string>(),

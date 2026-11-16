@@ -1,0 +1,64 @@
+<Window x:Class="CartucheiraVideo.Presentation.Views.DashboardUserWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:CartucheiraVideo.Presentation.Converters"
+        Title="{Binding Title}"
+        Height="480" Width="420"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{DynamicResource Brush.Bg1}"
+        Foreground="{DynamicResource Brush.TextHi}">
+
+    <!--
+        Sprint 5 (2026-11-16, login/permissão por Programa da dashboard de Playlist) — mesmo padrão
+        de diálogo pontual sem ViewModel dedicado... exceto que ESTE ganhou um ViewModel
+        (DashboardUserEditViewModel) porque precisa de uma lista (checklist de Programas) com
+        binding de verdade, não só 1-2 campos simples como RenameBankWindow/OpenPlaylistWindow.
+        Background/Foreground explícitos no Window DESDE O INÍCIO (lição da v1.0.88: o estilo
+        implícito de Theme.xaml não pinta o fundo de verdade nesta base) — nunca repete o mesmo bug.
+    -->
+    <Window.Resources>
+        <conv:StringToVisibilityConverter x:Key="StringToVis" />
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="Usuário" Foreground="{DynamicResource Brush.TextLow}" FontSize="{StaticResource FontSize.Body}" Margin="0,0,0,6" />
+        <TextBox x:Name="UsernameTextBox" Grid.Row="1" Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding IsNewUser}" Margin="0,0,0,14" />
+
+        <TextBlock Grid.Row="2" x:Name="PasswordLabel" Foreground="{DynamicResource Brush.TextLow}" FontSize="{StaticResource FontSize.Body}" Margin="0,0,0,6" />
+        <PasswordBox x:Name="PasswordBox" Grid.Row="3" PasswordChanged="PasswordBox_PasswordChanged" Margin="0,0,0,14" />
+
+        <CheckBox Grid.Row="4" Content="Administrador (acesso total, inclusive gerenciar usuários)" IsChecked="{Binding IsAdmin}" Margin="0,0,0,14" />
+
+        <TextBlock Grid.Row="5" Text="Programas liberados (ignorado se Administrador — Admin sempre vê/edita todos)"
+                   Foreground="{DynamicResource Brush.TextLow}" FontSize="{StaticResource FontSize.Small}" TextWrapping="Wrap" Margin="0,0,0,8" />
+        <ListBox Grid.Row="6" ItemsSource="{Binding ProgramOptions}" Margin="0,0,0,10">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <CheckBox Content="{Binding Name}" IsChecked="{Binding IsSelected}" Margin="2" />
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <TextBlock Grid.Row="7" Text="{Binding ErrorMessage}" Foreground="{DynamicResource Brush.Red}" FontSize="{StaticResource FontSize.Small}"
+                   TextWrapping="Wrap" Margin="0,0,0,8"
+                   Visibility="{Binding ErrorMessage, Converter={StaticResource StringToVis}}" />
+
+        <StackPanel Grid.Row="8" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Cancelar" Width="90" Padding="8" Margin="0,0,8,0" Click="Cancel_Click" />
+            <Button Content="Salvar" Width="90" Padding="8" Click="Save_Click" IsDefault="True" />
+        </StackPanel>
+    </Grid>
+</Window>

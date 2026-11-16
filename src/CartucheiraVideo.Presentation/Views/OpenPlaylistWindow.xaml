@@ -4,7 +4,9 @@
         Title="Abrir Playlist"
         Height="440" Width="420"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize">
+        ResizeMode="NoResize"
+        Background="{DynamicResource Brush.Bg1}"
+        Foreground="{DynamicResource Brush.TextHi}">
 
     <!--
         Sprint 3 (2026-11-16, pedido do usuário "tem que ter lá a opção abrir o dia") — ver

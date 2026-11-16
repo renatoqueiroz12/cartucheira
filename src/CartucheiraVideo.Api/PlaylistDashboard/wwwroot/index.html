@@ -7,92 +7,190 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-<header>
-  <h1>Cartucheira — Playlist</h1>
-  <p class="subtitle">Organização de materiais por Programa e Data — Sprint 1 (ainda sem ingest de vídeo nem GC).</p>
-</header>
 
-<main>
-  <section id="programs-section">
-    <h2>Programas</h2>
-    <form id="new-program-form">
-      <input type="text" id="new-program-name" placeholder="Nome do Programa (ex.: Jornal da Tarde)" required />
-      <select id="new-program-background-art">
-        <option value="">Sem fundo padrão</option>
-      </select>
-      <button type="submit">Criar Programa</button>
+<!-- Tela de login — Sprint 6 (2026-11-16): refeita pra parecer um sisteminha de verdade, mesma
+     identidade visual escura da Cartucheira desktop (ver styles.css). -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="login-brand-mark">▶</span>
+      <div class="login-brand-text">
+        <div class="login-brand-title">Cartucheira</div>
+        <div class="login-brand-subtitle">Dashboard de Playlist</div>
+      </div>
+    </div>
+    <form id="login-form">
+      <label for="login-username">Usuário</label>
+      <input type="text" id="login-username" autocomplete="username" required />
+      <label for="login-password">Senha</label>
+      <input type="password" id="login-password" autocomplete="current-password" required />
+      <button type="submit">Entrar</button>
     </form>
-    <ul id="programs-list" class="list"></ul>
-  </section>
+    <p id="login-error" class="error hidden"></p>
+    <p class="login-hint">Peça usuário e senha a um Administrador da Cartucheira.</p>
+  </div>
+</div>
 
-  <section id="editions-section" class="hidden">
-    <h2>Playlist de <span id="selected-program-name"></span></h2>
-    <button id="back-button" type="button">&larr; Voltar pros Programas</button>
-    <form id="new-edition-form">
-      <input type="date" id="new-edition-date" required />
-      <button type="submit">Criar Playlist para esta Data</button>
-    </form>
-    <ul id="editions-list" class="list"></ul>
-    <p class="hint">Clique numa Data pra abrir o Espelho (a lista ordenada de Laudas daquela Edição).</p>
-  </section>
+<!-- Casca do sistema — menu lateral fixo + conteúdo (Sprint 6). -->
+<div id="app-shell" class="app-shell hidden">
+  <nav class="sidebar">
+    <div class="sidebar-brand">
+      <span class="sidebar-brand-mark">▶</span>
+      <div class="sidebar-brand-text">
+        <div class="sidebar-brand-title">Cartucheira</div>
+        <div class="sidebar-brand-subtitle">Playlist</div>
+      </div>
+    </div>
 
-  <section id="espelho-section" class="hidden">
-    <h2>Espelho de <span id="selected-program-name-2"></span> — <span id="selected-edition-date"></span></h2>
-    <button id="back-to-editions-button" type="button">&larr; Voltar pras Datas</button>
+    <div class="sidebar-nav">
+      <button type="button" class="nav-item active" data-view="programs-view">
+        <span class="nav-item-icon">▦</span> Programas
+      </button>
+      <button type="button" class="nav-item admin-only hidden" data-view="users-view">
+        <span class="nav-item-icon">◉</span> Usuários
+      </button>
+    </div>
 
-    <button id="toggle-new-lauda-button" type="button">+ Nova Lauda</button>
+    <div class="sidebar-spacer"></div>
 
-    <form id="new-lauda-form" class="hidden">
-      <h3 id="lauda-form-title">Nova Lauda</h3>
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <span id="session-username" class="sidebar-username"></span>
+        <span id="session-role" class="sidebar-role"></span>
+      </div>
+      <button id="logout-button" type="button" class="sidebar-logout">Sair</button>
+    </div>
+  </nav>
+
+  <main class="main">
+    <header class="main-topbar">
+      <h1 id="main-title">Programas</h1>
+      <p id="main-subtitle" class="main-subtitle">Organização de materiais por Programa e Data.</p>
+    </header>
+
+    <div class="main-body">
+      <section id="programs-view" class="view">
+        <section id="programs-section">
+          <form id="new-program-form" class="admin-only hidden">
+            <input type="text" id="new-program-name" placeholder="Nome do Programa (ex.: Jornal da Tarde)" required />
+            <select id="new-program-background-art">
+              <option value="">Sem fundo padrão</option>
+            </select>
+            <button type="submit">Criar Programa</button>
+          </form>
+          <p id="not-admin-hint" class="hint hidden">Só Administradores criam Programas novos — peça pra um Admin criar e liberar o acesso pra você.</p>
+          <ul id="programs-list" class="list"></ul>
+        </section>
+
+        <section id="editions-section" class="hidden">
+          <button id="back-button" type="button" class="link-button">&larr; Voltar pros Programas</button>
+          <h2>Playlist de <span id="selected-program-name"></span></h2>
+          <form id="new-edition-form">
+            <input type="date" id="new-edition-date" required />
+            <button type="submit">Criar Playlist para esta Data</button>
+          </form>
+          <ul id="editions-list" class="list"></ul>
+          <p class="hint">Clique numa Data pra abrir o Espelho (a lista ordenada de Laudas daquela Edição).</p>
+        </section>
+
+        <section id="espelho-section" class="hidden">
+          <button id="back-to-editions-button" type="button" class="link-button">&larr; Voltar pras Datas</button>
+          <h2>Espelho de <span id="selected-program-name-2"></span> — <span id="selected-edition-date"></span></h2>
+
+          <button id="toggle-new-lauda-button" type="button">+ Nova Lauda</button>
+
+          <form id="new-lauda-form" class="hidden">
+            <h3 id="lauda-form-title">Nova Lauda</h3>
+            <div class="field-row">
+              <label for="new-lauda-title">Título</label>
+              <input type="text" id="new-lauda-title" placeholder="Ex.: Abertura, Matéria sobre trânsito, Entrevista prefeito (opcional)" />
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-type">Tipo</label>
+              <input type="text" id="new-lauda-type" placeholder="Texto livre — ex.: VT, Nota, Entrevista, Passagem, Abertura, Encerramento, Link ao vivo" />
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-duration">Duração prevista</label>
+              <input type="text" id="new-lauda-duration" placeholder="Ex.: 02:30" />
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-gc">GC (gerador de caracteres)</label>
+              <textarea id="new-lauda-gc" rows="3" placeholder="Um campo por linha, formato Nome: Valor&#10;Ex.:&#10;Nome: João Silva&#10;Cargo: Secretário de Trânsito"></textarea>
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-tp">TP (teleprompter)</label>
+              <textarea id="new-lauda-tp" rows="3" placeholder="Texto de teleprompter desta Lauda"></textarea>
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-off">OFF (locução)</label>
+              <textarea id="new-lauda-off" rows="3" placeholder="Texto de locução (OFF) desta Lauda"></textarea>
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-notes">Observações de produção</label>
+              <textarea id="new-lauda-notes" rows="2" placeholder="Orientações pra quem for operar esta Lauda"></textarea>
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-vt">VT (vídeo) — opcional</label>
+              <input type="file" id="new-lauda-vt" accept="video/*" />
+            </div>
+            <div class="field-row">
+              <label for="new-lauda-images">Imagens de apoio — opcional (pode escolher várias)</label>
+              <input type="file" id="new-lauda-images" accept="image/*" multiple />
+            </div>
+            <div class="field-row-buttons">
+              <button type="submit" id="lauda-form-submit">Criar Lauda</button>
+              <button type="button" id="lauda-form-cancel" class="secondary">Cancelar</button>
+            </div>
+            <p id="lauda-upload-status" class="hint hidden"></p>
+          </form>
+
+          <ul id="laudas-list" class="list laudas-list"></ul>
+          <p class="hint">Clique numa Lauda pra abrir e editar. Arraste pelas setas (⠿) pra reordenar. Sem validação real de VT/imagens ainda (duração/resolução/codec ficam em branco até uma sprint futura).</p>
+        </section>
+      </section>
+
+      <section id="users-view" class="view hidden">
+        <div class="view-toolbar">
+          <button id="add-user-button" type="button">+ Novo usuário</button>
+        </div>
+        <ul id="users-list" class="list users-list"></ul>
+        <p id="users-error" class="error hidden"></p>
+      </section>
+
+      <p id="error-message" class="error hidden"></p>
+    </div>
+  </main>
+</div>
+
+<!-- Modal de usuário (criar/editar) — Sprint 6, gestão de Usuários direto pela própria dashboard web (Admin). -->
+<div id="user-modal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <h2 id="user-modal-title">Novo usuário</h2>
+    <form id="user-form">
       <div class="field-row">
-        <label for="new-lauda-title">Título</label>
-        <input type="text" id="new-lauda-title" placeholder="Ex.: Abertura, Matéria sobre trânsito, Entrevista prefeito (opcional)" />
+        <label for="user-username-input">Usuário</label>
+        <input type="text" id="user-username-input" required />
+      </div>
+      <div class="field-row" id="user-password-row">
+        <label for="user-password-input" id="user-password-label">Senha</label>
+        <input type="password" id="user-password-input" placeholder="mínimo 4 caracteres" />
       </div>
       <div class="field-row">
-        <label for="new-lauda-type">Tipo</label>
-        <input type="text" id="new-lauda-type" placeholder="Texto livre — ex.: VT, Nota, Entrevista, Passagem, Abertura, Encerramento, Link ao vivo" />
+        <label class="checkbox-label"><input type="checkbox" id="user-is-admin-input" /> Administrador (acesso a todos os Programas)</label>
       </div>
-      <div class="field-row">
-        <label for="new-lauda-duration">Duração prevista</label>
-        <input type="text" id="new-lauda-duration" placeholder="Ex.: 02:30" />
-      </div>
-      <div class="field-row">
-        <label for="new-lauda-gc">GC (gerador de caracteres)</label>
-        <textarea id="new-lauda-gc" rows="3" placeholder="Um campo por linha, formato Nome: Valor&#10;Ex.:&#10;Nome: João Silva&#10;Cargo: Secretário de Trânsito"></textarea>
-      </div>
-      <div class="field-row">
-        <label for="new-lauda-tp">TP (teleprompter)</label>
-        <textarea id="new-lauda-tp" rows="3" placeholder="Texto de teleprompter desta Lauda"></textarea>
-      </div>
-      <div class="field-row">
-        <label for="new-lauda-off">OFF (locução)</label>
-        <textarea id="new-lauda-off" rows="3" placeholder="Texto de locução (OFF) desta Lauda"></textarea>
-      </div>
-      <div class="field-row">
-        <label for="new-lauda-notes">Observações de produção</label>
-        <textarea id="new-lauda-notes" rows="2" placeholder="Orientações pra quem for operar esta Lauda"></textarea>
-      </div>
-      <div class="field-row">
-        <label for="new-lauda-vt">VT (vídeo) — opcional</label>
-        <input type="file" id="new-lauda-vt" accept="video/*" />
-      </div>
-      <div class="field-row">
-        <label for="new-lauda-images">Imagens de apoio — opcional (pode escolher várias)</label>
-        <input type="file" id="new-lauda-images" accept="image/*" multiple />
+      <div class="field-row" id="user-programs-row">
+        <label>Programas liberados</label>
+        <div id="user-programs-checklist" class="checklist"></div>
       </div>
       <div class="field-row-buttons">
-        <button type="submit" id="lauda-form-submit">Criar Lauda</button>
-        <button type="button" id="lauda-form-cancel" class="secondary">Cancelar</button>
+        <button type="submit">Salvar</button>
+        <button type="button" id="user-remove-button" class="danger hidden">Remover usuário</button>
+        <button type="button" id="user-form-cancel" class="secondary">Cancelar</button>
       </div>
-      <p id="lauda-upload-status" class="hint hidden"></p>
+      <p id="user-form-error" class="error hidden"></p>
     </form>
-
-    <ul id="laudas-list" class="list laudas-list"></ul>
-    <p class="hint">Clique numa Lauda pra abrir e editar. Arraste pelas setas (⠿) pra reordenar. Sem validação real de VT/imagens ainda (duração/resolução/codec ficam em branco até uma sprint futura).</p>
-  </section>
-
-  <p id="error-message" class="error hidden"></p>
-</main>
+  </div>
+</div>
 
 <script src="app.js"></script>
 </body>

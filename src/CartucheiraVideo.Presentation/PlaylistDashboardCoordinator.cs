@@ -18,8 +18,27 @@ namespace CartucheiraVideo.Presentation;
 /// (criar Programa, criar Data, listar os dois); a tradução pra Core entra quando alguma tela WPF da
 /// própria Cartucheira precisar ler a Playlist (Sprint 4, integração com o modo Auto).
 ///
+/// **Login/permissão — Sprint 5 (2026-11-16)**: quem verifica usuário/senha
+/// (<see cref="HandleLogin"/>, via <c>Infrastructure.Playlist.UserStore.VerifyCredentials</c>) e
+/// filtra o que cada usuário pode ver/fazer (<see cref="HasAccessToProgram"/>) é esta classe — o
+/// <c>PlaylistDashboardHost</c> só resolve SE existe uma sessão válida, nunca decide permissão
+/// nenhuma (ver comentário de classe dele). Todo handler ganhou um parâmetro
+/// <c>AuthenticatedDashboardUser user</c> novo, mesmo quando não usa (rota só precisa estar
+/// logada, sem checagem extra) — é o Host quem garante que só chega aqui com sessão válida.
+///
 /// Nunca lança: qualquer exceção ao processar uma rota vira resposta HTTP 500 com a mensagem, sem
 /// derrubar o host nem o programa — mesma defesa de sempre neste projeto.
+///
+/// **Gestão de Usuários pela própria web — Sprint 6 (2026-11-16, pedido do usuário "deixar mais
+/// profissional, com menus")**: até a Sprint 5, só a Cartucheira desktop (Configurações → Playlist)
+/// criava/editava/removia usuários da dashboard — a web só fazia login. A partir desta sprint, a
+/// própria dashboard ganhou um menu lateral com uma tela "Usuários" (só visível pro Admin,
+/// <see cref="HandleListUsers"/>/<see cref="HandleCreateUser"/>/
+/// <see cref="HandleUpdateUserPermissions"/>/<see cref="HandleResetUserPassword"/>/
+/// <see cref="HandleDeleteUser"/>), que chama o MESMO <c>UserStore</c> de sempre — as duas portas de
+/// entrada (desktop e web) continuam escrevendo no mesmo <c>users.json</c>, nenhuma duplica lógica de
+/// validação/proteção contra autoexclusão do último Admin (tudo isso já vive dentro do
+/// <c>UserStore</c>, chamado dos dois lados).
 /// </summary>
 public sealed class PlaylistDashboardCoordinator : IDisposable
 {
@@ -71,17 +90,31 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         var webRoot = Path.Combine(AppContext.BaseDirectory, "PlaylistDashboardWebRoot");
         var host = new PlaylistDashboardHost(settings.DashboardPort, webRoot);
 
-        host.RegisterApiRoute("GET", "/api/playlist/programs", (_, _) => HandleListPrograms(rootFolder));
-        host.RegisterApiRoute("POST", "/api/playlist/programs", (_, body) => HandleCreateProgram(rootFolder, body));
-        host.RegisterApiRoute("GET", "/api/playlist/editions", (query, _) => HandleListEditions(rootFolder, query));
-        host.RegisterApiRoute("POST", "/api/playlist/editions", (_, body) => HandleCreateEdition(rootFolder, body));
-        host.RegisterApiRoute("GET", "/api/playlist/laudas", (query, _) => HandleListLaudas(rootFolder, query));
-        host.RegisterApiRoute("POST", "/api/playlist/laudas", (_, body) => HandleCreateLauda(rootFolder, body));
-        host.RegisterApiRoute("PUT", "/api/playlist/laudas", (_, body) => HandleUpdateLauda(rootFolder, body));
-        host.RegisterApiRoute("PUT", "/api/playlist/laudas/reorder", (_, body) => HandleReorderLaudas(rootFolder, body));
-        host.RegisterApiRoute("GET", "/api/playlist/background-art-presets", (_, _) => HandleListBackgroundArtPresets());
-        host.RegisterUploadRoute("PUT", "/api/playlist/laudas/vt", (query, stream) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Video));
-        host.RegisterUploadRoute("PUT", "/api/playlist/laudas/imagem", (query, stream) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Image));
+        host.RegisterLoginRoute("POST", "/api/auth/login", body => HandleLogin(rootFolder, body));
+        host.RegisterLogoutRoute("POST", "/api/auth/logout");
+        host.RegisterApiRoute("GET", "/api/auth/me", (_, _, user) => HandleMe(user));
+
+        // Sprint 6 (2026-11-16, pedido do usuário "deixar mais profissional, com menus"): gestão de
+        // Usuários agora também pela própria dashboard web (menu "Usuários"), não só pela Cartucheira
+        // desktop — mesmo UserStore, mesmas regras (só Admin chama, 403 pra quem não é, mesmo se a
+        // chamada for forçada sem passar pela UI).
+        host.RegisterApiRoute("GET", "/api/users", (_, _, user) => HandleListUsers(rootFolder, user));
+        host.RegisterApiRoute("POST", "/api/users", (_, body, user) => HandleCreateUser(rootFolder, body, user));
+        host.RegisterApiRoute("PUT", "/api/users", (_, body, user) => HandleUpdateUserPermissions(rootFolder, body, user));
+        host.RegisterApiRoute("PUT", "/api/users/password", (_, body, user) => HandleResetUserPassword(rootFolder, body, user));
+        host.RegisterApiRoute("DELETE", "/api/users", (query, _, user) => HandleDeleteUser(rootFolder, query, user));
+
+        host.RegisterApiRoute("GET", "/api/playlist/programs", (_, _, user) => HandleListPrograms(rootFolder, user));
+        host.RegisterApiRoute("POST", "/api/playlist/programs", (_, body, user) => HandleCreateProgram(rootFolder, body, user));
+        host.RegisterApiRoute("GET", "/api/playlist/editions", (query, _, user) => HandleListEditions(rootFolder, query, user));
+        host.RegisterApiRoute("POST", "/api/playlist/editions", (_, body, user) => HandleCreateEdition(rootFolder, body, user));
+        host.RegisterApiRoute("GET", "/api/playlist/laudas", (query, _, user) => HandleListLaudas(rootFolder, query, user));
+        host.RegisterApiRoute("POST", "/api/playlist/laudas", (_, body, user) => HandleCreateLauda(rootFolder, body, user));
+        host.RegisterApiRoute("PUT", "/api/playlist/laudas", (_, body, user) => HandleUpdateLauda(rootFolder, body, user));
+        host.RegisterApiRoute("PUT", "/api/playlist/laudas/reorder", (_, body, user) => HandleReorderLaudas(rootFolder, body, user));
+        host.RegisterApiRoute("GET", "/api/playlist/background-art-presets", (_, _, _) => HandleListBackgroundArtPresets());
+        host.RegisterUploadRoute("PUT", "/api/playlist/laudas/vt", (query, stream, user) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Video, user));
+        host.RegisterUploadRoute("PUT", "/api/playlist/laudas/imagem", (query, stream, user) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Image, user));
 
         var result = host.Start();
         if (result.Succeeded)
@@ -96,7 +129,43 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         }
     }
 
-    private static PlaylistDashboardResponse HandleListPrograms(string rootFolder)
+    /// <summary>Sprint 5 (2026-11-16) — POST /api/auth/login, única rota pública além do logout. Mensagem genérica de erro de propósito (ver <c>UserStore.VerifyCredentials</c>).</summary>
+    private static PlaylistLoginAttemptResult HandleLogin(string rootFolder, string? body)
+    {
+        LoginRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<LoginRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistLoginAttemptResult.Failure(PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"username\" e \"password\")."));
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return PlaylistLoginAttemptResult.Failure(PlaylistDashboardResponse.PlainTextError(400, "usuário e senha são obrigatórios."));
+        }
+
+        var (ok, error, user) = UserStore.VerifyCredentials(rootFolder, request.Username, request.Password);
+        if (!ok || user is null)
+        {
+            return PlaylistLoginAttemptResult.Failure(PlaylistDashboardResponse.PlainTextError(401, error ?? "usuário ou senha incorretos."));
+        }
+
+        var authenticated = new AuthenticatedDashboardUser(user.Id, user.Username, user.IsAdmin, user.AllowedProgramIds);
+        var response = PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToAuthUserDto(authenticated), JsonOptions));
+        return PlaylistLoginAttemptResult.Success(response, authenticated);
+    }
+
+    /// <summary>Sprint 5 (2026-11-16) — GET /api/auth/me: a própria dashboard (app.js) usa isto pra saber se já está logada (401 = mostra tela de login) e, se logada, se é Admin (mostra/esconde "Criar Programa").</summary>
+    private static PlaylistDashboardResponse HandleMe(AuthenticatedDashboardUser user) =>
+        PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToAuthUserDto(user), JsonOptions));
+
+    private static AuthUserDto ToAuthUserDto(AuthenticatedDashboardUser user) => new(user.Id, user.Username, user.IsAdmin, user.AllowedProgramIds);
+
+    /// <summary>Sprint 5 (2026-11-16) — Admin vê todos; usuário comum só os Programas liberados pra ele (ver <c>UserStore.CreateUser</c>/<c>UpdateUserPermissions</c>, gerenciados em Configurações → Playlist → Usuários da Dashboard).</summary>
+    private static PlaylistDashboardResponse HandleListPrograms(string rootFolder, AuthenticatedDashboardUser user)
     {
         var (ok, error, programs) = PlaylistFileStore.ListPrograms(rootFolder);
         if (!ok)
@@ -104,12 +173,19 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
         }
 
-        var dtos = programs.Select(p => new ProgramDto(p.Id, p.Name)).ToList();
+        var visible = user.IsAdmin ? programs : programs.Where(p => user.AllowedProgramIds.Contains(p.Id, StringComparer.OrdinalIgnoreCase));
+        var dtos = visible.Select(p => new ProgramDto(p.Id, p.Name)).ToList();
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
     }
 
-    private static PlaylistDashboardResponse HandleCreateProgram(string rootFolder, string? body)
+    /// <summary>Sprint 5 (2026-11-16, decisão confirmada com o usuário): só Admin cria Programa novo — usuário comum só cria Data/Lauda DENTRO de Programas que já tem acesso.</summary>
+    private static PlaylistDashboardResponse HandleCreateProgram(string rootFolder, string? body, AuthenticatedDashboardUser user)
     {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores podem criar Programas novos — peça pra um Admin criar e liberar o acesso pra você.");
+        }
+
         CreateProgramRequest? request;
         try
         {
@@ -134,6 +210,143 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new ProgramDto(program.Id, program.Name), JsonOptions), 201);
     }
 
+    /// <summary>Sprint 5 (2026-11-16) — Admin sempre tem acesso; usuário comum só se o Id do Programa estiver na lista liberada pra ele. Usado por toda rota que recebe um <c>programId</c> (Edições/Laudas/upload).</summary>
+    private static bool HasAccessToProgram(AuthenticatedDashboardUser user, string? programId) =>
+        user.IsAdmin || (programId is not null && user.AllowedProgramIds.Contains(programId, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>Sprint 6 (2026-11-16) — GET /api/users: lista os usuários cadastrados (nunca inclui hash/sal de senha — <c>DashboardUserRecord</c> nem os carrega). Só Admin.</summary>
+    private static PlaylistDashboardResponse HandleListUsers(string rootFolder, AuthenticatedDashboardUser user)
+    {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores veem a lista de usuários.");
+        }
+
+        var (ok, error, users) = UserStore.ListUsers(rootFolder);
+        if (!ok)
+        {
+            return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
+        }
+
+        var dtos = users.Select(ToDashboardUserDto).ToList();
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
+    }
+
+    /// <summary>Sprint 6 (2026-11-16) — POST /api/users: cria um usuário novo pela própria dashboard web. Só Admin; validações de nome/senha/"primeiro usuário precisa ser Admin" ficam em <c>UserStore.CreateUser</c>, mesmas de sempre.</summary>
+    private static PlaylistDashboardResponse HandleCreateUser(string rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores criam usuários novos.");
+        }
+
+        CreateUserRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<CreateUserRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"username\" e \"password\" são obrigatórios.");
+        }
+
+        var (ok, error, created) = UserStore.CreateUser(rootFolder, request.Username, request.Password, request.IsAdmin, request.AllowedProgramIds);
+        if (!ok || created is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToDashboardUserDto(created), JsonOptions), 201);
+    }
+
+    /// <summary>Sprint 6 (2026-11-16) — PUT /api/users: troca papel (Admin/Produtor) e, se não-Admin, os Programas liberados. Nunca troca usuário/senha (ver <see cref="HandleResetUserPassword"/>). Proteção contra remover o último Admin já vem de <c>UserStore.UpdateUserPermissions</c>.</summary>
+    private static PlaylistDashboardResponse HandleUpdateUserPermissions(string rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores editam permissões de usuários.");
+        }
+
+        UpdateUserPermissionsRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<UpdateUserPermissionsRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Id))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"id\" é obrigatório.");
+        }
+
+        var (ok, error, updated) = UserStore.UpdateUserPermissions(rootFolder, request.Id, request.IsAdmin, request.AllowedProgramIds);
+        if (!ok || updated is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToDashboardUserDto(updated), JsonOptions));
+    }
+
+    /// <summary>Sprint 6 (2026-11-16) — PUT /api/users/password: define uma senha nova pra um usuário já existente. Rota separada da de permissão (mesmo corpo da UI: o campo "nova senha" do modal é opcional, só chama isto se o Admin preencheu algo).</summary>
+    private static PlaylistDashboardResponse HandleResetUserPassword(string rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores trocam a senha de outro usuário.");
+        }
+
+        ResetPasswordRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<ResetPasswordRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Id) || string.IsNullOrWhiteSpace(request.NewPassword))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"id\" e \"newPassword\" são obrigatórios.");
+        }
+
+        var error = UserStore.ResetPassword(rootFolder, request.Id, request.NewPassword);
+        return error is not null
+            ? PlaylistDashboardResponse.PlainTextError(400, error)
+            : PlaylistDashboardResponse.Json("{}");
+    }
+
+    /// <summary>Sprint 6 (2026-11-16) — DELETE /api/users?id=...: remove um usuário. Id vem da query (não do corpo), mesmo padrão já usado por outras rotas desta classe que recebem só um identificador. Proteção contra remover o último Admin já vem de <c>UserStore.DeleteUser</c>.</summary>
+    private static PlaylistDashboardResponse HandleDeleteUser(string rootFolder, string? queryString, AuthenticatedDashboardUser user)
+    {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores removem usuários.");
+        }
+
+        var id = ParseQueryValue(queryString, "id");
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "parâmetro \"id\" é obrigatório.");
+        }
+
+        var error = UserStore.DeleteUser(rootFolder, id);
+        return error is not null
+            ? PlaylistDashboardResponse.PlainTextError(400, error)
+            : PlaylistDashboardResponse.Json("{}");
+    }
+
+    private static DashboardUserDto ToDashboardUserDto(DashboardUserRecord user) => new(user.Id, user.Username, user.IsAdmin, user.AllowedProgramIds);
+
     /// <summary>Sprint 3 (2026-11-16) — presets de Arte de Fundo já cadastrados em Configurações → Arte de Fundo, pro &lt;select&gt; do formulário "Novo Programa" na dashboard.</summary>
     private PlaylistDashboardResponse HandleListBackgroundArtPresets()
     {
@@ -141,12 +354,17 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
     }
 
-    private static PlaylistDashboardResponse HandleListEditions(string rootFolder, string? queryString)
+    private static PlaylistDashboardResponse HandleListEditions(string rootFolder, string? queryString, AuthenticatedDashboardUser user)
     {
         var programId = ParseQueryValue(queryString, "programId");
         if (string.IsNullOrWhiteSpace(programId))
         {
             return PlaylistDashboardResponse.PlainTextError(400, "parâmetro \"programId\" é obrigatório.");
+        }
+
+        if (!HasAccessToProgram(user, programId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
         var (ok, error, editions) = PlaylistFileStore.ListEditions(rootFolder, programId);
@@ -159,7 +377,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
     }
 
-    private static PlaylistDashboardResponse HandleCreateEdition(string rootFolder, string? body)
+    private static PlaylistDashboardResponse HandleCreateEdition(string rootFolder, string? body, AuthenticatedDashboardUser user)
     {
         CreateEditionRequest? request;
         try
@@ -174,6 +392,11 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         if (request is null || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.Date))
         {
             return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"date\" são obrigatórios.");
+        }
+
+        if (!HasAccessToProgram(user, request.ProgramId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
         if (!DateOnly.TryParse(request.Date, out var date))
@@ -197,13 +420,18 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     /// <c>PlaylistFileStore.ResolveEditionFolder</c>), mesmo padrão de parâmetros já usado por
     /// <see cref="HandleListEditions"/>.
     /// </summary>
-    private static PlaylistDashboardResponse HandleListLaudas(string rootFolder, string? queryString)
+    private static PlaylistDashboardResponse HandleListLaudas(string rootFolder, string? queryString, AuthenticatedDashboardUser user)
     {
         var programId = ParseQueryValue(queryString, "programId");
         var editionId = ParseQueryValue(queryString, "editionId");
         if (string.IsNullOrWhiteSpace(programId) || string.IsNullOrWhiteSpace(editionId))
         {
             return PlaylistDashboardResponse.PlainTextError(400, "parâmetros \"programId\" e \"editionId\" são obrigatórios.");
+        }
+
+        if (!HasAccessToProgram(user, programId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
         var (ok, error, laudas) = PlaylistFileStore.ListLaudas(rootFolder, programId, editionId);
@@ -217,7 +445,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     }
 
     /// <summary>Sprint 2 (2026-11-15) — cria uma Lauda nova (só metadados; VT/Imagens entram depois, via <see cref="HandleUploadFile"/>, já com o Id devolvido aqui).</summary>
-    private static PlaylistDashboardResponse HandleCreateLauda(string rootFolder, string? body)
+    private static PlaylistDashboardResponse HandleCreateLauda(string rootFolder, string? body, AuthenticatedDashboardUser user)
     {
         CreateLaudaRequest? request;
         try
@@ -232,6 +460,11 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         if (request is null || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.EditionId))
         {
             return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"editionId\" são obrigatórios.");
+        }
+
+        if (!HasAccessToProgram(user, request.ProgramId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
         // Pedido do usuário (2026-11-15): nenhum campo da Lauda é obrigatório pra salvar, inclusive
@@ -259,7 +492,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     }
 
     /// <summary>Sprint 3 (2026-11-16) — edita os campos de metadado de uma Lauda já existente (pedido do usuário "poder abrir cada lauda e poder editar ela e salvar"). VT/Imagens não mudam por aqui, ver <see cref="HandleUploadFile"/>.</summary>
-    private static PlaylistDashboardResponse HandleUpdateLauda(string rootFolder, string? body)
+    private static PlaylistDashboardResponse HandleUpdateLauda(string rootFolder, string? body, AuthenticatedDashboardUser user)
     {
         UpdateLaudaRequest? request;
         try
@@ -274,6 +507,11 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         if (request is null || string.IsNullOrWhiteSpace(request.LaudaId) || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.EditionId))
         {
             return PlaylistDashboardResponse.PlainTextError(400, "\"laudaId\", \"programId\" e \"editionId\" são obrigatórios.");
+        }
+
+        if (!HasAccessToProgram(user, request.ProgramId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
         var (ok, error, lauda) = PlaylistFileStore.UpdateLauda(
@@ -298,7 +536,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     }
 
     /// <summary>Sprint 3 (2026-11-16) — reordena as Laudas do Espelho conforme a sequência arrastada na dashboard (pedido do usuário "poder mover ela para cima e para baixo").</summary>
-    private static PlaylistDashboardResponse HandleReorderLaudas(string rootFolder, string? body)
+    private static PlaylistDashboardResponse HandleReorderLaudas(string rootFolder, string? body, AuthenticatedDashboardUser user)
     {
         ReorderLaudasRequest? request;
         try
@@ -313,6 +551,11 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         if (request is null || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.EditionId) || request.OrderedIds is null)
         {
             return PlaylistDashboardResponse.PlainTextError(400, "\"programId\", \"editionId\" e \"orderedIds\" são obrigatórios.");
+        }
+
+        if (!HasAccessToProgram(user, request.ProgramId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
         var (ok, error, laudas) = PlaylistFileStore.ReorderLaudas(rootFolder, request.ProgramId, request.EditionId, request.OrderedIds);
@@ -332,7 +575,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     /// <c>filename</c> (nome original do arquivo, só pra preservar a extensão — o nome final em disco
     /// pode ficar diferente se já existir um igual, ver <c>PlaylistFileStore.SaveUploadedFile</c>).
     /// </summary>
-    private static PlaylistDashboardResponse HandleUploadFile(string rootFolder, string? queryString, Stream requestBodyStream, PlaylistUploadKind kind)
+    private static PlaylistDashboardResponse HandleUploadFile(string rootFolder, string? queryString, Stream requestBodyStream, PlaylistUploadKind kind, AuthenticatedDashboardUser user)
     {
         var programId = ParseQueryValue(queryString, "programId");
         var editionId = ParseQueryValue(queryString, "editionId");
@@ -342,6 +585,11 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         if (string.IsNullOrWhiteSpace(programId) || string.IsNullOrWhiteSpace(editionId) || string.IsNullOrWhiteSpace(laudaId))
         {
             return PlaylistDashboardResponse.PlainTextError(400, "parâmetros \"programId\", \"editionId\" e \"laudaId\" são obrigatórios.");
+        }
+
+        if (!HasAccessToProgram(user, programId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
         var (ok, error, savedFileName) = PlaylistFileStore.SaveUploadedFile(rootFolder, programId, editionId, laudaId, kind, fileName, requestBodyStream);
@@ -447,4 +695,18 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         string? Notes);
 
     private sealed record UploadResultDto(string FileName);
+
+    private sealed record LoginRequest(string? Username, string? Password);
+
+    /// <summary>Sprint 5 (2026-11-16) — devolvido tanto por <see cref="HandleLogin"/> quanto por <see cref="HandleMe"/>, mesmo formato pras duas respostas.</summary>
+    private sealed record AuthUserDto(string Id, string Username, bool IsAdmin, IReadOnlyList<string> AllowedProgramIds);
+
+    /// <summary>Sprint 6 (2026-11-16) — formato de um usuário da dashboard devolvido pra tela "Usuários" (web). Nunca inclui hash/sal de senha — <c>UserStore.DashboardUserRecord</c> nem os carrega pra fora da Infrastructure.</summary>
+    private sealed record DashboardUserDto(string Id, string Username, bool IsAdmin, IReadOnlyList<string> AllowedProgramIds);
+
+    private sealed record CreateUserRequest(string? Username, string? Password, bool IsAdmin, List<string>? AllowedProgramIds);
+
+    private sealed record UpdateUserPermissionsRequest(string? Id, bool IsAdmin, List<string>? AllowedProgramIds);
+
+    private sealed record ResetPasswordRequest(string? Id, string? NewPassword);
 }

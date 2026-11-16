@@ -1,5 +1,27 @@
-// Cartucheira — Playlist dashboard (Sprint 1). Só JS puro, sem framework/build — ver comentário de
+// Cartucheira — Playlist dashboard (Sprint 1, login desde a Sprint 5, menu lateral + gestão de
+// Usuários pela própria web desde a Sprint 6). Só JS puro, sem framework/build — ver comentário de
 // classe em PlaylistDashboardHost.cs pro porquê (projeto não usa Node/npm em lugar nenhum).
+
+const loginScreen = document.getElementById("login-screen");
+const appShell = document.getElementById("app-shell");
+const sessionUsername = document.getElementById("session-username");
+const sessionRole = document.getElementById("session-role");
+const loginForm = document.getElementById("login-form");
+const loginError = document.getElementById("login-error");
+const logoutButton = document.getElementById("logout-button");
+const newProgramForm = document.getElementById("new-program-form");
+const notAdminHint = document.getElementById("not-admin-hint");
+
+const mainTitle = document.getElementById("main-title");
+const mainSubtitle = document.getElementById("main-subtitle");
+const navItems = Array.from(document.querySelectorAll(".nav-item"));
+const views = Array.from(document.querySelectorAll(".view"));
+
+// Sprint 6 (2026-11-16) — título/subtítulo do topo por view, pra mudar junto com o menu lateral.
+const VIEW_META = {
+  "programs-view": { title: "Programas", subtitle: "Organização de materiais por Programa e Data." },
+  "users-view": { title: "Usuários", subtitle: "Quem acessa a dashboard e quais Programas cada um vê/edita." },
+};
 
 const programsSection = document.getElementById("programs-section");
 const editionsSection = document.getElementById("editions-section");
@@ -18,9 +40,31 @@ const laudaFormTitle = document.getElementById("lauda-form-title");
 const laudaFormSubmit = document.getElementById("lauda-form-submit");
 const newProgramBackgroundArtSelect = document.getElementById("new-program-background-art");
 
+// Sprint 6 — tela de Usuários (Admin).
+const usersList = document.getElementById("users-list");
+const usersError = document.getElementById("users-error");
+const addUserButton = document.getElementById("add-user-button");
+const userModal = document.getElementById("user-modal");
+const userModalTitle = document.getElementById("user-modal-title");
+const userForm = document.getElementById("user-form");
+const userUsernameInput = document.getElementById("user-username-input");
+const userPasswordInput = document.getElementById("user-password-input");
+const userPasswordLabel = document.getElementById("user-password-label");
+const userIsAdminInput = document.getElementById("user-is-admin-input");
+const userProgramsRow = document.getElementById("user-programs-row");
+const userProgramsChecklist = document.getElementById("user-programs-checklist");
+const userFormError = document.getElementById("user-form-error");
+const userFormCancel = document.getElementById("user-form-cancel");
+const userRemoveButton = document.getElementById("user-remove-button");
+
 let selectedProgramId = null;
 let selectedProgramName_ = null;
 let selectedEditionId = null;
+
+// Sprint 5 (2026-11-16) — usuário autenticado da sessão atual (ver /api/auth/me), null enquanto
+// deslogado. Só guarda o que a UI precisa decidir (isAdmin pra mostrar/esconder "Criar Programa"/
+// menu "Usuários").
+let currentUser = null;
 
 // Sprint 3 (2026-11-16): cache da última lista de Laudas carregada — usado pra calcular a nova
 // ordem ao arrastar-e-soltar (reorderLaudas) e pra achar os dados completos de uma Lauda ao
@@ -33,6 +77,12 @@ let editingLaudaId = null;
 // Id da Lauda sendo arrastada no momento (drag-and-drop nativo HTML5) — ver renderLaudas.
 let draggedLaudaId = null;
 
+// Sprint 6 (2026-11-16) — cache dos Programas (pra montar o checklist do modal de usuário e pra
+// mostrar o NOME dos Programas liberados na lista de Usuários, não só o Id cru) e do usuário sendo
+// editado no modal (null = modal em modo "Novo usuário").
+let currentPrograms = [];
+let editingUserId = null;
+
 function showError(message) {
   errorMessage.textContent = message;
   errorMessage.classList.remove("hidden");
@@ -43,8 +93,19 @@ function clearError() {
   errorMessage.textContent = "";
 }
 
+// Sprint 5 (2026-11-16): sessão expirada (ou nunca logada) — qualquer chamada de API devolvendo
+// 401 cai aqui, não só o carregamento inicial. Mostra a tela de login de novo em vez de deixar a
+// dashboard num estado quebrado tentando usar dados que não vêm mais.
+function handleUnauthorized() {
+  showLoginSection();
+  throw new Error("sessão expirada — faça login de novo.");
+}
+
 async function apiGet(path) {
   const response = await fetch(path);
+  if (response.status === 401) {
+    return handleUnauthorized();
+  }
   if (!response.ok) {
     throw new Error(`Falha ao carregar (${response.status}).`);
   }
@@ -57,6 +118,9 @@ async function apiPost(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (response.status === 401) {
+    return handleUnauthorized();
+  }
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Falha ao salvar (${response.status}).`);
@@ -70,9 +134,26 @@ async function apiPut(path, body) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (response.status === 401) {
+    return handleUnauthorized();
+  }
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Falha ao salvar (${response.status}).`);
+  }
+  return response.json();
+}
+
+/// Sprint 6 (2026-11-16) — igual a apiPost/apiPut, só que pra DELETE (sem corpo, usado em
+/// HandleDeleteUser do lado do servidor, que lê o Id da query string em vez do corpo).
+async function apiDelete(path) {
+  const response = await fetch(path, { method: "DELETE" });
+  if (response.status === 401) {
+    return handleUnauthorized();
+  }
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Falha ao remover (${response.status}).`);
   }
   return response.json();
 }
@@ -103,6 +184,7 @@ async function loadPrograms() {
   clearError();
   try {
     const programs = await apiGet("/api/playlist/programs");
+    currentPrograms = programs;
     programsList.innerHTML = "";
     programs.forEach((program) => {
       const item = document.createElement("li");
@@ -329,12 +411,111 @@ function closeLaudaForm() {
 
 async function uploadFile(path, file) {
   const response = await fetch(path, { method: "PUT", body: file });
+  if (response.status === 401) {
+    return handleUnauthorized();
+  }
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Falha ao enviar arquivo (${response.status}).`);
   }
   return response.json();
 }
+
+// Sprint 5 (2026-11-16) — login/sessão. showLoginSection/showAppContent controlam qual tela
+// aparece; checkAuthAndInit roda uma vez ao carregar a página E de novo depois de um login
+// bem-sucedido (ver login-form abaixo).
+
+function showLoginSection() {
+  currentUser = null;
+  appShell.classList.add("hidden");
+  loginScreen.classList.remove("hidden");
+}
+
+/// Sprint 6 (2026-11-16) — troca de "view" dentro da casca (Programas/Usuários), espelhando o item
+/// clicado do menu lateral no título do topo. Não recarrega dados sozinho — quem chama decide o que
+/// carregar (ver os listeners de nav-item e checkAuthAndInit).
+function showView(viewId) {
+  views.forEach((view) => view.classList.toggle("hidden", view.id !== viewId));
+  navItems.forEach((item) => item.classList.toggle("active", item.dataset.view === viewId));
+  const meta = VIEW_META[viewId];
+  if (meta) {
+    mainTitle.textContent = meta.title;
+    mainSubtitle.textContent = meta.subtitle;
+  }
+}
+
+function showAppContent() {
+  loginScreen.classList.add("hidden");
+  appShell.classList.remove("hidden");
+  sessionUsername.textContent = currentUser.username;
+  sessionRole.textContent = currentUser.isAdmin ? "Administrador" : "Produtor";
+
+  // Pedido confirmado com o usuário (Sprint 5): só Admin cria Programa novo — usuário comum só
+  // cria Data/Lauda DENTRO de Programas que já tem acesso (ver PlaylistDashboardCoordinator.
+  // HandleCreateProgram, que rejeita com 403 mesmo que alguém force a chamada sem passar por aqui).
+  newProgramForm.classList.toggle("hidden", !currentUser.isAdmin);
+  notAdminHint.classList.toggle("hidden", currentUser.isAdmin);
+
+  // Sprint 6 (2026-11-16) — menu "Usuários" só existe pra Admin (decisão confirmada: só Admin
+  // gerencia usuários/permissões).
+  navItems.forEach((item) => {
+    if (item.dataset.view === "users-view") {
+      item.classList.toggle("hidden", !currentUser.isAdmin);
+    }
+  });
+
+  showView("programs-view");
+}
+
+async function checkAuthAndInit() {
+  try {
+    currentUser = await apiGet("/api/auth/me");
+  } catch (err) {
+    return; // handleUnauthorized() já mostrou a tela de login.
+  }
+
+  showAppContent();
+  clearError();
+  await loadPrograms();
+  await loadBackgroundArtPresets();
+}
+
+navItems.forEach((item) => {
+  item.addEventListener("click", async () => {
+    const viewId = item.dataset.view;
+    showView(viewId);
+    if (viewId === "users-view") {
+      await loadUsers();
+    }
+  });
+});
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  loginError.classList.add("hidden");
+  const usernameInput = document.getElementById("login-username");
+  const passwordInput = document.getElementById("login-password");
+
+  try {
+    await apiPost("/api/auth/login", { username: usernameInput.value, password: passwordInput.value });
+    passwordInput.value = "";
+    await checkAuthAndInit();
+  } catch (err) {
+    loginError.textContent = err.message;
+    loginError.classList.remove("hidden");
+  }
+});
+
+logoutButton.addEventListener("click", async () => {
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch (err) {
+    // Sem problema — mostra a tela de login mesmo assim, o pior caso é a sessão expirar sozinha.
+  }
+  selectedProgramId = null;
+  selectedEditionId = null;
+  showLoginSection();
+});
 
 document.getElementById("new-program-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -461,5 +642,185 @@ document.getElementById("new-lauda-form").addEventListener("submit", async (even
   }
 });
 
-loadPrograms();
-loadBackgroundArtPresets();
+// ===================== Sprint 6 (2026-11-16) — Usuários da Dashboard (Admin) =====================
+// Antes só dava pra gerenciar usuário pela Cartucheira desktop (Configurações → Playlist); agora o
+// próprio Admin também consegue direto pela dashboard web — mesmas rotas server-side
+// (PlaylistDashboardCoordinator.HandleListUsers/HandleCreateUser/HandleUpdateUserPermissions/
+// HandleResetUserPassword/HandleDeleteUser), todas 403 pra quem não é Admin mesmo que alguém force
+// a chamada sem passar pela UI.
+
+function roleLabel(user) {
+  return user.isAdmin ? "Administrador" : "Produtor";
+}
+
+function programNamesFor(user) {
+  if (user.isAdmin) return "Todos os Programas";
+  if (!user.allowedProgramIds || user.allowedProgramIds.length === 0) return "Nenhum Programa liberado ainda";
+  const names = user.allowedProgramIds.map((id) => {
+    const match = currentPrograms.find((p) => p.id === id);
+    return match ? match.name : id;
+  });
+  return names.join(", ");
+}
+
+async function loadUsers() {
+  usersError.classList.add("hidden");
+  try {
+    // Garante que o checklist do modal e os nomes de Programa na lista usem dados atuais, mesmo se
+    // o Admin entrou direto na view de Usuários sem passar pela de Programas antes.
+    currentPrograms = await apiGet("/api/playlist/programs");
+    const users = await apiGet("/api/users");
+    renderUsers(users);
+  } catch (err) {
+    usersError.textContent = err.message;
+    usersError.classList.remove("hidden");
+  }
+}
+
+function renderUsers(users) {
+  usersList.innerHTML = "";
+  users.forEach((user) => {
+    const item = document.createElement("li");
+    item.className = "clickable";
+
+    const main = document.createElement("div");
+    main.className = "user-row-main";
+    const name = document.createElement("span");
+    name.className = "user-row-name";
+    name.textContent = user.username;
+    const badge = document.createElement("span");
+    badge.className = `role-badge ${user.isAdmin ? "admin" : "producer"}`;
+    badge.textContent = user.isAdmin ? "Admin" : "Produtor";
+    main.appendChild(name);
+    main.appendChild(badge);
+
+    const programsLabel = document.createElement("span");
+    programsLabel.className = "user-row-programs";
+    programsLabel.textContent = programNamesFor(user);
+
+    item.appendChild(main);
+    item.appendChild(programsLabel);
+    item.addEventListener("click", () => openUserEditModal(user));
+
+    usersList.appendChild(item);
+  });
+}
+
+function renderProgramsChecklist(selectedIds) {
+  userProgramsChecklist.innerHTML = "";
+  if (currentPrograms.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "checklist-empty";
+    empty.textContent = "Nenhum Programa cadastrado ainda — crie um Programa primeiro.";
+    userProgramsChecklist.appendChild(empty);
+    return;
+  }
+
+  currentPrograms.forEach((program) => {
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = program.id;
+    checkbox.checked = Boolean(selectedIds && selectedIds.includes(program.id));
+    label.appendChild(checkbox);
+    label.append(program.name);
+    userProgramsChecklist.appendChild(label);
+  });
+}
+
+function selectedProgramIdsFromChecklist() {
+  return Array.from(userProgramsChecklist.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+}
+
+function updateProgramsRowVisibility() {
+  userProgramsRow.classList.toggle("hidden", userIsAdminInput.checked);
+}
+
+function openUserCreateModal() {
+  editingUserId = null;
+  userForm.reset();
+  userFormError.classList.add("hidden");
+  userModalTitle.textContent = "Novo usuário";
+  userPasswordLabel.textContent = "Senha";
+  userPasswordInput.placeholder = "mínimo 4 caracteres";
+  userPasswordInput.required = true;
+  userRemoveButton.classList.add("hidden");
+  userIsAdminInput.checked = false;
+  renderProgramsChecklist([]);
+  updateProgramsRowVisibility();
+  userModal.classList.remove("hidden");
+}
+
+function openUserEditModal(user) {
+  editingUserId = user.id;
+  userForm.reset();
+  userFormError.classList.add("hidden");
+  userModalTitle.textContent = `Editar usuário — ${user.username}`;
+  userUsernameInput.value = user.username;
+  userUsernameInput.disabled = true; // Sprint 6: trocar nome de usuário não é suportado nesta sprint — UserStore não tem um "RenameUser".
+  userPasswordLabel.textContent = "Nova senha (deixe em branco pra manter a atual)";
+  userPasswordInput.placeholder = "deixe em branco pra não trocar";
+  userPasswordInput.required = false;
+  userRemoveButton.classList.remove("hidden");
+  userIsAdminInput.checked = user.isAdmin;
+  renderProgramsChecklist(user.allowedProgramIds);
+  updateProgramsRowVisibility();
+  userModal.classList.remove("hidden");
+}
+
+function closeUserModal() {
+  editingUserId = null;
+  userUsernameInput.disabled = false;
+  userModal.classList.add("hidden");
+}
+
+addUserButton.addEventListener("click", openUserCreateModal);
+userFormCancel.addEventListener("click", closeUserModal);
+userIsAdminInput.addEventListener("change", updateProgramsRowVisibility);
+
+userForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  userFormError.classList.add("hidden");
+
+  const isAdmin = userIsAdminInput.checked;
+  const allowedProgramIds = isAdmin ? [] : selectedProgramIdsFromChecklist();
+
+  try {
+    if (editingUserId) {
+      await apiPut("/api/users", { id: editingUserId, isAdmin, allowedProgramIds });
+      if (userPasswordInput.value) {
+        await apiPut("/api/users/password", { id: editingUserId, newPassword: userPasswordInput.value });
+      }
+    } else {
+      await apiPost("/api/users", {
+        username: userUsernameInput.value,
+        password: userPasswordInput.value,
+        isAdmin,
+        allowedProgramIds,
+      });
+    }
+    closeUserModal();
+    await loadUsers();
+  } catch (err) {
+    userFormError.textContent = err.message;
+    userFormError.classList.remove("hidden");
+  }
+});
+
+userRemoveButton.addEventListener("click", async () => {
+  if (!editingUserId) return;
+  if (!window.confirm(`Remover o usuário "${userUsernameInput.value}"? Esta ação não pode ser desfeita.`)) {
+    return;
+  }
+
+  try {
+    await apiDelete(`/api/users?id=${encodeURIComponent(editingUserId)}`);
+    closeUserModal();
+    await loadUsers();
+  } catch (err) {
+    userFormError.textContent = err.message;
+    userFormError.classList.remove("hidden");
+  }
+});
+
+checkAuthAndInit();

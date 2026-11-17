@@ -80,4 +80,30 @@ public sealed class TeleprompterSettingsSnapshot
 
     /// <summary>Tamanho da fonte (pontos) do texto na janela de saída — ajustável porque cada apresentador lê a uma distância diferente da tela.</summary>
     public double FontSizePt { get; set; } = 54;
+
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17) — pedido do usuário logo depois da entrega da v1.0.93
+    /// ("como ainda preciso colocar placa de vídeo com mais saídas, [...] vamos colocar para o
+    /// teleprompter gerar tb em ndi"): em vez de depender de uma saída física de monitor (a placa de
+    /// vídeo atual já está sem portas livres), o Teleprompter pode virar uma fonte NDI "sempre
+    /// quente" na rede — mesmo papel que <c>Ndi.NdiSender</c> já tem pra cada Deck (Sprint NDI,
+    /// 2026-08-09) — pra ser recebido direto num vMix/OBS/outro teleprompter físico sem precisar de
+    /// cabo de vídeo nenhum nesta máquina. Falso (padrão) = comportamento de antes, sem NDI.
+    /// Deliberadamente INDEPENDENTE de <see cref="ScreenOutputDeviceName"/> — os dois podem estar
+    /// ligados ao mesmo tempo (mesma janela alimenta os dois destinos) ou só um dos dois (ver
+    /// comentário completo em <c>Presentation.ViewModels.TeleprompterViewModel.RefreshWindow</c>
+    /// sobre a janela existir "escondida", fora de qualquer monitor real, quando só o NDI está
+    /// ligado).
+    /// </summary>
+    public bool NdiEnabled { get; set; }
+
+    /// <summary>
+    /// Nome do canal NDI do Teleprompter — mesmo padrão de <c>Core.Deck.NdiChannelName</c> (texto
+    /// livre, pode ter acentos). Nulo/vazio = usa o nome padrão "Teleprompter" (ver
+    /// <c>Presentation.ViewModels.TeleprompterViewModel.ResolveNdiChannelName</c>). Diferente do
+    /// Deck (que cria o emissor NDI uma única vez no construtor — limitação documentada de exigir
+    /// reiniciar o programa pra renomear), aqui o <c>NdiSender</c> é recriado dinamicamente a cada
+    /// <c>ApplySettings</c>/Salvar — não carrega a mesma limitação.
+    /// </summary>
+    public string? NdiChannelName { get; set; }
 }

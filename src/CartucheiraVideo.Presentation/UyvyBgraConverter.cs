@@ -56,6 +56,73 @@ public static class UyvyBgraConverter
         }
     }
 
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17): direção INVERSA de <see cref="ConvertToBgra32"/> — pra
+    /// alimentar <c>Ndi.NdiSender.SendFrame</c> (que só fala UYVY) a partir de um quadro RENDERIZADO
+    /// pelo WPF (<c>Views.TeleprompterOutputWindow.RenderToUyvy</c>, via
+    /// <c>System.Windows.Media.Imaging.RenderTargetBitmap</c>, que só entrega Bgra32/Pbgra32) — é a
+    /// primeira vez neste projeto que um conteúdo gerado pela própria UI (não um vídeo
+    /// decodificado/uma imagem estática) precisa virar quadro NDI, então esta direção não existia
+    /// até agora. Mesma fórmula BT.601 faixa limitada já usada por
+    /// <c>BackgroundArtRenderer.RgbToYuv</c> — duplicada aqui de propósito, mesmo princípio de "cada
+    /// classe fala seu próprio vocabulário" já seguido entre as outras conversões deste arquivo/
+    /// <c>BackgroundArtRenderer</c> (ver comentário de classe).
+    ///
+    /// <paramref name="width"/> ÍMPAR é arredondado pra baixo (sempre par) antes de converter — um
+    /// grupo UYVY de 2 pixels/4 bytes nunca pode ser cortado ao meio (mesma regra de
+    /// <c>BackgroundArtRenderer.ComputeLetterboxSize</c>); a última coluna de uma largura ímpar
+    /// simplesmente não entra no quadro NDI (perda de 1px, imperceptível, nunca acontece na prática —
+    /// resoluções de monitor e o canvas fixo 1920x1080 off-screen são sempre pares).
+    /// </summary>
+    /// <param name="bgra">Buffer de origem Bgra32 (<paramref name="width"/> * <paramref name="height"/> * 4 bytes, passo de linha fixo width*4, sem padding — o que <c>RenderTargetBitmap.CopyPixels</c> entrega pedindo esse stride).</param>
+    /// <param name="width">Largura em pixels (arredondada pra baixo pra um valor par antes de converter).</param>
+    /// <param name="height">Altura em pixels.</param>
+    /// <returns>Buffer UYVY novo, largura efetiva (par) x <paramref name="height"/>, passo de linha = largura efetiva * 2.</returns>
+    public static byte[] ConvertFromBgra32(byte[] bgra, int width, int height)
+    {
+        var evenWidth = width - (width % 2);
+        var srcStrideBytes = width * 4;
+        var destStrideBytes = evenWidth * 2;
+        var dest = new byte[height * destStrideBytes];
+
+        for (var row = 0; row < height; row++)
+        {
+            var srcRowOffset = row * srcStrideBytes;
+            var destRowOffset = row * destStrideBytes;
+
+            for (var x = 0; x < evenWidth; x += 2)
+            {
+                var i0 = srcRowOffset + (x * 4);
+                var i1 = srcRowOffset + ((x + 1) * 4);
+
+                // Bgra32: B,G,R,A nesta ordem em memória.
+                var (y0, u0, v0) = RgbToYuv(bgra[i0 + 2], bgra[i0 + 1], bgra[i0 + 0]);
+                var (y1, u1, v1) = RgbToYuv(bgra[i1 + 2], bgra[i1 + 1], bgra[i1 + 0]);
+
+                var u = (byte)((u0 + u1) / 2);
+                var v = (byte)((v0 + v1) / 2);
+
+                var o = destRowOffset + (x * 2);
+                dest[o + 0] = u;
+                dest[o + 1] = y0;
+                dest[o + 2] = v;
+                dest[o + 3] = y1;
+            }
+        }
+
+        return dest;
+    }
+
+    /// <summary>BT.601, faixa limitada (16-235 luma, 16-240 croma) — mesma convenção de <c>BackgroundArtRenderer.RgbToYuv</c>, duplicada aqui de propósito (ver comentário de <see cref="ConvertFromBgra32"/>).</summary>
+    private static (byte Y, byte U, byte V) RgbToYuv(byte r, byte g, byte b)
+    {
+        var y = 16.0 + ((0.257 * r) + (0.504 * g) + (0.098 * b));
+        var u = 128.0 + ((-0.148 * r) - (0.291 * g) + (0.439 * b));
+        var v = 128.0 + ((0.439 * r) - (0.368 * g) - (0.071 * b));
+
+        return ((byte)Clamp(y), (byte)Clamp(u), (byte)Clamp(v));
+    }
+
     private static void WriteBgra(byte[] dest, int offset, byte r, byte g, byte b)
     {
         dest[offset + 0] = b;

@@ -27,6 +27,8 @@ public sealed class TeleprompterSettingsViewModel : ViewModelBase
     private bool _voiceTrackingEnabled;
     private TeleprompterSourceDeck _sourceDeckSetting;
     private double _fontSizePt;
+    private bool _ndiEnabled;
+    private string _ndiChannelName;
 
     public TeleprompterSettingsViewModel(AppSettingsSnapshot snapshot)
     {
@@ -44,6 +46,8 @@ public sealed class TeleprompterSettingsViewModel : ViewModelBase
         _voiceTrackingEnabled = teleprompter.VoiceTrackingEnabled;
         _sourceDeckSetting = teleprompter.SourceDeckSetting;
         _fontSizePt = teleprompter.FontSizePt;
+        _ndiEnabled = teleprompter.NdiEnabled;
+        _ndiChannelName = teleprompter.NdiChannelName ?? string.Empty;
     }
 
     /// <summary>Opções do combo "Tela de saída" — "Nenhuma" (Value nulo, fica sem janela de Teleprompter nenhuma) no topo + uma por monitor detectado agora, mesmo padrão de combo "Nenhuma"/escolha explícita já usado por <see cref="BackgroundArtSettingsViewModel.ActiveOptions"/>.</summary>
@@ -101,6 +105,25 @@ public sealed class TeleprompterSettingsViewModel : ViewModelBase
         set => SetProperty(ref _fontSizePt, Math.Clamp(value, 12, 200));
     }
 
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17) — liga/desliga a saída NDI do Teleprompter,
+    /// independente da <see cref="SelectedScreenDeviceName"/> (ver comentário completo em
+    /// <see cref="TeleprompterSettingsSnapshot.NdiEnabled"/>). Pensado pra quem não tem mais saída
+    /// de monitor livre na placa de vídeo.
+    /// </summary>
+    public bool NdiEnabled
+    {
+        get => _ndiEnabled;
+        set => SetProperty(ref _ndiEnabled, value);
+    }
+
+    /// <summary>Nome do canal NDI — vazio usa o padrão "Teleprompter" (ver <see cref="TeleprompterSettingsSnapshot.NdiChannelName"/>).</summary>
+    public string NdiChannelName
+    {
+        get => _ndiChannelName;
+        set => SetProperty(ref _ndiChannelName, value);
+    }
+
     /// <summary>Escreve os valores editados de volta no snapshot real — chamado só quando o Salvar global do SettingsWindow é clicado, mesmo padrão de <see cref="BackgroundArtSettingsViewModel.ApplyTo"/>.</summary>
     public void ApplyTo(AppSettingsSnapshot snapshot)
     {
@@ -111,6 +134,8 @@ public sealed class TeleprompterSettingsViewModel : ViewModelBase
         teleprompter.VoiceTrackingEnabled = VoiceTrackingEnabled;
         teleprompter.SourceDeckSetting = SourceDeckSetting;
         teleprompter.FontSizePt = FontSizePt;
+        teleprompter.NdiEnabled = NdiEnabled;
+        teleprompter.NdiChannelName = string.IsNullOrWhiteSpace(NdiChannelName) ? null : NdiChannelName.Trim();
     }
 
     private static List<ComboOption<string?>> BuildScreenOptions(string? persistedDeviceName)

@@ -1,7 +1,10 @@
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Threading;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Engine;
+using CartucheiraVideo.Ndi;
 using CartucheiraVideo.Presentation.Views;
 
 namespace CartucheiraVideo.Presentation.ViewModels;
@@ -29,6 +32,14 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 ///    na UI thread) — marshala com <see cref="System.Windows.Threading.Dispatcher.BeginInvoke(System.Delegate)"/>,
 ///    mesmo contrato de sempre deste projeto pra eventos de thread de áudio (ver
 ///    <c>Engine.AudioEngine</c>, "quem ouve precisa marshalar pra UI thread sozinho").
+/// 4. <see cref="RefreshNdi"/> (Sprint Teleprompter-NDI, 2026-11-17) — liga/desliga/renomeia uma
+///    fonte NDI própria do Teleprompter, pra quem não tem mais saída de monitor livre na placa de
+///    vídeo ("ainda preciso colocar placa de vídeo com mais saídas [...] vamos colocar para o
+///    teleprompter gerar tb em ndi"). Reaproveita a MESMA janela de saída (<see cref="RefreshWindow"/>
+///    agora também a mantém viva, escondida fora de qualquer monitor real, só por causa do NDI) e
+///    um <see cref="System.Windows.Threading.DispatcherTimer"/> pra renderizá-la periodicamente
+///    (<see cref="TeleprompterOutputWindow.RenderToUyvy"/>) e mandar pro <c>Ndi.NdiSender</c> deste
+///    módulo.
 /// </summary>
 public sealed class TeleprompterViewModel : IDisposable
 {
@@ -41,6 +52,28 @@ public sealed class TeleprompterViewModel : IDisposable
     private string _currentScriptText = string.Empty;
     private TeleprompterSourceDeck _sourceDeckSetting = TeleprompterSourceDeck.DeckA;
     private bool _disposed;
+
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17): <see cref="TeleprompterOutputWindow.DeviceName"/>
+    /// "artificial" usado quando a janela existe só pra alimentar o NDI, sem nenhuma tela física
+    /// escolhida/conectada (ver <see cref="RefreshWindow"/>) — nunca colide com um
+    /// <c>System.Windows.Forms.Screen.DeviceName</c> real (todos começam com <c>"\\.\DISPLAY"</c>).
+    /// </summary>
+    private const string OffScreenDeviceMarker = "(ndi-sem-tela)";
+
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17): 10 quadros/s — bem abaixo de vídeo real (não há
+    /// nenhuma animação contínua aqui, só rolagem de texto por evento: palavra casada pela voz,
+    /// seta/roda do mouse), mas suficiente pra uma rolagem de texto parecer fluida num
+    /// vMix/OBS recebendo o canal. Sem precedente nesta base pra calibrar contra (primeira fonte
+    /// NDI deste projeto que renderiza UI em vez de decodificar vídeo/imagem estática) — palpite
+    /// honesto, ajustável aqui se o usuário testar e achar pouco.
+    /// </summary>
+    private static readonly TimeSpan NdiFrameInterval = TimeSpan.FromMilliseconds(100);
+
+    private NdiSender? _ndiSender;
+    private string? _ndiChannelName;
+    private DispatcherTimer? _ndiTimer;
 
     public TeleprompterViewModel(DeckViewModel deckA, DeckViewModel deckB, Action<string> onStatus)
     {
@@ -65,6 +98,7 @@ public sealed class TeleprompterViewModel : IDisposable
         _sourceDeckSetting = settings.SourceDeckSetting;
 
         RefreshWindow(settings);
+        RefreshNdi(settings);
         RefreshVoiceEngine(settings);
     }
 
@@ -99,6 +133,8 @@ public sealed class TeleprompterViewModel : IDisposable
         _voiceEngine.StatusChanged -= OnVoiceStatusChanged;
         _voiceEngine.Dispose();
 
+        StopNdi();
+
         _window?.Close();
         _window = null;
     }
@@ -112,6 +148,16 @@ public sealed class TeleprompterViewModel : IDisposable
     /// <see cref="DeckViewModel.GetOperatorScreenDeviceNames"/>, mesma checagem, sem duplicar a
     /// lógica. Diferente de lá (vários monitores possíveis por Deck), aqui é no máximo UM monitor —
     /// só abre/fecha/reposiciona essa única janela.
+    ///
+    /// Sprint Teleprompter-NDI (2026-11-17): a janela deixou de existir só por causa de uma tela
+    /// física escolhida — agora também existe (escondida, fora de qualquer monitor real, ver
+    /// <see cref="TeleprompterOutputWindow.PositionOffScreen"/>) quando <see cref="TeleprompterSettingsSnapshot.NdiEnabled"/>
+    /// está ligado, mesmo sem nenhuma tela escolhida/conectada — é exatamente o cenário que motivou
+    /// o pedido ("ainda preciso colocar placa de vídeo com mais saídas [...] vamos colocar para o
+    /// teleprompter gerar tb em ndi"): sem monitor físico sobrando, o NDI vira o único destino.
+    /// Quando tela física E NDI estão ligados ao mesmo tempo, é a MESMA janela alimentando os dois —
+    /// <see cref="RefreshNdi"/> (chamado depois deste método, ver <see cref="ApplySettings"/>) só
+    /// lê o que já está desenhado aqui, nunca cria uma segunda janela.
     /// </summary>
     private void RefreshWindow(TeleprompterSettingsSnapshot settings)
     {
@@ -128,28 +174,164 @@ public sealed class TeleprompterViewModel : IDisposable
             ? null
             : System.Windows.Forms.Screen.AllScreens.FirstOrDefault(s => s.DeviceName == wantedDeviceName);
 
-        if (targetScreen is null)
+        var needsWindow = targetScreen is not null || settings.NdiEnabled;
+
+        if (!needsWindow)
         {
-            // Nenhuma tela escolhida, ou a escolhida não está conectada agora (placa desligada/
-            // desconectada) — mesma "falha honesta" de sempre: a seleção continua salva, só não
-            // existe janela nenhuma aberta enquanto isso.
+            // Nenhuma tela escolhida/conectada E NDI desligado — mesma "falha honesta" de sempre: a
+            // seleção de tela continua salva, só não existe janela nenhuma aberta enquanto isso.
             _window?.Close();
             _window = null;
             return;
         }
 
-        if (_window is null || _window.DeviceName != targetScreen.DeviceName)
+        var wantedDeviceIdentity = targetScreen?.DeviceName ?? OffScreenDeviceMarker;
+
+        if (_window is null || _window.DeviceName != wantedDeviceIdentity)
         {
             _window?.Close();
-            _window = new TeleprompterOutputWindow(targetScreen.DeviceName);
+            _window = new TeleprompterOutputWindow(wantedDeviceIdentity);
             _window.Closed += (_, _) => _window = null;
             _window.SetText(_currentScriptText);
             _window.Show();
-            _window.PositionOnScreen(targetScreen);
+
+            if (targetScreen is not null)
+            {
+                _window.PositionOnScreen(targetScreen);
+            }
+            else
+            {
+                _window.PositionOffScreen();
+            }
         }
 
         _window.SetMirror(settings.MirrorMode);
         _window.SetFontSize(settings.FontSizePt);
+    }
+
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17): liga/desliga/renomeia a fonte NDI do Teleprompter e o
+    /// timer que a alimenta — chamado depois de <see cref="RefreshWindow"/> (ver
+    /// <see cref="ApplySettings"/>), porque depende da janela já existir/estar no tamanho certo
+    /// quando o primeiro quadro for renderizado. Diferente do <c>NdiSender</c> de cada Deck (criado
+    /// uma única vez no construtor, "sempre quente" — ver comentário de
+    /// <see cref="DeckViewModel"/>, limitação documentada de exigir reiniciar o programa pra
+    /// renomear o canal), este é recriado dinamicamente aqui sempre que o nome mudar — este módulo é
+    /// opt-in (o operador liga/desliga quando quiser), não existe desde a inicialização do programa
+    /// como o de cada Deck.
+    /// </summary>
+    private void RefreshNdi(TeleprompterSettingsSnapshot settings)
+    {
+        if (!settings.NdiEnabled)
+        {
+            StopNdi();
+            return;
+        }
+
+        var wantedName = ResolveNdiChannelName(settings.NdiChannelName);
+
+        if (_ndiSender is null || _ndiChannelName != wantedName)
+        {
+            StopNdi();
+
+            try
+            {
+                _ndiSender = new NdiSender(wantedName);
+                _ndiChannelName = wantedName;
+            }
+            catch (Exception ex)
+            {
+                // Mesma falha honesta de sempre (ver construtor de DeckViewModel): DLL nativa
+                // ausente/NDI Runtime não instalado não pode derrubar o Teleprompter — ele continua
+                // funcionando normalmente (tela física, se houver, controle manual/voz), só sem
+                // saída NDI.
+                _ndiSender = null;
+                _ndiChannelName = null;
+                _onStatus($"Teleprompter: NDI indisponível ({ex.Message})");
+                return;
+            }
+        }
+
+        StartNdiTimer();
+    }
+
+    private static string ResolveNdiChannelName(string? configured) =>
+        string.IsNullOrWhiteSpace(configured) ? "Teleprompter" : configured.Trim();
+
+    private void StartNdiTimer()
+    {
+        if (_ndiTimer is not null)
+        {
+            return;
+        }
+
+        // DispatcherTimer (não System.Threading.Timer, diferente do timer de Arte de Fundo do
+        // Deck) de propósito: cada tick precisa chamar TeleprompterOutputWindow.RenderToUyvy, que
+        // usa RenderTargetBitmap.Render — operação WPF normal, só funciona na UI thread da própria
+        // janela. DispatcherPriority.Background: não compete com entrada de teclado/mouse/pintura
+        // da UI do operador, só roda quando a UI thread está livre.
+        _ndiTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = NdiFrameInterval };
+        _ndiTimer.Tick += (_, _) => SendNdiFrame();
+        _ndiTimer.Start();
+    }
+
+    private void StopNdi()
+    {
+        if (_ndiTimer is not null)
+        {
+            _ndiTimer.Stop();
+            _ndiTimer = null;
+        }
+
+        _ndiSender?.Dispose();
+        _ndiSender = null;
+        _ndiChannelName = null;
+    }
+
+    /// <summary>
+    /// Chamado a cada tick do <see cref="_ndiTimer"/> (ver <see cref="StartNdiTimer"/>) — renderiza
+    /// o quadro atual da janela e manda pro <see cref="_ndiSender"/>. Falha honesta em qualquer
+    /// etapa (janela ainda sem layout, sendo fechada no mesmo instante etc.): só pula este quadro,
+    /// nunca derruba o timer nem o Teleprompter.
+    ///
+    /// Buffer nativo NOVO a cada chamada (nunca reusado) — mesmo princípio já usado em
+    /// <see cref="Ndi.NdiSender.SendAudioFrame"/> (ver comentário de classe completo de
+    /// <c>Ndi.NdiSender</c> sobre os sete crashes reais que motivaram essa escolha do lado do
+    /// áudio, e os dois dumps nativos reais — v1.0.70/v1.0.72 — do lado do vídeo quando um buffer
+    /// ÚNICO reusado foi liberado sem sincronizar primeiro). <see cref="Ndi.NdiSender.SyncPendingVideoFrame"/>
+    /// logo depois do <see cref="Ndi.NdiSender.SendFrame"/> força a SDK a terminar de ler ESTE
+    /// ponteiro antes deste método liberar a memória no <c>finally</c> — sacrifica parte do ganho de
+    /// performance da variante assíncrona (bloqueia brevemente aqui dentro), aceitável porque este
+    /// tick roda só ~10x/s (<see cref="NdiFrameInterval"/>), não é um caminho quente como o vídeo
+    /// real do Engine (até 60x/s) que motivou a variante assíncrona originalmente.
+    /// </summary>
+    private void SendNdiFrame()
+    {
+        if (_ndiSender is null)
+        {
+            return;
+        }
+
+        var frame = _window?.RenderToUyvy();
+        if (frame is null)
+        {
+            return;
+        }
+
+        var (uyvy, width, height) = frame.Value;
+        var strideBytes = width * 2;
+
+        var nativeBuffer = Marshal.AllocHGlobal(uyvy.Length);
+        try
+        {
+            Marshal.Copy(uyvy, 0, nativeBuffer, uyvy.Length);
+            _ndiSender.SendFrame(nativeBuffer, width, height, strideBytes);
+            _ndiSender.SyncPendingVideoFrame();
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(nativeBuffer);
+        }
     }
 
     private void RefreshVoiceEngine(TeleprompterSettingsSnapshot settings)

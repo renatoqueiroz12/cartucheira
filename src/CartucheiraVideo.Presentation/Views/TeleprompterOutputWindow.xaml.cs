@@ -3,6 +3,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace CartucheiraVideo.Presentation.Views;
 
@@ -47,6 +48,30 @@ public partial class TeleprompterOutputWindow : Window
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17): posiciona a janela fora dos limites de QUALQUER monitor
+    /// real combinado (<see cref="SystemParameters.VirtualScreenLeft"/>/<c>VirtualScreenWidth</c> —
+    /// a mesma API que o Windows usa pra descrever "todos os monitores juntos") — usado só quando a
+    /// saída NDI está ligada e nenhuma tela física foi escolhida pro Teleprompter (ver
+    /// <see cref="ViewModels.TeleprompterViewModel.RefreshWindow"/>). A janela continua existindo e
+    /// renderizando de verdade (<see cref="RenderToUyvy"/> funciona igual, não importa onde ela
+    /// esteja na tela) — só não aparece em nenhum monitor físico, mesmo truque de "janela sempre
+    /// quente escondida" já usado por outras janelas deste programa, aplicado aqui pela primeira vez
+    /// SEM nenhum monitor real por trás. Canvas fixo 1920x1080 (<see cref="BackgroundArtRenderer.FrameWidth"/>/
+    /// <c>FrameHeight</c>, mesmo canvas padrão do resto do projeto) — sem monitor nenhum pra copiar a
+    /// resolução.
+    /// </summary>
+    public void PositionOffScreen()
+    {
+        WindowState = WindowState.Normal;
+
+        var x = (int)Math.Round(SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth) + 256;
+        const int y = 0;
+
+        var hwnd = new WindowInteropHelper(this).EnsureHandle();
+        SetWindowPos(hwnd, IntPtr.Zero, x, y, BackgroundArtRenderer.FrameWidth, BackgroundArtRenderer.FrameHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
 
     /// <summary>Troca o texto exibido (nova Lauda carregada no Deck fonte) e volta a rolagem pro início — chamado pelo <see cref="ViewModels.TeleprompterViewModel"/> toda vez que o texto muda.</summary>
     public void SetText(string text)
@@ -163,5 +188,52 @@ public partial class TeleprompterOutputWindow : Window
     private void PositionCueLine()
     {
         CueLine.Margin = new Thickness(0, ActualHeight * CueLineFraction, 0, 0);
+    }
+
+    /// <summary>
+    /// Sprint Teleprompter-NDI (2026-11-17): renderiza <see cref="RootGrid"/> (texto, rolagem,
+    /// espelho — exatamente o que já está desenhado agora, numa tela física ou escondida, ver
+    /// <see cref="PositionOffScreen"/>) pra um quadro UYVY, pronto pra <c>Ndi.NdiSender.SendFrame</c>.
+    /// Chamado pelo <see cref="ViewModels.TeleprompterViewModel"/> de dentro de um
+    /// <see cref="System.Windows.Threading.DispatcherTimer"/> — PRECISA rodar na UI thread
+    /// (<see cref="RenderTargetBitmap.Render"/> é uma operação WPF normal, mesmo contrato de
+    /// qualquer acesso à árvore visual). Usa o tamanho ATUAL da janela
+    /// (<see cref="FrameworkElement.ActualWidth"/>/<c>ActualHeight</c>) — reflete tanto o canvas fixo
+    /// 1920x1080 de <see cref="PositionOffScreen"/> quanto a resolução real de
+    /// <see cref="PositionOnScreen"/>, sem precisar saber qual dos dois está em uso.
+    ///
+    /// Falha honesta: antes do primeiro layout (<see cref="ActualWidth"/>/<c>ActualHeight</c> ainda
+    /// zero) ou qualquer problema de renderização (ex.: janela sendo fechada no mesmo instante deste
+    /// tick do timer), retorna nulo — quem chama só pula este quadro, nunca derruba o Teleprompter
+    /// nem o timer.
+    /// </summary>
+    public (byte[] Uyvy, int Width, int Height)? RenderToUyvy()
+    {
+        var width = (int)Math.Round(ActualWidth);
+        var height = (int)Math.Round(ActualHeight);
+
+        if (width <= 0 || height <= 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            var renderTarget = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+            renderTarget.Render(RootGrid);
+
+            var strideBytes = width * 4;
+            var bgra = new byte[height * strideBytes];
+            renderTarget.CopyPixels(bgra, strideBytes, 0);
+
+            var uyvy = UyvyBgraConverter.ConvertFromBgra32(bgra, width, height);
+            var evenWidth = width - (width % 2); // mesmo arredondamento de ConvertFromBgra32 — largura REAL do buffer UYVY devolvido.
+
+            return (uyvy, evenWidth, height);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 }

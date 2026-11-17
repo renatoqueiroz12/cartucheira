@@ -73,6 +73,20 @@
                 <ComboBox ItemsSource="{Binding AudioInputOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
                           SelectedValue="{Binding SelectedAudioInputDeviceId}" />
             </StackPanel>
+
+            <TextBlock Text="Saída NDI" Style="{StaticResource Theme.SectionTitle}" Margin="0,24,0,10" />
+            <TextBlock Text="Manda o Teleprompter também (ou só, se não escolher nenhuma tela acima) como uma fonte NDI na rede — pra receber direto num vMix/OBS ou outro teleprompter físico, sem precisar de mais uma saída de vídeo na placa deste computador."
+                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,0,0,12" TextWrapping="Wrap" />
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}" Orientation="Horizontal">
+                <CheckBox IsChecked="{Binding NdiEnabled}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBlock Text="Ligar saída NDI do Teleprompter" VerticalAlignment="Center" Foreground="{DynamicResource Brush.TextHi}" />
+            </StackPanel>
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Nome do canal NDI" Style="{StaticResource Theme.FieldLabel}" />
+                <TextBox Text="{Binding NdiChannelName, UpdateSourceTrigger=PropertyChanged}" Tag="ex.: Cartucheira - Teleprompter" Width="260" HorizontalAlignment="Left" />
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

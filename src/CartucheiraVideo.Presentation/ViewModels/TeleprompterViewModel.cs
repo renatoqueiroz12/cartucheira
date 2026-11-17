@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Media;
 using System.Windows.Threading;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Engine;
@@ -140,10 +142,30 @@ public sealed class TeleprompterViewModel : IDisposable
     /// </summary>
     private int _autoScrollSpeed = 5;
 
-    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — tick a 20Hz (suave o bastante pra rolagem de texto parecer contínua, sem sobrecarregar a UI thread) enquanto <see cref="_autoScrollPlaying"/> estiver ligado.</summary>
-    private static readonly TimeSpan AutoScrollTickInterval = TimeSpan.FromMilliseconds(50);
+    /// <summary>
+    /// Fix v1.0.100 (2026-11-17, "a tela do tp esta tremida qd começa a executar" — rolagem automática
+    /// engasgada/instável na tela REAL de saída, reportado pelo usuário comparando com outro
+    /// teleprompter que não faz isso). Causa: o tick original era um <see cref="DispatcherTimer"/> de
+    /// intervalo FIXO (50ms, <c>DispatcherPriority.Background</c>) avançando um número FIXO de pixels
+    /// por tick — mas <c>DispatcherPriority.Background</c> não tem hora certa pra rodar, só roda
+    /// quando a fila do Dispatcher não tem nada de prioridade mais alta (e compete com o timer do NDI,
+    /// também <c>Background</c>, ligado ao mesmo tempo) — então os ticks vinham em rajadas irregulares
+    /// (dois ticks quase juntos, depois um atraso) em vez de 20 vezes por segundo de verdade, e cada
+    /// tick sempre avançava o MESMO tanto de pixels independente de quanto tempo realmente passou
+    /// desde o tick anterior — resultado: movimento visualmente engasgado.
+    ///
+    /// Corrigido trocando o <see cref="DispatcherTimer"/> por <see cref="CompositionTarget.Rendering"/>
+    /// (dispara uma vez por quadro renderizado de verdade, direto do motor de composição do WPF — não
+    /// é uma prioridade do Dispatcher, não compete pela mesma fila que o timer do NDI) combinado com
+    /// um <see cref="Stopwatch"/> que mede o tempo REAL decorrido entre um quadro e o próximo
+    /// (<see cref="OnAutoScrollRenderingTick"/>) — o avanço em pixels agora é proporcional a esse
+    /// tempo real, não a uma contagem de ticks, então a rolagem acompanha a taxa de quadro de verdade
+    /// do monitor (tipicamente 60Hz) em vez de um passo fixo a 20Hz — o mesmo princípio que qualquer
+    /// animação suave de UI usa (velocidade em unidades/segundo, nunca em unidades/tick).
+    /// </summary>
+    private Stopwatch? _autoScrollStopwatch;
 
-    private DispatcherTimer? _autoScrollTimer;
+    private EventHandler? _autoScrollRenderingHandler;
 
     /// <summary>
     /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17): tick mais espaçado (~7Hz) que só CHECA se a
@@ -477,48 +499,60 @@ public sealed class TeleprompterViewModel : IDisposable
     /// </summary>
     private static double PixelsPerSecondForSpeed(int speed) => 10 + ((speed - 1) * 15);
 
+    /// <summary>Fix v1.0.100 (2026-11-17) — ver comentário completo em <see cref="_autoScrollStopwatch"/> sobre a troca do <see cref="DispatcherTimer"/> de intervalo fixo por <see cref="CompositionTarget.Rendering"/> + tempo real decorrido.</summary>
     private void StartAutoScrollTimer()
     {
-        if (_autoScrollTimer is not null)
+        if (_autoScrollRenderingHandler is not null)
         {
             return;
         }
 
-        _autoScrollTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = AutoScrollTickInterval };
-        _autoScrollTimer.Tick += (_, _) => OnAutoScrollTick();
-        _autoScrollTimer.Start();
+        _autoScrollStopwatch = Stopwatch.StartNew();
+        _autoScrollRenderingHandler = (_, _) => OnAutoScrollRenderingTick();
+        CompositionTarget.Rendering += _autoScrollRenderingHandler;
     }
 
     private void StopAutoScrollTimer()
     {
-        if (_autoScrollTimer is null)
+        if (_autoScrollRenderingHandler is null)
         {
             return;
         }
 
-        _autoScrollTimer.Stop();
-        _autoScrollTimer = null;
+        CompositionTarget.Rendering -= _autoScrollRenderingHandler;
+        _autoScrollRenderingHandler = null;
+        _autoScrollStopwatch = null;
     }
 
     /// <summary>
-    /// Chamado a cada tick do <see cref="_autoScrollTimer"/> — avança a rolagem um pouquinho (ver
-    /// <see cref="PixelsPerSecondForSpeed"/>) e pausa automaticamente ao chegar no fim do texto
-    /// (<see cref="TeleprompterOutputWindow.GetScrollFraction"/> em 1.0) — sem isso o timer ficaria
-    /// rodando pra sempre sem nenhum efeito visível depois do fim, e o Play remoto continuaria
-    /// mostrando "tocando" mesmo parado de verdade. Chamar <see cref="SetAutoScrollPlaying"/> daqui
-    /// dentro é seguro (sem deadlock): este tick já roda na UI thread (todo <c>DispatcherTimer.Tick</c>
-    /// roda nela), e <c>Dispatcher.Invoke</c> chamado da própria thread do Dispatcher executa
-    /// imediatamente, sem bloquear nem esperar nada.
+    /// Chamado a cada quadro renderizado (<see cref="CompositionTarget.Rendering"/>) enquanto o Play
+    /// automático remoto estiver ligado — avança a rolagem proporcionalmente ao tempo REAL decorrido
+    /// desde o quadro anterior (<see cref="_autoScrollStopwatch"/>, ver comentário completo lá sobre o
+    /// porquê desta troca, Fix v1.0.100), não mais um valor fixo por tick. Continua pausando
+    /// automaticamente ao chegar no fim do texto (<see cref="TeleprompterOutputWindow.GetScrollFraction"/>
+    /// em 1.0) — sem isso a rolagem ficaria "pendurada" no evento de Rendering pra sempre sem nenhum
+    /// efeito visível depois do fim, e o Play remoto continuaria mostrando "tocando" mesmo parado de
+    /// verdade. Chamar <see cref="SetAutoScrollPlaying"/> daqui dentro é seguro (sem deadlock):
+    /// <see cref="CompositionTarget.Rendering"/> já dispara na UI thread, e <c>Dispatcher.Invoke</c>
+    /// chamado da própria thread do Dispatcher executa imediatamente, sem bloquear nem esperar nada.
     /// </summary>
-    private void OnAutoScrollTick()
+    private void OnAutoScrollRenderingTick()
     {
-        if (_window is null)
+        if (_window is null || _autoScrollStopwatch is null)
         {
             return;
         }
 
-        var pixelsPerTick = PixelsPerSecondForSpeed(_autoScrollSpeed) * AutoScrollTickInterval.TotalSeconds;
-        _window.AdvanceScrollByPixels(pixelsPerTick);
+        var elapsedSeconds = _autoScrollStopwatch.Elapsed.TotalSeconds;
+        _autoScrollStopwatch.Restart();
+
+        // Primeiro quadro depois de retomar de uma pausa longa (ex.: janela minimizada, debugger
+        // parado) pode acumular um Elapsed grande demais — saturado em 250ms pra nunca dar um "salto"
+        // visível grande no texto; perde-se no máximo um quadro de suavidade, nunca a posição real.
+        var cappedSeconds = Math.Min(elapsedSeconds, 0.25);
+
+        var pixelsThisFrame = PixelsPerSecondForSpeed(_autoScrollSpeed) * cappedSeconds;
+        _window.AdvanceScrollByPixels(pixelsThisFrame);
 
         if (_window.GetScrollFraction() >= 1.0)
         {

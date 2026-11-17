@@ -192,6 +192,10 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
         host.RegisterApiRoute("GET", "/api/playlist/programs", (_, _, user) => HandleListPrograms(rootFolder, user));
         host.RegisterApiRoute("POST", "/api/playlist/programs", (_, body, user) => HandleCreateProgram(rootFolder, body, user));
+        // Sprint GC-Campos-Fixos (2026-11-17): edita só os NOMES dos campos do GC padrão de um
+        // Programa já criado (ver PlaylistFileStore.UpdateProgramDefaultGcFields) — resto do Programa
+        // (nome/fundo padrão) continua sem edição, fora do escopo pedido pelo usuário.
+        host.RegisterApiRoute("PUT", "/api/playlist/programs/gc-fields", (_, body, user) => HandleUpdateProgramGcFields(rootFolder, body, user));
         host.RegisterApiRoute("GET", "/api/playlist/editions", (query, _, user) => HandleListEditions(rootFolder, query, user));
         host.RegisterApiRoute("POST", "/api/playlist/editions", (_, body, user) => HandleCreateEdition(rootFolder, body, user));
         host.RegisterApiRoute("GET", "/api/playlist/laudas", (query, _, user) => HandleListLaudas(rootFolder, query, user));
@@ -315,7 +319,10 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         }
 
         var visible = user.IsAdmin ? programs : programs.Where(p => user.AllowedProgramIds.Contains(p.Id, StringComparer.OrdinalIgnoreCase));
-        var dtos = visible.Select(p => new ProgramDto(p.Id, p.Name)).ToList();
+        // Sprint GC-Campos-Fixos (2026-11-17): devolve defaultGcFields junto — é daqui que a
+        // dashboard tira os NOMES dos campos pra montar as caixinhas fixas de GC da tela "Nova/
+        // Editar Lauda" (ver app.js renderLaudaGcFields).
+        var dtos = visible.Select(p => new ProgramDto(p.Id, p.Name, p.DefaultGcFields)).ToList();
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
     }
 
@@ -348,12 +355,73 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
         }
 
-        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new ProgramDto(program.Id, program.Name), JsonOptions), 201);
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new ProgramDto(program.Id, program.Name, program.DefaultGcFields), JsonOptions), 201);
+    }
+
+    /// <summary>
+    /// Sprint GC-Campos-Fixos (2026-11-17, pedido do usuário "o melhor será ter esses campos na
+    /// lauda do GC e aí o produtor só preenche as infos" — decisão confirmada: os nomes de campo
+    /// ficam fixos no Programa, sem campo avulso por Lauda): PUT /api/playlist/programs/gc-fields
+    /// redefine o conjunto de campos do "GC padrão" de um Programa já existente. Só Admin, mesmo
+    /// critério de <see cref="HandleCreateProgram"/> — muda uma estrutura que passa a valer pra toda
+    /// Lauda do Programa, não é um ajuste qualquer de produção do dia a dia.
+    /// </summary>
+    private static PlaylistDashboardResponse HandleUpdateProgramGcFields(string rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores editam os campos do GC padrão de um Programa.");
+        }
+
+        UpdateProgramGcFieldsRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<UpdateProgramGcFieldsRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.ProgramId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" é obrigatório.");
+        }
+
+        var (ok, error, program) = PlaylistFileStore.UpdateProgramDefaultGcFields(rootFolder, request.ProgramId, request.DefaultGcFields);
+        if (!ok || program is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new ProgramDto(program.Id, program.Name, program.DefaultGcFields), JsonOptions));
     }
 
     /// <summary>Sprint 5 (2026-11-16) — Admin sempre tem acesso; usuário comum só se o Id do Programa estiver na lista liberada pra ele. Usado por toda rota que recebe um <c>programId</c> (Edições/Laudas/upload).</summary>
     private static bool HasAccessToProgram(AuthenticatedDashboardUser user, string? programId) =>
         user.IsAdmin || (programId is not null && user.AllowedProgramIds.Contains(programId, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Sprint GC-Campos-Fixos (2026-11-17): aplica a trava "só os campos do Programa, sem campo
+    /// avulso por Lauda" (decisão confirmada com o usuário) nos dois pontos que recebem GcFields de
+    /// uma Lauda (<see cref="HandleCreateLauda"/>/<see cref="HandleUpdateLauda"/>). Qualquer nome de
+    /// campo que não bater EXATAMENTE com um dos nomes definidos no <c>DefaultGcFields</c> do
+    /// Programa é descartado silenciosamente — nunca vira erro 400, porque o próprio formulário da
+    /// dashboard só manda os nomes certos (isto é só uma rede de segurança do lado do servidor, não
+    /// um caminho normal de uso). Programa sem nenhum campo de GC definido = Lauda sem nenhum campo
+    /// de GC possível (consequência direta da trava, não um bug).
+    /// </summary>
+    private static Dictionary<string, string> FilterGcFieldsToProgramSchema(IReadOnlyDictionary<string, string>? programFieldNames, Dictionary<string, string>? submittedFields)
+    {
+        if (submittedFields is null || submittedFields.Count == 0 || programFieldNames is null || programFieldNames.Count == 0)
+        {
+            return new Dictionary<string, string>();
+        }
+
+        return submittedFields
+            .Where(kv => programFieldNames.ContainsKey(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+    }
 
     /// <summary>Sprint 6 (2026-11-16) — GET /api/users: lista os usuários cadastrados (nunca inclui hash/sal de senha — <c>DashboardUserRecord</c> nem os carrega). Só Admin.</summary>
     private static PlaylistDashboardResponse HandleListUsers(string rootFolder, AuthenticatedDashboardUser user)
@@ -608,6 +676,15 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
+        // Sprint GC-Campos-Fixos (2026-11-17): trava os nomes de campo do GC desta Lauda aos nomes
+        // definidos no Programa (ver FilterGcFieldsToProgramSchema) — não é mais texto livre.
+        var (programOk, programError, program) = PlaylistFileStore.GetProgram(rootFolder, request.ProgramId);
+        if (!programOk || program is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, programError ?? "Programa não encontrado.");
+        }
+        var filteredGcFields = FilterGcFieldsToProgramSchema(program.DefaultGcFields, request.GcFields);
+
         // Pedido do usuário (2026-11-15): nenhum campo da Lauda é obrigatório pra salvar, inclusive
         // o Título — "programId"/"editionId" continuam exigidos porque são amarração interna (qual
         // Edição recebe a Lauda), nunca algo que o produtor digita. Ver PlaylistFileStore.CreateLauda
@@ -618,7 +695,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             request.EditionId,
             request.Title,
             request.Type,
-            request.GcFields,
+            filteredGcFields,
             request.TpText,
             request.OffText,
             request.DurationPlanned,
@@ -655,6 +732,17 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             return PlaylistDashboardResponse.PlainTextError(403, "você não tem acesso a este Programa.");
         }
 
+        // Sprint GC-Campos-Fixos (2026-11-17): mesma trava da criação (ver HandleCreateLauda) — os
+        // nomes de campo do GC desta Lauda ficam restritos ao que o Programa define hoje. Se o
+        // Programa mudou o esquema de campos desde a última vez que esta Lauda foi salva, qualquer
+        // campo antigo que não exista mais simplesmente some (nunca vira erro).
+        var (programOk, programError, program) = PlaylistFileStore.GetProgram(rootFolder, request.ProgramId);
+        if (!programOk || program is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, programError ?? "Programa não encontrado.");
+        }
+        var filteredGcFields = FilterGcFieldsToProgramSchema(program.DefaultGcFields, request.GcFields);
+
         var (ok, error, lauda) = PlaylistFileStore.UpdateLauda(
             rootFolder,
             request.ProgramId,
@@ -662,7 +750,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             request.LaudaId,
             request.Title,
             request.Type,
-            request.GcFields,
+            filteredGcFields,
             request.TpText,
             request.OffText,
             request.DurationPlanned,
@@ -1040,7 +1128,10 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         _gcSseChannel = null;
     }
 
-    private sealed record ProgramDto(string Id, string Name);
+    /// <summary>Sprint GC-Campos-Fixos (2026-11-17): <c>DefaultGcFields</c> (nome→valor) é o conjunto de nomes de campo fixo deste Programa — a dashboard usa só as CHAVES pra montar as caixinhas de GC da Lauda (o valor aqui é o "padrão no ar quando nenhuma Lauda estiver mandando o seu", não um valor de exemplo pra Lauda).</summary>
+    private sealed record ProgramDto(string Id, string Name, IReadOnlyDictionary<string, string>? DefaultGcFields);
+
+    private sealed record UpdateProgramGcFieldsRequest(string? ProgramId, Dictionary<string, string>? DefaultGcFields);
 
     /// <summary>Sprint GC (2026-11-17) — devolvido por GET /api/gc/state. <c>isShowingDefault</c> é só pra legenda ("Padrão"/"Lauda") — nunca muda o comportamento de envio pro vMix.</summary>
     private sealed record GcStateDto(bool ManualOverride, IReadOnlyDictionary<string, string> Fields, bool IsShowingDefault, bool IsOnAir);

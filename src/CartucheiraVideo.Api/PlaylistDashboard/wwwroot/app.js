@@ -100,6 +100,18 @@ const userFormError = document.getElementById("user-form-error");
 const userFormCancel = document.getElementById("user-form-cancel");
 const userRemoveButton = document.getElementById("user-remove-button");
 
+// Sprint GC-Campos-Fixos (2026-11-17) — modal "Campos de GC do Programa" (ver comentário completo
+// no index.html) e os elementos novos do formulário de Lauda (caixinhas dinâmicas no lugar da
+// antiga textarea livre #new-lauda-gc).
+const programGcEditButton = document.getElementById("program-gc-edit-button");
+const programGcModal = document.getElementById("program-gc-modal");
+const programGcForm = document.getElementById("program-gc-form");
+const programGcInput = document.getElementById("program-gc-input");
+const programGcFormCancel = document.getElementById("program-gc-form-cancel");
+const programGcFormError = document.getElementById("program-gc-form-error");
+const newLaudaGcFieldsContainer = document.getElementById("new-lauda-gc-fields");
+const newLaudaGcHint = document.getElementById("new-lauda-gc-hint");
+
 let selectedProgramId = null;
 let selectedProgramName_ = null;
 let selectedEditionId = null;
@@ -347,6 +359,51 @@ function stringifyGcFields(fields) {
     .join("\n");
 }
 
+/// Sprint GC-Campos-Fixos (2026-11-17, pedido do usuário "o melhor será ter esses campos na lauda
+/// do GC e aí o produtor só preenche as infos"): nomes de campo (as CHAVES, não os valores) do "GC
+/// padrão" do Programa atualmente aberto (#editions-section/#espelho-section) — é esse conjunto que
+/// define quais caixinhas aparecem no formulário de Lauda. Programa sem defaultGcFields nenhum =
+/// lista vazia (Lauda deste Programa sem nenhum campo de GC possível até um Admin configurar).
+function currentProgramGcFieldNames() {
+  const program = currentPrograms.find((p) => p.id === selectedProgramId);
+  return program && program.defaultGcFields ? Object.keys(program.defaultGcFields) : [];
+}
+
+/// Monta uma caixinha de texto PRA CADA nome de campo do Programa aberto, pré-preenchida com
+/// `values[nome]` quando existir — chamada por openLaudaCreateForm (values vazio) e
+/// openLaudaForEdit (values = lauda.gcFields). Sempre limpa o container antes, então reflete o
+/// esquema ATUAL do Programa mesmo que ele tenha mudado desde a última vez que este formulário abriu.
+function renderLaudaGcFieldInputs(values) {
+  const fieldNames = currentProgramGcFieldNames();
+  newLaudaGcFieldsContainer.innerHTML = "";
+  newLaudaGcHint.classList.toggle("hidden", fieldNames.length > 0);
+  fieldNames.forEach((name) => {
+    const row = document.createElement("div");
+    row.className = "gc-field-row";
+    const label = document.createElement("label");
+    label.textContent = name;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.gcFieldName = name;
+    input.value = (values && values[name]) || "";
+    row.appendChild(label);
+    row.appendChild(input);
+    newLaudaGcFieldsContainer.appendChild(row);
+  });
+}
+
+/// Inverso de renderLaudaGcFieldInputs — lê as caixinhas de volta pro dicionário nome→valor que a
+/// API espera. Manda todos os nomes do Programa, mesmo os deixados em branco (um campo vazio é uma
+/// escolha válida do produtor, ex.: um GC só de "Nome" sem "Cargo" — não precisa virar ausência de
+/// chave; o servidor (FilterGcFieldsToProgramSchema) é quem decide o que realmente é gravado).
+function collectLaudaGcFieldsFromForm() {
+  const fields = {};
+  newLaudaGcFieldsContainer.querySelectorAll("[data-gc-field-name]").forEach((input) => {
+    fields[input.dataset.gcFieldName] = input.value;
+  });
+  return fields;
+}
+
 async function loadLaudas() {
   clearError();
   try {
@@ -449,6 +506,7 @@ function resetLaudaForm() {
 function openLaudaCreateForm() {
   editingLaudaId = null;
   resetLaudaForm();
+  renderLaudaGcFieldInputs({});
   laudaFormTitle.textContent = "Nova Lauda";
   laudaFormSubmit.textContent = "Criar Lauda";
   newLaudaForm.classList.remove("hidden");
@@ -466,7 +524,7 @@ function openLaudaForEdit(lauda) {
   document.getElementById("new-lauda-title").value = lauda.title === "(sem título)" ? "" : lauda.title;
   document.getElementById("new-lauda-type").value = lauda.type || "";
   document.getElementById("new-lauda-duration").value = lauda.durationPlanned || "";
-  document.getElementById("new-lauda-gc").value = stringifyGcFields(lauda.gcFields);
+  renderLaudaGcFieldInputs(lauda.gcFields || {});
   document.getElementById("new-lauda-tp").value = lauda.tpText || "";
   document.getElementById("new-lauda-off").value = lauda.offText || "";
   document.getElementById("new-lauda-notes").value = lauda.notes || "";
@@ -530,6 +588,10 @@ function showAppContent() {
   // HandleCreateProgram, que rejeita com 403 mesmo que alguém force a chamada sem passar por aqui).
   newProgramForm.classList.toggle("hidden", !currentUser.isAdmin);
   notAdminHint.classList.toggle("hidden", currentUser.isAdmin);
+
+  // Sprint GC-Campos-Fixos (2026-11-17) — só Admin edita os campos do GC padrão de um Programa já
+  // criado, mesmo critério de "Criar Programa" acima.
+  programGcEditButton.classList.toggle("hidden", !currentUser.isAdmin);
 
   // Sprint 6 (2026-11-16) — menu "Usuários" só existe pra Admin (decisão confirmada: só Admin
   // gerencia usuários/permissões).
@@ -635,6 +697,43 @@ document.getElementById("new-program-form").addEventListener("submit", async (ev
   }
 });
 
+// Sprint GC-Campos-Fixos (2026-11-17) — modal "Campos de GC do Programa" (Admin), aberto a partir
+// do botão em #editions-section (ver index.html). Continua reaproveitando parseGcFields/
+// stringifyGcFields (formato "Nome: Valor" por linha) — é só na CRIAÇÃO dos nomes que isso faz
+// sentido continuar como texto livre; a Lauda em si (abaixo, no Espelho) já usa as caixinhas fixas.
+function openProgramGcModal() {
+  const program = currentPrograms.find((p) => p.id === selectedProgramId);
+  programGcInput.value = stringifyGcFields(program ? program.defaultGcFields : null);
+  programGcFormError.classList.add("hidden");
+  programGcModal.classList.remove("hidden");
+}
+
+function closeProgramGcModal() {
+  programGcModal.classList.add("hidden");
+  programGcForm.reset();
+}
+
+programGcEditButton.addEventListener("click", openProgramGcModal);
+programGcFormCancel.addEventListener("click", closeProgramGcModal);
+
+programGcForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  programGcFormError.classList.add("hidden");
+  try {
+    await apiPut("/api/playlist/programs/gc-fields", {
+      programId: selectedProgramId,
+      defaultGcFields: programGcInput.value ? parseGcFields(programGcInput.value) : null,
+    });
+    closeProgramGcModal();
+    // Recarrega o cache de Programas (currentPrograms) pra que as caixinhas de GC da próxima Lauda
+    // aberta (Nova ou Editar) já reflitam o esquema novo — ver renderLaudaGcFieldInputs.
+    await loadPrograms();
+  } catch (err) {
+    programGcFormError.textContent = err.message;
+    programGcFormError.classList.remove("hidden");
+  }
+});
+
 document.getElementById("new-edition-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   clearError();
@@ -683,7 +782,6 @@ document.getElementById("new-lauda-form").addEventListener("submit", async (even
   const titleInput = document.getElementById("new-lauda-title");
   const typeInput = document.getElementById("new-lauda-type");
   const durationInput = document.getElementById("new-lauda-duration");
-  const gcInput = document.getElementById("new-lauda-gc");
   const tpInput = document.getElementById("new-lauda-tp");
   const offInput = document.getElementById("new-lauda-off");
   const notesInput = document.getElementById("new-lauda-notes");
@@ -693,7 +791,7 @@ document.getElementById("new-lauda-form").addEventListener("submit", async (even
   const laudaFields = {
     title: titleInput.value,
     type: typeInput.value,
-    gcFields: parseGcFields(gcInput.value),
+    gcFields: collectLaudaGcFieldsFromForm(),
     tpText: tpInput.value || null,
     offText: offInput.value || null,
     durationPlanned: durationInput.value || null,

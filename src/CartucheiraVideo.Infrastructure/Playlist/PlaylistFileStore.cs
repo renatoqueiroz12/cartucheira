@@ -153,6 +153,61 @@ public static class PlaylistFileStore
         }
     }
 
+    /// <summary>
+    /// Sprint GC-Campos-Fixos (2026-11-17, pedido do usuário "o melhor será ter esses campos na
+    /// lauda do GC e aí o produtor só preenche as infos"): até aqui <see cref="DefaultGcFields"/> só
+    /// dava pra definir na HORA DE CRIAR o Programa (<see cref="CreateProgram"/>) — pendência "0l"
+    /// ("não dá pra editar Programa depois de criado"). Este método resolve especificamente essa
+    /// parte (só os campos do GC — nome/fundo padrão continuam sem edição, fora do escopo pedido).
+    /// Substitui o dicionário inteiro (não faz merge) — a tela chama isto sempre com o conjunto
+    /// completo de campos que devem existir dali pra frente.
+    /// </summary>
+    public static (bool Ok, string? Error, PlaylistProgramRecord? Program) UpdateProgramDefaultGcFields(string rootFolder, string programId, Dictionary<string, string>? defaultGcFields)
+    {
+        if (string.IsNullOrWhiteSpace(rootFolder))
+        {
+            return (false, "pasta raiz da Playlist não configurada.", null);
+        }
+
+        if (string.IsNullOrWhiteSpace(programId))
+        {
+            return (false, "Programa não encontrado.", null);
+        }
+
+        try
+        {
+            var (ok, error, index) = ReadProgramsIndex(rootFolder);
+            if (!ok)
+            {
+                return (false, error, null);
+            }
+
+            var entryIndex = index!.Programs.FindIndex(p => string.Equals(p.Id, programId, StringComparison.OrdinalIgnoreCase));
+            if (entryIndex < 0)
+            {
+                return (false, "Programa não encontrado.", null);
+            }
+
+            var updatedEntry = index.Programs[entryIndex] with
+            {
+                DefaultGcFields = defaultGcFields is { Count: > 0 } ? defaultGcFields : null
+            };
+            index.Programs[entryIndex] = updatedEntry;
+
+            var writeError = WriteJson(Path.Combine(rootFolder, ProgramsIndexFileName), index);
+            if (writeError is not null)
+            {
+                return (false, writeError, null);
+            }
+
+            return (true, null, ToProgramRecord(updatedEntry));
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message, null);
+        }
+    }
+
     private static PlaylistProgramRecord ToProgramRecord(ProgramEntryDto dto) =>
         new(dto.Id, dto.Name, dto.FolderName, dto.DefaultBackgroundArtId, dto.DefaultGcFields);
 

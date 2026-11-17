@@ -173,14 +173,35 @@ public sealed class TeleprompterViewModel : IDisposable
     /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — idem, velocidade atual (1-10) do Play automático remoto.</summary>
     public int AutoScrollSpeed => _autoScrollSpeed;
 
-    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — posição de rolagem atual (0..1), lida direto da janela de saída (ver <see cref="TeleprompterOutputWindow.GetScrollFraction"/>) — zero se não houver janela nenhuma aberta agora.</summary>
-    public double ScrollFraction => _window?.GetScrollFraction() ?? 0;
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — posição de rolagem atual (0..1), lida direto da janela de saída (ver <see cref="TeleprompterOutputWindow.GetScrollFraction"/>) — zero se não houver janela nenhuma aberta agora.
+    /// <para><b>Fix v1.0.99 (2026-11-17)</b>: esta leitura toca a janela WPF (<see cref="_window"/>), um objeto com dono de thread — e este getter é chamado pela thread da requisição HTTP sempre que a dashboard pede <c>GET /api/teleprompter/state</c> (ver <see cref="PlaylistDashboardCoordinator.HandleGetTeleprompterState"/>), não pela UI thread. Sem o <see cref="RunOnUiThread{T}"/> abaixo, isso lançava "O thread de chamada não pode acessar este objeto porque ele pertence a um thread diferente" — mesma família de bug já corrigida nos MÉTODOS (<see cref="SetManualOverride"/>/<see cref="SetManualText"/>, Sprint Controle-Remoto-TP parte 2) mas que passou batido nestas três PROPRIEDADES, criadas só na parte 3 e nunca eu havia a reparado de verdade pela dashboard com o DevTools aberto até agora.</para></summary>
+    public double ScrollFraction => RunOnUiThread(() => _window?.GetScrollFraction() ?? 0);
 
-    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — tamanho de fonte ATUAL da janela de saída, pro espelho da dashboard web escalar o texto na mesma proporção (ver <see cref="TeleprompterOutputWindow.CurrentFontSize"/>). Zero se não houver janela nenhuma aberta agora.</summary>
-    public double FontSizePt => _window?.CurrentFontSize ?? 0;
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — tamanho de fonte ATUAL da janela de saída, pro espelho da dashboard web escalar o texto na mesma proporção (ver <see cref="TeleprompterOutputWindow.CurrentFontSize"/>). Zero se não houver janela nenhuma aberta agora. Fix v1.0.99: mesmo motivo de <see cref="ScrollFraction"/>.</summary>
+    public double FontSizePt => RunOnUiThread(() => _window?.CurrentFontSize ?? 0);
 
-    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — espelhamento ATUAL da janela de saída, idem (ver <see cref="TeleprompterOutputWindow.IsMirrored"/>).</summary>
-    public bool IsMirrored => _window?.IsMirrored ?? false;
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — espelhamento ATUAL da janela de saída, idem (ver <see cref="TeleprompterOutputWindow.IsMirrored"/>). Fix v1.0.99: mesmo motivo de <see cref="ScrollFraction"/>.</summary>
+    public bool IsMirrored => RunOnUiThread(() => _window?.IsMirrored ?? false);
+
+    /// <summary>
+    /// Fix v1.0.99 (2026-11-17) — marshala uma LEITURA (função com retorno) pra UI thread quando quem
+    /// chama não é ela, e executa direto (sem Dispatcher nenhum) quando quem chama já É a UI thread —
+    /// evita um <c>Dispatcher.Invoke</c> redundante nas chamadas de dentro da própria janela/ViewModel
+    /// (ex.: o timer de sincronismo em <see cref="SyncMirrorStateIfChanged"/>, que já roda na UI
+    /// thread). Mesmo princípio dos vários <c>Application.Current?.Dispatcher.Invoke</c> já usados
+    /// neste arquivo pros MÉTODOS (que não precisam de valor de volta) — este é o equivalente pra
+    /// PROPRIEDADES somente-leitura.
+    /// </summary>
+    private static T RunOnUiThread<T>(Func<T> read)
+    {
+        var dispatcher = Application.Current?.Dispatcher;
+        if (dispatcher is null || dispatcher.CheckAccess())
+        {
+            return read();
+        }
+
+        return dispatcher.Invoke(read);
+    }
 
     /// <summary>
     /// Sprint Controle-Remoto-TP, parte 2 (2026-11-17, pedido do usuário "2 segundos e muito,

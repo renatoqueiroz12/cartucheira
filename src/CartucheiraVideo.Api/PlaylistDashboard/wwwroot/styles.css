@@ -819,3 +819,32 @@ input[type="file"] {
 .gc-monitor-fallback {
   margin-bottom: 10px;
 }
+
+/* Sprint Playlist-TP (2026-11-17) — navegador Programa→Edição→Laudas dentro da view Teleprompter,
+   pra carregar o texto de uma Lauda já escrita pela produção sem digitar na mão (ver comentário
+   completo no index.html/app.js). Reaproveita .list/.clickable já existentes (Programas/Edições/
+   Laudas da view "Programas") — só o painel colapsável e o estilo das Laudas sem texto são novos. */
+.tp-playlist-picker {
+  margin-bottom: 14px;
+}
+
+.tp-playlist-panel {
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.tp-playlist-panel .list {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.tp-playlist-item-empty {
+  opacity: 0.55;
+}
+
+.tp-playlist-item-empty:hover {
+  opacity: 0.85;
+}

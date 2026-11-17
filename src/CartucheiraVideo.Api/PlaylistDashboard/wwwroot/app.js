@@ -61,6 +61,17 @@ const tpPlayPauseButton = document.getElementById("tp-play-pause-button");
 const tpSpeedSlider = document.getElementById("tp-speed-slider");
 const tpSpeedValue = document.getElementById("tp-speed-value");
 
+// Sprint Playlist-TP (2026-11-17) — navegador Programa→Edição→Laudas dentro da própria view
+// Teleprompter, pra carregar o texto de uma Lauda já escrita pela produção sem precisar digitar na
+// mão. Ver comentário completo no index.html (seção acima de #tp-text-input) sobre as duas decisões
+// confirmadas com o usuário (clique só preenche a caixa; lista mostra TODAS as Laudas da Edição).
+const tpPlaylistToggleButton = document.getElementById("tp-playlist-toggle-button");
+const tpPlaylistPanel = document.getElementById("tp-playlist-panel");
+const tpPlaylistProgramSelect = document.getElementById("tp-playlist-program-select");
+const tpPlaylistEditionSelect = document.getElementById("tp-playlist-edition-select");
+const tpPlaylistLaudasList = document.getElementById("tp-playlist-laudas-list");
+const tpPlaylistError = document.getElementById("tp-playlist-error");
+
 // Sprint GC (2026-11-17) — tela de GC (qualquer usuário logado, mesmo critério do Teleprompter).
 const gcStatusBadge = document.getElementById("gc-status-badge");
 const gcManualToggle = document.getElementById("gc-manual-toggle");
@@ -114,6 +125,15 @@ let draggedLaudaId = null;
 // editado no modal (null = modal em modo "Novo usuário").
 let currentPrograms = [];
 let editingUserId = null;
+
+// Sprint Playlist-TP (2026-11-17) — estado do navegador Programa→Edição→Laudas DENTRO da view
+// Teleprompter, deliberadamente SEPARADO de selectedProgramId/selectedEditionId/currentLaudas (que
+// pertencem à view "Programas" — navegar aqui nunca deve mexer no que está aberto lá, e vice-versa).
+// tpPlaylistProgramsCache evita rebuscar a lista de Programas toda vez que o painel é reaberto na
+// mesma sessão (não muda com frequência; se mudar, reabrir a página pega a lista nova).
+let tpPlaylistProgramsCache = null;
+let tpPlaylistProgramId = null;
+let tpPlaylistEditionId = null;
 
 // Sprint Controle-Remoto-TP, parte 2 (2026-11-17, pedido do usuário "2 segundos e muito,
 // precisamos pensar outra alternativa" ao polling de 2s da parte 1): tpEventSource é a conexão de
@@ -577,6 +597,13 @@ loginForm.addEventListener("submit", async (event) => {
 logoutButton.addEventListener("click", async () => {
   stopTeleprompterStream();
   stopGcStream();
+  // Sprint Playlist-TP (2026-11-17): limpa o cache/estado do navegador Programa→Edição→Laudas do
+  // Teleprompter — sem isso, um login seguinte (de outro usuário, na mesma aba) herdaria a lista de
+  // Programas e a seleção de quem saiu.
+  tpPlaylistProgramsCache = null;
+  resetTeleprompterPlaylistPicker();
+  tpPlaylistPanel.classList.add("hidden");
+  tpPlaylistToggleButton.textContent = "▸ Carregar texto de uma Playlist";
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch (err) {
@@ -955,6 +982,118 @@ tpMirror.addEventListener("click", async (event) => {
   } catch (err) {
     tpError.textContent = err.message;
     tpError.classList.remove("hidden");
+  }
+});
+
+// ===================== Sprint Playlist-TP (2026-11-17) — Playlist dentro do Teleprompter =====================
+// Pedido do usuário: "no teleprompter, ele clique lá, carrega o playlist e traga as laudas de
+// teleprompter daquele playlist [...] caso precise operar manual. Ele carrega os textos ali, vai
+// clicando, ele vai jogando o texto ali onde vai ser exibido [...] a produção já fez todos os
+// textos, dá para abrir e operar manual". Reaproveita as MESMAS rotas GET /api/playlist/programs,
+// /editions, /laudas já usadas pela view "Programas" — nenhuma rota nova no backend. Estado
+// (tpPlaylistProgramId/tpPlaylistEditionId) é independente do selectedProgramId/selectedEditionId
+// da view Programas, de propósito (ver comentário onde são declarados).
+
+function resetTeleprompterPlaylistPicker() {
+  tpPlaylistProgramId = null;
+  tpPlaylistEditionId = null;
+  tpPlaylistEditionSelect.innerHTML = '<option value="">Escolha uma Edição...</option>';
+  tpPlaylistEditionSelect.disabled = true;
+  tpPlaylistLaudasList.innerHTML = "";
+  tpPlaylistError.classList.add("hidden");
+}
+
+tpPlaylistToggleButton.addEventListener("click", async () => {
+  const opening = tpPlaylistPanel.classList.contains("hidden");
+  tpPlaylistPanel.classList.toggle("hidden", !opening);
+  tpPlaylistToggleButton.textContent = opening ? "▾ Carregar texto de uma Playlist" : "▸ Carregar texto de uma Playlist";
+
+  if (!opening) {
+    return;
+  }
+
+  if (tpPlaylistProgramsCache !== null) {
+    return; // já carregado numa abertura anterior desta mesma sessão de página.
+  }
+
+  tpPlaylistError.classList.add("hidden");
+  try {
+    tpPlaylistProgramsCache = await apiGet("/api/playlist/programs");
+    tpPlaylistProgramSelect.innerHTML = '<option value="">Escolha um Programa...</option>';
+    tpPlaylistProgramsCache.forEach((program) => {
+      const option = document.createElement("option");
+      option.value = program.id;
+      option.textContent = program.name;
+      tpPlaylistProgramSelect.appendChild(option);
+    });
+  } catch (err) {
+    tpPlaylistProgramsCache = null;
+    tpPlaylistError.textContent = err.message;
+    tpPlaylistError.classList.remove("hidden");
+  }
+});
+
+tpPlaylistProgramSelect.addEventListener("change", async () => {
+  tpPlaylistProgramId = tpPlaylistProgramSelect.value || null;
+  tpPlaylistEditionId = null;
+  tpPlaylistEditionSelect.innerHTML = '<option value="">Escolha uma Edição...</option>';
+  tpPlaylistLaudasList.innerHTML = "";
+  tpPlaylistError.classList.add("hidden");
+
+  if (!tpPlaylistProgramId) {
+    tpPlaylistEditionSelect.disabled = true;
+    return;
+  }
+
+  try {
+    const editions = await apiGet(`/api/playlist/editions?programId=${encodeURIComponent(tpPlaylistProgramId)}`);
+    editions.forEach((edition) => {
+      const option = document.createElement("option");
+      option.value = edition.id;
+      option.textContent = edition.dateIso;
+      tpPlaylistEditionSelect.appendChild(option);
+    });
+    tpPlaylistEditionSelect.disabled = false;
+  } catch (err) {
+    tpPlaylistError.textContent = err.message;
+    tpPlaylistError.classList.remove("hidden");
+  }
+});
+
+/// Mostra TODAS as Laudas da Edição (decisão confirmada com o usuário) — as sem texto de TP ficam
+/// esmaecidas (.tp-playlist-item-empty) em vez de escondidas, pra manter a ordem/contexto do bloco
+/// visível mesmo nas que não servem pra clicar aqui.
+tpPlaylistEditionSelect.addEventListener("change", async () => {
+  tpPlaylistEditionId = tpPlaylistEditionSelect.value || null;
+  tpPlaylistLaudasList.innerHTML = "";
+  tpPlaylistError.classList.add("hidden");
+
+  if (!tpPlaylistEditionId) {
+    return;
+  }
+
+  try {
+    const laudas = await apiGet(`/api/playlist/laudas?programId=${encodeURIComponent(tpPlaylistProgramId)}&editionId=${encodeURIComponent(tpPlaylistEditionId)}`);
+    tpPlaylistLaudasList.innerHTML = "";
+    laudas
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .forEach((lauda) => {
+        const hasTpText = Boolean(lauda.tpText && lauda.tpText.trim().length > 0);
+        const item = document.createElement("li");
+        item.className = hasTpText ? "clickable" : "clickable tp-playlist-item-empty";
+        item.textContent = `${lauda.order + 1}. ${lauda.title || "(sem título)"} — ${lauda.type || "sem tipo"}${hasTpText ? "" : " (sem texto de TP)"}`;
+        item.addEventListener("click", () => {
+          // Decisão confirmada com o usuário: só preenche a caixa, nunca envia sozinho — "Enviar
+          // texto" (já existente) continua sendo o único jeito de pôr no ar de verdade, dá chance de
+          // revisar antes. Lauda sem texto de TP preenche com vazio (nunca inventa um texto).
+          tpTextInput.value = lauda.tpText || "";
+        });
+        tpPlaylistLaudasList.appendChild(item);
+      });
+  } catch (err) {
+    tpPlaylistError.textContent = err.message;
+    tpPlaylistError.classList.remove("hidden");
   }
 });
 

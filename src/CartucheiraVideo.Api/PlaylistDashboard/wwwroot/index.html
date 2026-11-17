@@ -208,6 +208,37 @@
           </div>
         </div>
 
+        <!-- Sprint Playlist-TP (2026-11-17, pedido do usuário "no teleprompter, ele clique lá, carrega
+             o playlist e traga as laudas de teleprompter daquele playlist [...] caso precise operar
+             manual, ele carrega os textos ali, vai clicando, ele vai jogando o texto ali onde vai ser
+             exibido"): navegador Programa → Edição → Laudas reaproveitando as MESMAS rotas já
+             existentes da view "Programas" (GET /api/playlist/programs/editions/laudas) — nenhuma
+             rota nova. Clicar numa Lauda só PREENCHE #tp-text-input (decisão confirmada com o
+             usuário: nunca manda pro ar sozinho, sempre precisa do "Enviar texto" depois — dá chance
+             de revisar). Mostra TODAS as Laudas da Edição (decisão confirmada), não só as com texto
+             de TP preenchido — as sem texto aparecem esmaecidas (.tp-playlist-item-empty) em vez de
+             escondidas, pra manter a ordem/contexto completo do bloco visível. -->
+        <div class="tp-playlist-picker">
+          <button type="button" id="tp-playlist-toggle-button" class="secondary">▸ Carregar texto de uma Playlist</button>
+          <div id="tp-playlist-panel" class="tp-playlist-panel hidden">
+            <div class="field-row">
+              <label for="tp-playlist-program-select">Programa</label>
+              <select id="tp-playlist-program-select">
+                <option value="">Escolha um Programa...</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="tp-playlist-edition-select">Edição (data)</label>
+              <select id="tp-playlist-edition-select" disabled>
+                <option value="">Escolha uma Edição...</option>
+              </select>
+            </div>
+            <ul id="tp-playlist-laudas-list" class="list tp-playlist-laudas-list"></ul>
+            <p id="tp-playlist-error" class="error hidden"></p>
+            <p class="hint">Clique numa Lauda pra jogar o texto de Teleprompter dela na caixa "Texto exibido" abaixo — ainda precisa clicar em "Enviar texto" pra pôr no ar de verdade. Laudas sem texto de Teleprompter aparecem esmaecidas (não têm o que carregar).</p>
+          </div>
+        </div>
+
         <div class="field-row">
           <label for="tp-text-input">Texto exibido</label>
           <textarea id="tp-text-input" rows="10" placeholder="Digite aqui o texto do teleprompter..."></textarea>

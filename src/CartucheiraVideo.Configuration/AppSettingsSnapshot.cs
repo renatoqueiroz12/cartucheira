@@ -133,4 +133,7 @@ public sealed class AppSettingsSnapshot
 
     /// <summary>Porta pra qual <see cref="PlaylistDashboardFirewallAppliedRuleSchemaVersion"/> foi gravado — junto com ele, decide se a regra precisa ser reaplicada (porta mudou desde a última vez que funcionou).</summary>
     public int? PlaylistDashboardFirewallAppliedForPort { get; set; }
+
+    /// <summary>Configuração do módulo Teleprompter (tela de saída, espelhamento, microfone, Deck fonte) — Sprint Teleprompter (2026-11-16). Ver <see cref="TeleprompterSettingsSnapshot"/>.</summary>
+    public TeleprompterSettingsSnapshot Teleprompter { get; set; } = new();
 }

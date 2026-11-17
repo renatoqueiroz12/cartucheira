@@ -81,6 +81,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private string _clock = DateTime.Now.ToString("HH:mm:ss");
     private readonly DispatcherTimer _clockTimer;
     private readonly SettingsStore _settingsStore;
+    private readonly TeleprompterViewModel _teleprompter;
     private readonly AppSettingsSnapshot _persistedSettings;
     private readonly LibVLC _libVlc;
     private readonly GlobalHotkeyService _hotkeyService = new();
@@ -204,6 +205,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         DeckB = new DeckViewModel("DECK 2", libVlc, OnDeckPlay, OnDeckPause, OnDeckStop, OnDeckMediaEnded, OnDeckError, SetStatus, ResolveLivewireOutput, GetLivewireNetworkInterfaceIp, GetActiveBackgroundArtPath, OnDeckPreview, OnDeckPreviewEnd);
         Decks = new[] { DeckA, DeckB };
 
+        // Sprint Teleprompter (2026-11-16): precisa de DeckA/DeckB já construídos (acima) — ver
+        // InitializeAfterMainWindowShown pra quando a janela/motor de voz realmente ligam (mesmo
+        // motivo de RefreshScreenOutputs/RefreshBackgroundArt não rodarem aqui no construtor).
+        _teleprompter = new TeleprompterViewModel(DeckA, DeckB, SetStatus);
+
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckA, DeckA);
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckB, DeckB);
 
@@ -326,6 +332,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         DeckA.RefreshBackgroundArt();
         DeckB.RefreshBackgroundArt();
+
+        // Sprint Teleprompter (2026-11-16): mesmo motivo/mesmo lugar dos dois pares acima — a
+        // checagem de "nunca abrir no monitor do operador" (ver TeleprompterViewModel.RefreshWindow)
+        // só funciona depois da MainWindow já estar em Application.Current.Windows.
+        _teleprompter.ApplySettings(_persistedSettings.Teleprompter);
     }
 
     public string Title => "Cartucheira Vídeo";
@@ -340,7 +351,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.92";
+    public string VersionLabel => "v1.0.93";
 
     public DeckViewModel DeckA { get; }
 
@@ -524,6 +535,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         LoadIntoDeck(deck, next.FilePath);
         FileExplorer.Playlist.MarkLoadedInDeck(deck, next);
+
+        // Sprint Teleprompter (2026-11-16): mesmo aviso de OnPlaylistItemActivated acima — o avanço
+        // automático também conta como "Lauda carregada" pro Teleprompter.
+        _teleprompter.NotifyDeckLoaded(deck, next.TpText);
     }
 
     /// <summary>
@@ -687,7 +702,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
         }
 
-        var settingsViewModel = new SettingsViewModel(DeckA, DeckB, _settingsStore, _persistedSettings, SetStatus);
+        var settingsViewModel = new SettingsViewModel(DeckA, DeckB, _settingsStore, _persistedSettings, SetStatus, _teleprompter);
         _settingsWindow = new SettingsWindow(settingsViewModel) { Owner = Application.Current?.MainWindow };
         _settingsWindow.Closed += (_, _) =>
         {
@@ -1280,6 +1295,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Sprint 4 (2026-11-16): grava qual Lauda ficou em qual Deck, pra o avanço automático
         // (ver TryAutoAdvancePlaylist) saber de onde continuar quando este Deck terminar sozinho.
         FileExplorer.Playlist.MarkLoadedInDeck(target, item);
+
+        // Sprint Teleprompter (2026-11-16): avisa o Teleprompter também — só tem efeito se "target"
+        // for o Deck fonte configurado (ver TeleprompterViewModel.NotifyDeckLoaded).
+        _teleprompter.NotifyDeckLoaded(target, item.TpText);
     }
 
     private void OnExplorerFileActivated(FileSystemItemViewModel item)
@@ -1347,7 +1366,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 TryParseDurationPlanned(lauda.DurationPlanned),
                 string.IsNullOrWhiteSpace(lauda.FileName) ? string.Empty : Path.Combine(edition.FolderPath, lauda.FileName),
                 isCurrent: index == 0,
-                isNext: index == 1))
+                isNext: index == 1,
+                tpText: lauda.TpText))
             .ToList();
 
         FileExplorer.Playlist.LoadReal(program.Name, edition.DateIso, items);
@@ -1448,5 +1468,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _livewireAdvertiser.Dispose();
         // Sprint Playlist-Dashboard (2026-11-14): sétimo canal a encerrar — servidor HTTP da dashboard web.
         _playlistDashboardCoordinator.Dispose();
+        // Sprint Teleprompter (2026-11-16): oitavo canal a encerrar — fecha a janela de saída e descarta o motor de voz (modelo Vosk + captura do microfone).
+        _teleprompter.Dispose();
     }
 }

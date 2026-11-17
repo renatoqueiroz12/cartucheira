@@ -198,6 +198,27 @@ public sealed class AudioEngine : IDisposable
     }
 
     /// <summary>
+    /// Sprint Teleprompter (2026-11-16): lista os dispositivos de ENTRADA de áudio (microfones,
+    /// WASAPI, via NAudio <see cref="MMDeviceEnumerator"/>) — mesmo papel de
+    /// <see cref="EnumerateOutputDevices"/>, só com <see cref="DataFlow.Capture"/> no lugar de
+    /// <see cref="DataFlow.Render"/>. Usado pelo seletor "Entrada de áudio" da aba Teleprompter de
+    /// Configurações e por <see cref="TeleprompterVoiceEngine"/> pra abrir o microfone escolhido.
+    /// </summary>
+    public static IReadOnlyList<(string DeviceId, string Description)> EnumerateInputDevices()
+    {
+        using var enumerator = new MMDeviceEnumerator();
+        var result = new List<(string DeviceId, string Description)>();
+
+        foreach (var device in enumerator.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active))
+        {
+            result.Add((device.ID, device.FriendlyName));
+            device.Dispose();
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Lê a duração real de um arquivo de áudio SEM tocar ele — só abre o cabeçalho via
     /// <see cref="AudioFileReader"/> (rápido, não decodifica o arquivo inteiro) numa thread separada.
     /// Retorna nulo em qualquer falha (arquivo corrompido, formato não suportado): nenhum valor

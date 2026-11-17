@@ -21,6 +21,16 @@
       O Deck (PlaybackEngine, NDI) continua 100% LibVLCSharp, intocado.
     -->
     <PackageVersion Include="NAudio" Version="2.3.0" />
+
+    <!--
+      Sprint Teleprompter (2026-11-16): reconhecimento de voz LOCAL (offline, mesmo princípio de
+      sempre deste projeto) pro acompanhamento automático do Teleprompter — só
+      CartucheiraVideo.Engine/TeleprompterVoiceEngine.cs. O pacote traz só o binding/runtime nativo
+      do Vosk (libvosk) — o MODELO de voz em si (pt-BR, ~30-50MB) não vem no NuGet, precisa ser
+      baixado à parte e extraído ao lado do .exe (ver TeleprompterVoiceEngine.DefaultModelFolderName
+      e o LEIA-ME desta entrega).
+    -->
+    <PackageVersion Include="Vosk" Version="0.3.38" />
   </ItemGroup>
 
 </Project>

@@ -28,6 +28,9 @@
       PlaybackEngine do Deck continua 100% LibVLCSharp — ver comentário completo em AudioEngine.cs.
     -->
     <PackageReference Include="NAudio" />
+
+    <!-- Sprint Teleprompter (2026-11-16): reconhecimento de voz local (Vosk), usado só por TeleprompterVoiceEngine.cs — ver comentário completo lá e em Directory.Packages.props. -->
+    <PackageReference Include="Vosk" />
   </ItemGroup>
 
 </Project>

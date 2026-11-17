@@ -25,6 +25,10 @@
         Sprint Playlist-Dashboard (2026-11-14): sétima entrada — "Playlist" (PlaylistSettingsPanel)
         — pasta raiz + porta da dashboard web pra produtores, mesmo padrão de Visibility.
 
+        Sprint Teleprompter (2026-11-16): oitava entrada — "Teleprompter" (TeleprompterSettingsPanel)
+        — tela de saída, espelhamento, microfone, Deck fonte e acompanhamento automático por voz,
+        mesmo padrão de Visibility.
+
         Rodapé único (Salvar/Fechar) — diferente do antigo diálogo por Deck, Salvar aqui NÃO fecha a
         janela: aplica e persiste os três painéis de uma vez (SettingsViewModel.SaveCommand) e deixa
         o operador continuar ajustando. Fechar (code-behind) só fecha, sem desfazer nada que já
@@ -143,11 +147,22 @@
                             </Style>
                         </Button.Style>
                     </Button>
-                    <Button Content="Playlist" Command="{Binding SelectPlaylistCommand}">
+                    <Button Content="Playlist" Command="{Binding SelectPlaylistCommand}" Margin="0,0,0,4">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsPlaylistSelected}" Value="True">
+                                        <Setter Property="Tag" Value="Active" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="Teleprompter" Command="{Binding SelectTeleprompterCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsTeleprompterSelected}" Value="True">
                                         <Setter Property="Tag" Value="Active" />
                                     </DataTrigger>
                                 </Style.Triggers>
@@ -184,6 +199,9 @@
                 </Border>
                 <Border Visibility="{Binding IsPlaylistSelected, Converter={StaticResource BoolToVis}}">
                     <views:PlaylistSettingsPanel DataContext="{Binding PlaylistSettings}" />
+                </Border>
+                <Border Visibility="{Binding IsTeleprompterSelected, Converter={StaticResource BoolToVis}}">
+                    <views:TeleprompterSettingsPanel DataContext="{Binding TeleprompterSettings}" />
                 </Border>
             </Grid>
         </Grid>

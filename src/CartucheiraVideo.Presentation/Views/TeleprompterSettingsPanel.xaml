@@ -1,0 +1,78 @@
+<UserControl x:Class="CartucheiraVideo.Presentation.Views.TeleprompterSettingsPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        Sprint Teleprompter (2026-11-16): oitava seção da janela de Configurações, ao lado de
+        Deck 1/Deck 2/Cartucheira/Saídas Livewire/Rede NDI/Arte de Fundo/Playlist. Mesmo padrão de
+        Style.FieldLabel/FieldGroup/SectionTitle redefinidos localmente já usado pelos outros
+        painéis desta janela.
+    -->
+    <UserControl.Resources>
+        <Style x:Key="Theme.FieldLabel" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Small}" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+
+        <Style x:Key="Theme.FieldGroup" TargetType="StackPanel">
+            <Setter Property="Margin" Value="0,0,0,16" />
+        </Style>
+
+        <Style x:Key="Theme.SectionTitle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.Label}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+            <TextBlock Text="Teleprompter" Style="{StaticResource Theme.SectionTitle}" />
+            <TextBlock Text="Mostra o texto de Teleprompter (campo TP de cada Lauda) numa tela separada, acompanhando automaticamente a voz de quem está lendo. O controle manual (seta ↑/↓ ou roda do mouse na janela de saída) sempre funciona, com ou sem o acompanhamento por voz ligado."
+                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,0,0,14" TextWrapping="Wrap" />
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Deck fonte (de qual Deck o Teleprompter pega o texto da Lauda carregada)" Style="{StaticResource Theme.FieldLabel}" />
+                <ComboBox ItemsSource="{Binding SourceDeckOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                          SelectedValue="{Binding SourceDeckSetting}" Width="200" HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Tela de saída" Style="{StaticResource Theme.FieldLabel}" />
+                <ComboBox ItemsSource="{Binding ScreenOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                          SelectedValue="{Binding SelectedScreenDeviceName}" />
+            </StackPanel>
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}" Orientation="Horizontal">
+                <CheckBox IsChecked="{Binding MirrorMode}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <StackPanel>
+                    <TextBlock Text="Modo invertido (espelhado)" Style="{StaticResource Theme.FieldLabel}" Margin="0,0,0,2" />
+                    <TextBlock Text="Só ligue se a tela ficar atrás de um vidro/espelho de 45° (beam splitter) na frente da câmera — ele inverte a imagem de novo, e as duas inversões se cancelam. Olhando direto pra uma tela, deixe desligado."
+                               Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" TextWrapping="Wrap" MaxWidth="420" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Tamanho da fonte (pontos)" Style="{StaticResource Theme.FieldLabel}" />
+                <TextBox Text="{Binding FontSizePt, UpdateSourceTrigger=PropertyChanged}" Width="80" HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <TextBlock Text="Acompanhamento automático por voz" Style="{StaticResource Theme.SectionTitle}" Margin="0,24,0,10" />
+            <TextBlock Text="Reconhecimento de voz local (sem internet) — escuta o microfone e vai casando as palavras com o texto do script pra rolar sozinho. Como qualquer teleprompter de voz (mesmo os comerciais), não é perfeito: pode parar de acompanhar se a leitura sair muito do script, e volta sozinho quando reconhecer palavras do texto de novo. Precisa do modelo de voz instalado nesta máquina (ver LEIA-ME da entrega) — sem ele, esta chave fica sem efeito e o Teleprompter funciona normalmente só no manual."
+                       Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}" Margin="0,0,0,12" TextWrapping="Wrap" />
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}" Orientation="Horizontal">
+                <CheckBox IsChecked="{Binding VoiceTrackingEnabled}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                <TextBlock Text="Ligar acompanhamento automático por voz" VerticalAlignment="Center" Foreground="{DynamicResource Brush.TextHi}" />
+            </StackPanel>
+
+            <StackPanel Style="{StaticResource Theme.FieldGroup}">
+                <TextBlock Text="Entrada de áudio (microfone)" Style="{StaticResource Theme.FieldLabel}" />
+                <ComboBox ItemsSource="{Binding AudioInputOptions}" DisplayMemberPath="Label" SelectedValuePath="Value"
+                          SelectedValue="{Binding SelectedAudioInputDeviceId}" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

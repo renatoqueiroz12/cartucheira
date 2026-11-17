@@ -46,7 +46,8 @@ public sealed class SettingsViewModel : ViewModelBase
         LivewireOutputs,
         NdiNetwork,
         BackgroundArt,
-        Playlist
+        Playlist,
+        Teleprompter
     }
 
     private readonly DeckViewModel _deckA;
@@ -54,6 +55,7 @@ public sealed class SettingsViewModel : ViewModelBase
     private readonly SettingsStore _settingsStore;
     private readonly AppSettingsSnapshot _currentSnapshot;
     private readonly Action<string> _onStatus;
+    private readonly TeleprompterViewModel _teleprompter;
 
     private Section _selectedSection = Section.Deck1;
 
@@ -62,13 +64,15 @@ public sealed class SettingsViewModel : ViewModelBase
         DeckViewModel deckB,
         SettingsStore settingsStore,
         AppSettingsSnapshot currentSnapshot,
-        Action<string> onStatus)
+        Action<string> onStatus,
+        TeleprompterViewModel teleprompter)
     {
         _deckA = deckA ?? throw new ArgumentNullException(nameof(deckA));
         _deckB = deckB ?? throw new ArgumentNullException(nameof(deckB));
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _currentSnapshot = currentSnapshot ?? throw new ArgumentNullException(nameof(currentSnapshot));
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
+        _teleprompter = teleprompter ?? throw new ArgumentNullException(nameof(teleprompter));
 
         // Correção de bug real em teste (2026-08-13): a porta UDP única tentava alcançar esta
         // ViewModel via RelativeSource AncestorType=Window a partir das telas de Cartucheira/Deck —
@@ -105,6 +109,9 @@ public sealed class SettingsViewModel : ViewModelBase
         // BackgroundArtSettings acima — só o snapshot, sem lista compartilhada com outra seção.
         PlaylistSettings = new PlaylistSettingsViewModel(currentSnapshot);
 
+        // Sprint Teleprompter (2026-11-16): mesmo padrão simples de PlaylistSettings acima.
+        TeleprompterSettings = new TeleprompterSettingsViewModel(currentSnapshot);
+
         SelectDeck1Command = new RelayCommand(_ => SelectedSection = Section.Deck1);
         SelectDeck2Command = new RelayCommand(_ => SelectedSection = Section.Deck2);
         SelectCartridgesCommand = new RelayCommand(_ => SelectedSection = Section.Cartridges);
@@ -112,6 +119,7 @@ public sealed class SettingsViewModel : ViewModelBase
         SelectNdiNetworkCommand = new RelayCommand(_ => SelectedSection = Section.NdiNetwork);
         SelectBackgroundArtCommand = new RelayCommand(_ => SelectedSection = Section.BackgroundArt);
         SelectPlaylistCommand = new RelayCommand(_ => SelectedSection = Section.Playlist);
+        SelectTeleprompterCommand = new RelayCommand(_ => SelectedSection = Section.Teleprompter);
 
         SaveCommand = new RelayCommand(_ => Save());
     }
@@ -140,6 +148,9 @@ public sealed class SettingsViewModel : ViewModelBase
     /// <summary>Sprint Playlist-Dashboard (2026-11-14): pasta raiz + porta da dashboard web pra produtores.</summary>
     public PlaylistSettingsViewModel PlaylistSettings { get; }
 
+    /// <summary>Sprint Teleprompter (2026-11-16): tela de saída, espelhamento, microfone, Deck fonte e acompanhamento automático por voz.</summary>
+    public TeleprompterSettingsViewModel TeleprompterSettings { get; }
+
     private Section SelectedSection
     {
         get => _selectedSection;
@@ -154,6 +165,7 @@ public sealed class SettingsViewModel : ViewModelBase
                 OnPropertyChanged(nameof(IsNdiNetworkSelected));
                 OnPropertyChanged(nameof(IsBackgroundArtSelected));
                 OnPropertyChanged(nameof(IsPlaylistSelected));
+                OnPropertyChanged(nameof(IsTeleprompterSelected));
             }
         }
     }
@@ -172,6 +184,8 @@ public sealed class SettingsViewModel : ViewModelBase
 
     public bool IsPlaylistSelected => SelectedSection == Section.Playlist;
 
+    public bool IsTeleprompterSelected => SelectedSection == Section.Teleprompter;
+
     public ICommand SelectDeck1Command { get; }
 
     public ICommand SelectDeck2Command { get; }
@@ -185,6 +199,8 @@ public sealed class SettingsViewModel : ViewModelBase
     public ICommand SelectBackgroundArtCommand { get; }
 
     public ICommand SelectPlaylistCommand { get; }
+
+    public ICommand SelectTeleprompterCommand { get; }
 
     /// <summary>Aplica os dois painéis de Deck e a Cartucheira nos objetos reais, grava o snapshot inteiro no disco e avisa o operador — sem fechar a janela.</summary>
     public ICommand SaveCommand { get; }
@@ -201,6 +217,7 @@ public sealed class SettingsViewModel : ViewModelBase
         NdiNetworkSettings.ApplyTo(_currentSnapshot);
         BackgroundArtSettings.ApplyTo(_currentSnapshot);
         PlaylistSettings.ApplyTo(_currentSnapshot);
+        TeleprompterSettings.ApplyTo(_currentSnapshot);
         _currentSnapshot.UdpTriggerPort = SharedUdpPort.Port;
 
         // Sprint Arte-de-Fundo (2026-11-10): a lista de artes/qual está ativa (linha acima) e o
@@ -218,6 +235,11 @@ public sealed class SettingsViewModel : ViewModelBase
 
         _deckA.RefreshBackgroundArt();
         _deckB.RefreshBackgroundArt();
+
+        // Sprint Teleprompter (2026-11-16): mesmo papel de RefreshScreenOutputs/RefreshBackgroundArt
+        // acima — abre/fecha/reposiciona a janela de saída e aplica tela/espelho/microfone/voz
+        // novos, sem esperar o próximo Lauda carregada ou reinício do programa.
+        _teleprompter.ApplySettings(_currentSnapshot.Teleprompter);
 
         var saved = _settingsStore.Save(_currentSnapshot);
         _onStatus(saved

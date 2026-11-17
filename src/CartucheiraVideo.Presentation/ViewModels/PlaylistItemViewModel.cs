@@ -20,7 +20,7 @@ public sealed class PlaylistItemViewModel : ViewModelBase
     private bool _isCurrent;
     private bool _isNext;
 
-    public PlaylistItemViewModel(int index, string name, TimeSpan? duration, string filePath, bool isCurrent, bool isNext)
+    public PlaylistItemViewModel(int index, string name, TimeSpan? duration, string filePath, bool isCurrent, bool isNext, string? tpText = null)
     {
         Index = index;
         Name = name;
@@ -28,6 +28,7 @@ public sealed class PlaylistItemViewModel : ViewModelBase
         _isCurrent = isCurrent;
         _isNext = isNext;
         DurationDisplay = duration?.ToString(@"mm\:ss") ?? "—";
+        TpText = tpText;
     }
 
     /// <summary>Posição 1-based na sequência (coluna "#" do mockup).</summary>
@@ -44,6 +45,9 @@ public sealed class PlaylistItemViewModel : ViewModelBase
     public string FilePath { get; }
 
     public bool HasRealFile => !string.IsNullOrWhiteSpace(FilePath);
+
+    /// <summary>Texto de teleprompter (TP) desta Lauda (<see cref="Core.PlaylistLauda.TpText"/>) — nulo pros itens de exemplo (ver <see cref="PlaylistViewModel.CreateSampleItems"/>) ou Laudas sem TP preenchido. Lido pelo <c>MainViewModel</c> (mesmos pontos que chamam <see cref="PlaylistViewModel.MarkLoadedInDeck"/>) pra repassar ao <see cref="TeleprompterViewModel"/>.</summary>
+    public string? TpText { get; }
 
     /// <summary>Linha destacada — este é o item tocando agora (selo "TOCANDO" vermelho no mockup).</summary>
     public bool IsCurrent

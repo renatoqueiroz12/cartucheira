@@ -6,9 +6,27 @@
         Topmost="True"
         ShowInTaskbar="False"
         ResizeMode="NoResize"
-        Background="Black">
+        Background="Black"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
 
     <!--
+        Fix v1.0.103 (2026-11-17, "qd começa a executar fica tremido, igual era antes da correção" —
+        reportado DEPOIS do fix v1.0.100, que já tinha corrigido o engasgo de TEMPO/velocidade real
+        — usuário confirmou, descartando build desatualizado/NDI/processo antigo, que a tremida
+        continua o tempo todo em qualquer velocidade numa tela conectada direto). Causa DIFERENTE da
+        v1.0.100 (que corrigia a IRREGULARIDADE entre um avanço e o próximo): o avanço em si, mesmo
+        perfeitamente regular, é de uma fração de pixel por quadro (ex.: ~1.2px a cada 1/60s numa
+        velocidade comum) — WPF, no modo de formatação de texto padrão ("Ideal"), reposiciona o
+        ClearType (hinting de contorno) a cada fração de pixel que o texto se desloca, fazendo os
+        CONTORNOS das letras "vibrarem" visualmente mesmo com o MOVIMENTO sendo matematicamente
+        suave. `TextOptions.TextFormattingMode="Display"` (em vez do "Ideal" padrão) e
+        `UseLayoutRounding="True"` arredondam a renderização do texto pro pixel físico mais próximo a
+        cada quadro, eliminando esse recálculo de hinting em sub-pixel — troca um pouquinho de
+        precisão tipográfica (imperceptível num teleprompter, que não usa fontes pequenas) por
+        estabilidade visual durante a rolagem. Mesmo princípio recomendado pela própria documentação
+        do WPF pra texto animado/rolando.
+
         Sprint Teleprompter (2026-11-16): mesmo princípio de "monitor renderizado" do
         ScreenOutputWindow (Sprint Telas-Saida-Direta) — sem DataContext/Binding de propósito, quem
         controla o conteúdo é TeleprompterViewModel chamando os métodos públicos do code-behind

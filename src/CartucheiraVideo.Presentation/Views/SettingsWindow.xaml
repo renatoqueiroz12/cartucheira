@@ -29,6 +29,10 @@
         — tela de saída, espelhamento, microfone, Deck fonte e acompanhamento automático por voz,
         mesmo padrão de Visibility.
 
+        Sprint GC (2026-11-17): nona entrada — "GC" (GcSettingsPanel) — conexão vMix do Título do
+        GC, Deck fonte e a lista de Campos do mockup configurável do monitoramento remoto, mesmo
+        padrão de Visibility.
+
         Rodapé único (Salvar/Fechar) — diferente do antigo diálogo por Deck, Salvar aqui NÃO fecha a
         janela: aplica e persiste os três painéis de uma vez (SettingsViewModel.SaveCommand) e deixa
         o operador continuar ajustando. Fechar (code-behind) só fecha, sem desfazer nada que já
@@ -158,11 +162,22 @@
                             </Style>
                         </Button.Style>
                     </Button>
-                    <Button Content="Teleprompter" Command="{Binding SelectTeleprompterCommand}">
+                    <Button Content="Teleprompter" Command="{Binding SelectTeleprompterCommand}" Margin="0,0,0,4">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding IsTeleprompterSelected}" Value="True">
+                                        <Setter Property="Tag" Value="Active" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                    <Button Content="GC" Command="{Binding SelectGcCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource Theme.SettingsNavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsGcSelected}" Value="True">
                                         <Setter Property="Tag" Value="Active" />
                                     </DataTrigger>
                                 </Style.Triggers>
@@ -202,6 +217,9 @@
                 </Border>
                 <Border Visibility="{Binding IsTeleprompterSelected, Converter={StaticResource BoolToVis}}">
                     <views:TeleprompterSettingsPanel DataContext="{Binding TeleprompterSettings}" />
+                </Border>
+                <Border Visibility="{Binding IsGcSelected, Converter={StaticResource BoolToVis}}">
+                    <views:GcSettingsPanel DataContext="{Binding GcSettings}" />
                 </Border>
             </Grid>
         </Grid>

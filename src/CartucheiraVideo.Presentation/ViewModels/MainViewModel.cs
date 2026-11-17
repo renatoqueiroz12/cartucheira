@@ -82,6 +82,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly DispatcherTimer _clockTimer;
     private readonly SettingsStore _settingsStore;
     private readonly TeleprompterViewModel _teleprompter;
+
+    /// <summary>Sprint GC (2026-11-17) — ver comentário de classe completo em <see cref="GcViewModel"/>.</summary>
+    private readonly GcViewModel _gc;
     private readonly AppSettingsSnapshot _persistedSettings;
     private readonly LibVLC _libVlc;
     private readonly GlobalHotkeyService _hotkeyService = new();
@@ -210,6 +213,13 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // motivo de RefreshScreenOutputs/RefreshBackgroundArt não rodarem aqui no construtor).
         _teleprompter = new TeleprompterViewModel(DeckA, DeckB, SetStatus);
 
+        // Sprint GC (2026-11-17): mesmo motivo de precisar de DeckA/DeckB já construídos — mas,
+        // diferente do Teleprompter, não existe nenhuma janela WPF pra abrir (o "destino" do GC é
+        // só uma chamada de rede pro vMix), então ApplySettings pode rodar direto aqui, sem esperar
+        // InitializeAfterMainWindowShown.
+        _gc = new GcViewModel(DeckA, DeckB, SetStatus);
+        _gc.ApplySettings(_persistedSettings.Gc);
+
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckA, DeckA);
         SettingsMapper.ApplyToDeck(_persistedSettings.DeckB, DeckB);
 
@@ -277,7 +287,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Sprint Controle-Remoto-TP (2026-11-17): _teleprompter já foi construído acima (linha
         // _teleprompter = new TeleprompterViewModel(...)) — passado direto (mesmo princípio de
         // DeckA/DeckB), não por callback, porque a instância nunca troca durante a vida do programa.
-        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus, () => _persistedSettings.BackgroundArtPresets, _teleprompter);
+        // Sprint GC (2026-11-17): _gc já foi construído acima (linha _gc = new GcViewModel(...)) —
+        // passado direto, mesmo princípio de _teleprompter. getGcFieldLayout segue o mesmo padrão de
+        // getBackgroundArtPresets (lido de novo a cada requisição, reflete qualquer edição salva em
+        // Configurações → GC sem precisar reiniciar a dashboard).
+        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus, () => _persistedSettings.BackgroundArtPresets, _teleprompter, _gc, () => _persistedSettings.Gc.FieldLayout);
         ReapplyPlaylistDashboardSettings();
 
         ApplyExternalTriggerSettings();
@@ -354,7 +368,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.97";
+    public string VersionLabel => "v1.0.98";
 
     public DeckViewModel DeckA { get; }
 
@@ -461,6 +475,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // DeckViewModel.TriggerVMixOnPlay — corta o PGM do vMix pro Input deste Deck, sem bloquear.
         deck.TriggerVMixOnPlay();
 
+        // Sprint GC (2026-11-17): Lauda COM VT — dispara o GC dela ao dar Play (ver decisão #1 em
+        // GcViewModel). Lê os GcFields da Lauda que a Playlist registrou como carregada neste Deck
+        // (TryGetLoadedItem) — nulo/vazio se este Deck tocou algo fora da Playlist (ex.: Explorer),
+        // caso em que NotifyDeckPlay é um no-op silencioso.
+        _gc.NotifyDeckPlay(deck, FileExplorer.Playlist.TryGetLoadedItem(deck)?.GcFields);
+
         PauseCartucheiraFor(deck);
         SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnPlayCommand);
 
@@ -480,6 +500,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ResumeCartucheiraFor(deck);
         SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnEndCommand);
         deck.TriggerVMixOnEnd();
+
+        // Sprint GC (2026-11-17): ver decisão #1 em GcViewModel — só reverte pro GC padrão se foi
+        // ESTE Deck quem colocou o GC atual no ar (no-op silencioso senão).
+        _gc.NotifyDeckEnded(deck);
     }
 
     /// <summary>
@@ -508,6 +532,11 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         ResumeCartucheiraFor(deck);
         SendOutboundDeckTrigger(deck, settings => settings.OutboundUdpOnEndCommand);
         deck.TriggerVMixOnEnd();
+
+        // Sprint GC (2026-11-17): mesmo critério de "terminou" de sempre neste projeto — fim NATURAL
+        // conta igual a Stop manual pra decisão #1 de GcViewModel.
+        _gc.NotifyDeckEnded(deck);
+
         TryAutoAdvancePlaylist(deck);
     }
 
@@ -542,6 +571,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Sprint Teleprompter (2026-11-16): mesmo aviso de OnPlaylistItemActivated acima — o avanço
         // automático também conta como "Lauda carregada" pro Teleprompter.
         _teleprompter.NotifyDeckLoaded(deck, next.TpText);
+
+        // Sprint GC (2026-11-17): mesmo aviso, pro GC de Laudas SEM VT (ver decisão #2 em
+        // GcViewModel) — Laudas COM VT são ignoradas aqui, ficam só por conta de NotifyDeckPlay.
+        _gc.NotifyDeckLoaded(deck, next.FilePath, next.GcFields);
     }
 
     /// <summary>
@@ -705,7 +738,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             }
         }
 
-        var settingsViewModel = new SettingsViewModel(DeckA, DeckB, _settingsStore, _persistedSettings, SetStatus, _teleprompter);
+        var settingsViewModel = new SettingsViewModel(DeckA, DeckB, _settingsStore, _persistedSettings, SetStatus, _teleprompter, _gc);
         _settingsWindow = new SettingsWindow(settingsViewModel) { Owner = Application.Current?.MainWindow };
         _settingsWindow.Closed += (_, _) =>
         {
@@ -1302,6 +1335,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // Sprint Teleprompter (2026-11-16): avisa o Teleprompter também — só tem efeito se "target"
         // for o Deck fonte configurado (ver TeleprompterViewModel.NotifyDeckLoaded).
         _teleprompter.NotifyDeckLoaded(target, item.TpText);
+
+        // Sprint GC (2026-11-17): mesmo aviso, pro GC de Laudas SEM VT (ver decisão #2 em
+        // GcViewModel).
+        _gc.NotifyDeckLoaded(target, item.FilePath, item.GcFields);
     }
 
     private void OnExplorerFileActivated(FileSystemItemViewModel item)
@@ -1370,7 +1407,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
                 string.IsNullOrWhiteSpace(lauda.FileName) ? string.Empty : Path.Combine(edition.FolderPath, lauda.FileName),
                 isCurrent: index == 0,
                 isNext: index == 1,
-                tpText: lauda.TpText))
+                tpText: lauda.TpText,
+                gcFields: lauda.GcFields))
             .ToList();
 
         FileExplorer.Playlist.LoadReal(program.Name, edition.DateIso, items);
@@ -1381,6 +1419,12 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             DeckA.RefreshBackgroundArt();
             DeckB.RefreshBackgroundArt();
         }
+
+        // Sprint GC (2026-11-17, pedido do usuário "tem que ter um campo no setup do programa para
+        // colocar o GC padrao"): troca o GC padrão pro deste Programa (vazio/nulo = sem GC padrão —
+        // GcViewModel esconde o Título do vMix em vez de inventar texto), mesmo princípio de
+        // ActiveBackgroundArtId acima.
+        _gc.SetDefaultFields(program.DefaultGcFields);
     }
 
     /// <summary>

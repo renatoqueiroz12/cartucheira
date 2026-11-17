@@ -21,6 +21,7 @@ const views = Array.from(document.querySelectorAll(".view"));
 const VIEW_META = {
   "programs-view": { title: "Programas", subtitle: "Organização de materiais por Programa e Data." },
   "teleprompter-view": { title: "Teleprompter", subtitle: "Controle remoto do texto do teleprompter — de qualquer PC na rede local." },
+  "gc-view": { title: "GC", subtitle: "Monitoramento e controle remoto do GC (gerador de caracteres) enviado pro vMix." },
   "users-view": { title: "Usuários", subtitle: "Quem acessa a dashboard e quais Programas cada um vê/edita." },
 };
 
@@ -59,6 +60,17 @@ const tpStepDownButton = document.getElementById("tp-step-down-button");
 const tpPlayPauseButton = document.getElementById("tp-play-pause-button");
 const tpSpeedSlider = document.getElementById("tp-speed-slider");
 const tpSpeedValue = document.getElementById("tp-speed-value");
+
+// Sprint GC (2026-11-17) — tela de GC (qualquer usuário logado, mesmo critério do Teleprompter).
+const gcStatusBadge = document.getElementById("gc-status-badge");
+const gcManualToggle = document.getElementById("gc-manual-toggle");
+const gcMonitor = document.getElementById("gc-monitor");
+const gcMonitorFallback = document.getElementById("gc-monitor-fallback");
+const gcFieldsInput = document.getElementById("gc-fields-input");
+const gcSendFieldsButton = document.getElementById("gc-send-fields-button");
+const gcClearFieldsButton = document.getElementById("gc-clear-fields-button");
+const gcError = document.getElementById("gc-error");
+const newProgramGcInput = document.getElementById("new-program-gc");
 
 // Sprint 6 — tela de Usuários (Admin).
 const usersList = document.getElementById("users-list");
@@ -112,6 +124,14 @@ let editingUserId = null;
 // uma ação do próprio usuário.
 let tpEventSource = null;
 let tpManualState = false;
+
+// Sprint GC (2026-11-17) — mesmo papel de tpEventSource/tpManualState, pra view "gc-view".
+// gcFieldLayout guarda a lista de posições do mockup (Configurações → GC), buscada uma vez ao
+// abrir a view — não muda em tempo real, não precisa de SSE próprio (diferente dos valores dos
+// campos, que mudam via applyGcState).
+let gcEventSource = null;
+let gcManualState = false;
+let gcFieldLayout = [];
 
 // Parte 3 (2026-11-17) — tpSpeedDragging evita a mesma "briga" que já existe pro #tp-text-input
 // (ver applyTeleprompterState): enquanto o usuário está arrastando o slider de velocidade, um
@@ -522,8 +542,9 @@ navItems.forEach((item) => {
     // Sprint Controle-Remoto-TP (2026-11-17, EventSource desde a parte 2): a conexão de estado do
     // Teleprompter só fica aberta enquanto a view dele estiver aberta — sair da view (clicar em
     // qualquer outro item do menu) fecha, mesmo que seja pra outra view que não "desliga" nada
-    // sozinha.
+    // sozinha. Sprint GC (2026-11-17): mesmo princípio pro stream do GC.
     stopTeleprompterStream();
+    stopGcStream();
 
     showView(viewId);
 
@@ -531,6 +552,8 @@ navItems.forEach((item) => {
       await loadUsers();
     } else if (viewId === "teleprompter-view") {
       startTeleprompterStream();
+    } else if (viewId === "gc-view") {
+      startGcStream();
     }
   });
 });
@@ -553,6 +576,7 @@ loginForm.addEventListener("submit", async (event) => {
 
 logoutButton.addEventListener("click", async () => {
   stopTeleprompterStream();
+  stopGcStream();
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch (err) {
@@ -571,9 +595,13 @@ document.getElementById("new-program-form").addEventListener("submit", async (ev
     await apiPost("/api/playlist/programs", {
       name: nameInput.value,
       defaultBackgroundArtId: newProgramBackgroundArtSelect.value || null,
+      // Sprint GC (2026-11-17, pedido do usuário "tem que ter um campo no setup do programa para
+      // colocar o GC padrao") — mesmo formato "Nome: Valor" por linha do GC de cada Lauda.
+      defaultGcFields: newProgramGcInput.value ? parseGcFields(newProgramGcInput.value) : null,
     });
     nameInput.value = "";
     newProgramBackgroundArtSelect.value = "";
+    newProgramGcInput.value = "";
     await loadPrograms();
   } catch (err) {
     showError(err.message);
@@ -927,6 +955,175 @@ tpMirror.addEventListener("click", async (event) => {
   } catch (err) {
     tpError.textContent = err.message;
     tpError.classList.remove("hidden");
+  }
+});
+
+// ===================== Sprint GC (2026-11-17) — GC remoto =====================
+// Pedido do usuário: "o sistema cartucheira vai enviar para o VMIX O GC automaticamente, assim que
+// o tp ou vt for ativado [...] temos que ter um controle parecido ao tp para ser controlado qd
+// necessario, dessativa o auto e enva um GC manualmente caso necessário [...] tenho o
+// monitoramento do que esta no ar, parecido com o tp" — mesma estrutura de três peças do
+// Teleprompter remoto (status/manual, SSE em vez de polling, monitoramento ao vivo), só que sem
+// nenhuma janela/voz: o "destino" é só um conjunto de campos nome→valor mandado pro Título do vMix
+// (ver GcViewModel/PlaylistDashboardCoordinator.HandleGetGcState/HandleSetGcManual/HandleSetGcFields).
+//
+// Monitoramento: depois de pesquisar (ver GcSettingsSnapshot/GcFieldLayout) que a API do vMix NÃO
+// tem como mandar uma imagem/preview ao vivo do Título pela rede (só salva arquivo localmente na
+// máquina do vMix), perguntei ao usuário como seguir — escolheu "Mockup configurável": o operador
+// desenha a posição aproximada de cada campo uma vez em Configurações → GC (retângulo de
+// referência 1920x1080, mesma lógica do espelho do Teleprompter), e #gc-monitor abaixo desenha
+// esses retângulos com o VALOR atual de cada campo, escalados pra largura real da tela. Nenhum
+// campo cadastrado ainda (gcFieldLayout vazio) cai pra uma lista simples nome/valor (#gc-monitor-fallback).
+
+/// Busca a lista de posições do mockup uma vez por abertura da view — não muda em tempo real
+/// (precisaria reabrir a view depois de editar Configurações → GC pra ver a mudança, mesmo
+/// critério "nunca inventa"/"sem polling desnecessário" do resto desta dashboard).
+async function loadGcFieldLayout() {
+  try {
+    gcFieldLayout = await apiGet("/api/gc/layout");
+  } catch (err) {
+    gcFieldLayout = []; // falha honesta — cai pro fallback de lista simples.
+  }
+}
+
+/// Desenha #gc-monitor (mockup, se gcFieldLayout tiver algo) ou #gc-monitor-fallback (lista simples
+/// nome/valor, senão) com os campos de <paramref name="fields"/> — chamado a cada applyGcState.
+function renderGcMonitor(fields) {
+  const entries = Object.entries(fields || {});
+
+  if (gcFieldLayout.length === 0) {
+    gcMonitor.classList.add("hidden");
+    gcMonitorFallback.classList.remove("hidden");
+    gcMonitorFallback.innerHTML = "";
+    if (entries.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "hint";
+      empty.textContent = "Nada no ar agora.";
+      gcMonitorFallback.appendChild(empty);
+    } else {
+      entries.forEach(([name, value]) => {
+        const item = document.createElement("li");
+        item.textContent = `${name}: ${value}`;
+        gcMonitorFallback.appendChild(item);
+      });
+    }
+    return;
+  }
+
+  gcMonitorFallback.classList.add("hidden");
+  gcMonitor.classList.remove("hidden");
+  gcMonitor.innerHTML = "";
+
+  // Retângulo de referência 1920x1080 (ver comentário da seção) escalado pra largura real de
+  // #gc-monitor — mesma ideia de TP_MIRROR_REFERENCE_WIDTH_PX, aplicada em X/Y/Largura/Altura/Fonte
+  // em vez de só no tamanho da fonte.
+  const scale = gcMonitor.clientWidth / 1920;
+  gcMonitor.style.height = Math.round(1080 * scale) + "px";
+
+  const fieldsByName = Object.fromEntries(entries);
+  gcFieldLayout.forEach((layout) => {
+    const box = document.createElement("div");
+    box.className = "gc-field-box";
+    box.style.left = Math.round(layout.x * scale) + "px";
+    box.style.top = Math.round(layout.y * scale) + "px";
+    box.style.width = Math.round(layout.width * scale) + "px";
+    box.style.height = Math.round(layout.height * scale) + "px";
+    box.style.fontSize = Math.max(8, Math.round((layout.fontSizePt || 28) * scale * 1.333)) + "px";
+    box.textContent = fieldsByName[layout.name] || "";
+    box.classList.toggle("empty", !fieldsByName[layout.name]);
+    gcMonitor.appendChild(box);
+  });
+}
+
+/// Aplica um estado {manualOverride, fields, isShowingDefault, isOnAir} na UI — mesmo papel de
+/// applyTeleprompterState.
+function applyGcState(state) {
+  gcManualState = state.manualOverride;
+  gcManualToggle.checked = state.manualOverride;
+  gcStatusBadge.textContent = state.manualOverride ? "Manual" : "Automático";
+  gcStatusBadge.classList.toggle("manual", state.manualOverride);
+  gcStatusBadge.classList.toggle("auto", !state.manualOverride);
+
+  gcFieldsInput.disabled = !state.manualOverride;
+  gcSendFieldsButton.disabled = !state.manualOverride;
+  gcClearFieldsButton.disabled = !state.manualOverride;
+
+  // Mesmo cuidado de "não brigar com quem está digitando" de applyTeleprompterState — só
+  // sobrescreve o campo quando ele não está em uso.
+  if (document.activeElement !== gcFieldsInput) {
+    gcFieldsInput.value = stringifyGcFields(state.fields);
+  }
+
+  renderGcMonitor(state.fields);
+}
+
+async function loadGcState() {
+  try {
+    const state = await apiGet("/api/gc/state");
+    gcError.classList.add("hidden");
+    applyGcState(state);
+  } catch (err) {
+    gcError.textContent = err.message;
+    gcError.classList.remove("hidden");
+  }
+}
+
+/// Mesmo padrão de startTeleprompterStream/stopTeleprompterStream — GET inicial (+ layout do
+/// mockup) primeiro, depois liga o EventSource pras próximas atualizações.
+function startGcStream() {
+  stopGcStream();
+  loadGcFieldLayout().then(loadGcState);
+
+  gcEventSource = new EventSource("/api/gc/stream");
+  gcEventSource.addEventListener("state", (event) => {
+    gcError.classList.add("hidden");
+    applyGcState(JSON.parse(event.data));
+  });
+  gcEventSource.addEventListener("error", () => {
+    gcError.textContent = "conexão com a Cartucheira caiu — tentando reconectar...";
+    gcError.classList.remove("hidden");
+  });
+}
+
+function stopGcStream() {
+  if (gcEventSource !== null) {
+    gcEventSource.close();
+    gcEventSource = null;
+  }
+}
+
+gcManualToggle.addEventListener("change", async () => {
+  gcError.classList.add("hidden");
+  const wanted = gcManualToggle.checked;
+  gcManualToggle.disabled = true;
+  try {
+    applyGcState(await apiPost("/api/gc/manual", { enabled: wanted }));
+  } catch (err) {
+    gcManualToggle.checked = gcManualState; // desfaz a marcação — a chamada falhou.
+    gcError.textContent = err.message;
+    gcError.classList.remove("hidden");
+  } finally {
+    gcManualToggle.disabled = false;
+  }
+});
+
+gcSendFieldsButton.addEventListener("click", async () => {
+  gcError.classList.add("hidden");
+  try {
+    applyGcState(await apiPost("/api/gc/fields", { fields: parseGcFields(gcFieldsInput.value) }));
+  } catch (err) {
+    gcError.textContent = err.message;
+    gcError.classList.remove("hidden");
+  }
+});
+
+gcClearFieldsButton.addEventListener("click", async () => {
+  gcError.classList.add("hidden");
+  try {
+    applyGcState(await apiPost("/api/gc/fields", { fields: {} }));
+  } catch (err) {
+    gcError.textContent = err.message;
+    gcError.classList.remove("hidden");
   }
 });
 

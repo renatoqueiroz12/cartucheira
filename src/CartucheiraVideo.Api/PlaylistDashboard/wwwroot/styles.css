@@ -781,3 +781,41 @@ input[type="file"] {
   font-weight: 700;
   flex-shrink: 0;
 }
+
+/* Sprint GC (2026-11-17) — monitoramento remoto do GC: mockup configurável (retângulo de
+   referência 1920x1080 escalado em JS, ver renderGcMonitor em app.js) ou, sem nenhum campo
+   cadastrado em Configurações → GC, a lista simples #gc-monitor-fallback (reaproveita .list). */
+.gc-monitor {
+  position: relative;
+  width: 100%;
+  margin-bottom: 10px;
+  background: #000000;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.gc-field-box {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+  font-family: "Segoe UI", var(--font-sans, sans-serif);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gc-field-box.empty {
+  border-style: dotted;
+  color: var(--text-faint);
+}
+
+.gc-monitor-fallback {
+  margin-bottom: 10px;
+}

@@ -65,6 +65,16 @@ namespace CartucheiraVideo.Presentation;
 /// de espera artificial. As três rotas REST da parte 1 continuam todas existindo sem mudança
 /// nenhuma (ações continuam sendo pedidas por POST normal; SSE é só pro sentido contrário,
 /// servidor→navegador).
+///
+/// **Módulo GC — Sprint GC (2026-11-17, pedido do usuário "precisamos criar o modulo GC [...]
+/// temos que ter um controle parecido ao tp [...] tenho o monitoramento do que esta no ar, parecido
+/// com o tp")**: quatro rotas novas (<see cref="HandleGetGcState"/>/<see cref="HandleGetGcLayout"/>/
+/// <see cref="HandleSetGcManual"/>/<see cref="HandleSetGcFields"/>) + <see cref="_gcSseChannel"/> —
+/// mesmo papel/mesmo padrão exato das rotas do Teleprompter acima (referência direta à instância
+/// fixa <see cref="_gc"/>, sem checagem de <c>IsAdmin</c>/<see cref="HasAccessToProgram"/>: o GC
+/// também é por estúdio, não por Programa). <c>POST /api/playlist/programs</c> ganhou
+/// <c>defaultGcFields</c> no corpo (ver <see cref="CreateProgramRequest"/>) — o "campo no setup do
+/// programa pra colocar o GC padrão" pedido pelo usuário.
 /// </summary>
 public sealed class PlaylistDashboardCoordinator : IDisposable
 {
@@ -77,6 +87,13 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     private readonly Action<string> _onStatus;
     private readonly Func<IReadOnlyList<BackgroundArtPreset>> _getBackgroundArtPresets;
     private readonly ViewModels.TeleprompterViewModel _teleprompter;
+
+    /// <summary>Sprint GC (2026-11-17) — ver comentário completo em <see cref="ViewModels.GcViewModel"/>; referência direta igual <see cref="_teleprompter"/>, mesmo motivo.</summary>
+    private readonly ViewModels.GcViewModel _gc;
+
+    /// <summary>Sprint GC (2026-11-17) — lista de campos do mockup configurável (Configurações → GC), mesmo padrão de <see cref="_getBackgroundArtPresets"/> (lido de novo a cada requisição, nunca cacheado).</summary>
+    private readonly Func<IReadOnlyList<GcFieldLayout>> _getGcFieldLayout;
+
     private PlaylistDashboardHost? _host;
 
     /// <summary>
@@ -89,6 +106,9 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     /// usa <c>?.</c> de propósito, broadcast sem ninguém escutando não é erro.
     /// </summary>
     private PlaylistSseChannel? _teleprompterSseChannel;
+
+    /// <summary>Sprint GC (2026-11-17) — mesmo papel/mesmo motivo de <see cref="_teleprompterSseChannel"/>, canal próprio da rota <c>GET /api/gc/stream</c>.</summary>
+    private PlaylistSseChannel? _gcSseChannel;
 
     /// <summary>
     /// <paramref name="getBackgroundArtPresets"/> — Sprint 3 (2026-11-16, pedido do usuário "cada
@@ -104,17 +124,31 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     /// instância é construída uma única vez pelo <c>MainViewModel</c> e vive durante todo o
     /// programa, mesmo princípio de <c>DeckA</c>/<c>DeckB</c> serem passados direto pra outros
     /// construtores desta base. Ver comentário de classe completo sobre as três rotas novas.
+    ///
+    /// <paramref name="gc"/>/<paramref name="getGcFieldLayout"/> — Sprint GC (2026-11-17): mesmos
+    /// dois princípios acima aplicados ao módulo GC — <paramref name="gc"/> é referência direta
+    /// (instância fixa), <paramref name="getGcFieldLayout"/> é lido de novo a cada requisição.
     /// </summary>
-    public PlaylistDashboardCoordinator(Action<string> onStatus, Func<IReadOnlyList<BackgroundArtPreset>> getBackgroundArtPresets, ViewModels.TeleprompterViewModel teleprompter)
+    public PlaylistDashboardCoordinator(
+        Action<string> onStatus,
+        Func<IReadOnlyList<BackgroundArtPreset>> getBackgroundArtPresets,
+        ViewModels.TeleprompterViewModel teleprompter,
+        ViewModels.GcViewModel gc,
+        Func<IReadOnlyList<GcFieldLayout>> getGcFieldLayout)
     {
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
         _getBackgroundArtPresets = getBackgroundArtPresets ?? throw new ArgumentNullException(nameof(getBackgroundArtPresets));
         _teleprompter = teleprompter ?? throw new ArgumentNullException(nameof(teleprompter));
+        _gc = gc ?? throw new ArgumentNullException(nameof(gc));
+        _getGcFieldLayout = getGcFieldLayout ?? throw new ArgumentNullException(nameof(getGcFieldLayout));
 
         // Sprint Controle-Remoto-TP, parte 2 (2026-11-17): assinado uma única vez aqui (a instância
         // de _teleprompter nunca troca durante a vida do programa — ver comentário do parâmetro
         // acima) em vez de a cada ApplySettings, que só recria _host/_teleprompterSseChannel.
         _teleprompter.StateChanged += OnTeleprompterStateChanged;
+
+        // Sprint GC (2026-11-17): mesmo princípio acima, pro módulo GC.
+        _gc.StateChanged += OnGcStateChanged;
     }
 
     /// <summary>
@@ -130,6 +164,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         _host?.Dispose();
         _host = null;
         _teleprompterSseChannel = null; // Dispose() do _host acima já fechou as conexões deste canal.
+        _gcSseChannel = null; // idem, Sprint GC (2026-11-17).
 
         if (string.IsNullOrWhiteSpace(settings.RootFolder))
         {
@@ -191,17 +226,28 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         // dashboard usa pra pegar o estado inicial ao abrir a view, antes do EventSource conectar.
         var teleprompterSseChannel = host.RegisterSseRoute("GET", "/api/teleprompter/stream");
 
+        // Sprint GC (2026-11-17, pedido do usuário "temos que ter um controle parecido ao tp [...]
+        // tenho o monitoramento do que esta no ar, parecido com o tp") — mesmo critério de acesso
+        // (sem IsAdmin/HasAccessToProgram) do Teleprompter: o GC é por estúdio, não por Programa.
+        host.RegisterApiRoute("GET", "/api/gc/state", (_, _, _) => HandleGetGcState());
+        host.RegisterApiRoute("GET", "/api/gc/layout", (_, _, _) => HandleGetGcLayout());
+        host.RegisterApiRoute("POST", "/api/gc/manual", (_, body, _) => HandleSetGcManual(body));
+        host.RegisterApiRoute("POST", "/api/gc/fields", (_, body, _) => HandleSetGcFields(body));
+        var gcSseChannel = host.RegisterSseRoute("GET", "/api/gc/stream");
+
         var result = host.Start();
         if (result.Succeeded)
         {
             _host = host;
             _teleprompterSseChannel = teleprompterSseChannel;
+            _gcSseChannel = gcSseChannel;
             _onStatus($"Playlist: dashboard disponível na rede local na porta {result.Port} (pasta raiz: {rootFolder}).");
         }
         else
         {
             host.Dispose();
             _teleprompterSseChannel = null;
+            _gcSseChannel = null;
             _onStatus($"Playlist: não consegui abrir a dashboard — {result.ErrorMessage}");
         }
     }
@@ -216,6 +262,12 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     private void OnTeleprompterStateChanged()
     {
         _teleprompterSseChannel?.Broadcast("state", JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
+    /// <summary>Sprint GC (2026-11-17) — mesmo papel de <see cref="OnTeleprompterStateChanged"/>, assinado em <see cref="_gc"/>.<c>StateChanged</c> no construtor.</summary>
+    private void OnGcStateChanged()
+    {
+        _gcSseChannel?.Broadcast("state", JsonSerializer.Serialize(ToGcStateDto(), JsonOptions));
     }
 
     /// <summary>Sprint 5 (2026-11-16) — POST /api/auth/login, única rota pública além do logout. Mensagem genérica de erro de propósito (ver <c>UserStore.VerifyCredentials</c>).</summary>
@@ -290,7 +342,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
             return PlaylistDashboardResponse.PlainTextError(400, "nome do Programa não pode ser vazio.");
         }
 
-        var (ok, error, program) = PlaylistFileStore.CreateProgram(rootFolder, request.Name, request.DefaultBackgroundArtId);
+        var (ok, error, program) = PlaylistFileStore.CreateProgram(rootFolder, request.Name, request.DefaultBackgroundArtId, request.DefaultGcFields);
         if (!ok || program is null)
         {
             return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
@@ -872,6 +924,77 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
     }
 
+    /// <summary>Sprint GC (2026-11-17) — GET /api/gc/state: estado atual (manual ou automático, campos no ar, se é o GC padrão) pro controle remoto da dashboard, tanto ao abrir a view quanto no estado inicial antes do EventSource conectar.</summary>
+    private PlaylistDashboardResponse HandleGetGcState() =>
+        PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToGcStateDto(), JsonOptions));
+
+    private GcStateDto ToGcStateDto() => new(
+        _gc.IsManualOverride,
+        _gc.CurrentFields,
+        _gc.IsShowingDefault,
+        _gc.IsOnAir);
+
+    /// <summary>Sprint GC (2026-11-17) — GET /api/gc/layout: o mockup configurável (Configurações → GC) pra dashboard desenhar o monitoramento remoto nas posições certas. Lista vazia = a dashboard cai pra uma lista simples nome/valor (ver comentário de <c>GcFieldLayout</c>).</summary>
+    private PlaylistDashboardResponse HandleGetGcLayout()
+    {
+        var dtos = _getGcFieldLayout().Select(f => new GcFieldLayoutDto(f.Name, f.X, f.Y, f.Width, f.Height, f.FontSizePt)).ToList();
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
+    }
+
+    /// <summary>Sprint GC (2026-11-17) — POST /api/gc/manual: liga/desliga o controle manual remoto (ver <see cref="ViewModels.GcViewModel.SetManualOverride"/> pro efeito completo, incluindo voltar pro GC padrão ao desligar).</summary>
+    private PlaylistDashboardResponse HandleSetGcManual(string? body)
+    {
+        SetGcManualRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<SetGcManualRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"enabled\").");
+        }
+
+        if (request is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"enabled\" é obrigatório (true/false).");
+        }
+
+        _gc.SetManualOverride(request.Enabled);
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToGcStateDto(), JsonOptions));
+    }
+
+    /// <summary>
+    /// Sprint GC (2026-11-17) — POST /api/gc/fields: manda um GC manual agora (ou esconde, se
+    /// "fields" vier vazio — botão "Tirar do ar" da dashboard). Só tem efeito com o manual já ligado
+    /// (<see cref="ViewModels.GcViewModel.SetManualFields"/>); devolve 409 nesse caso em vez de
+    /// aceitar silenciosamente, mesmo critério de <see cref="HandleSetTeleprompterText"/>.
+    /// </summary>
+    private PlaylistDashboardResponse HandleSetGcFields(string? body)
+    {
+        SetGcFieldsRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<SetGcFieldsRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"fields\": objeto nome→valor, pode ser {} pra esconder).");
+        }
+
+        if (request is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"fields\" é obrigatório (pode ser {} pra esconder).");
+        }
+
+        if (!_gc.IsManualOverride)
+        {
+            return PlaylistDashboardResponse.PlainTextError(409, "ligue o controle manual antes de mandar GC (POST /api/gc/manual com \"enabled\": true).");
+        }
+
+        _gc.SetManualFields(request.Fields ?? new Dictionary<string, string>());
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToGcStateDto(), JsonOptions));
+    }
+
     private static LaudaDto ToLaudaDto(PlaylistLaudaRecord lauda) => new(
         lauda.Id,
         lauda.Order,
@@ -910,17 +1033,28 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     public void Dispose()
     {
         _teleprompter.StateChanged -= OnTeleprompterStateChanged;
+        _gc.StateChanged -= OnGcStateChanged;
         _host?.Dispose();
         _host = null;
         _teleprompterSseChannel = null;
+        _gcSseChannel = null;
     }
 
     private sealed record ProgramDto(string Id, string Name);
 
+    /// <summary>Sprint GC (2026-11-17) — devolvido por GET /api/gc/state. <c>isShowingDefault</c> é só pra legenda ("Padrão"/"Lauda") — nunca muda o comportamento de envio pro vMix.</summary>
+    private sealed record GcStateDto(bool ManualOverride, IReadOnlyDictionary<string, string> Fields, bool IsShowingDefault, bool IsOnAir);
+
+    private sealed record GcFieldLayoutDto(string Name, double X, double Y, double Width, double Height, double FontSizePt);
+
+    private sealed record SetGcManualRequest(bool Enabled);
+
+    private sealed record SetGcFieldsRequest(Dictionary<string, string>? Fields);
+
     private sealed record EditionDto(string Id, string DateIso);
 
-    /// <summary><see cref="DefaultBackgroundArtId"/> — Sprint 3 (2026-11-16): opcional, Id de um preset já cadastrado (ver <see cref="HandleListBackgroundArtPresets"/>); vazio/nulo significa "sem fundo padrão".</summary>
-    private sealed record CreateProgramRequest(string? Name, string? DefaultBackgroundArtId);
+    /// <summary><see cref="DefaultBackgroundArtId"/> — Sprint 3 (2026-11-16): opcional, Id de um preset já cadastrado (ver <see cref="HandleListBackgroundArtPresets"/>); vazio/nulo significa "sem fundo padrão". <see cref="DefaultGcFields"/> — Sprint GC (2026-11-17): opcional, campos nome→valor do "GC padrão" deste Programa; vazio/nulo significa "sem GC padrão nenhum".</summary>
+    private sealed record CreateProgramRequest(string? Name, string? DefaultBackgroundArtId, Dictionary<string, string>? DefaultGcFields);
 
     private sealed record BackgroundArtPresetDto(string Id, string Name);
 

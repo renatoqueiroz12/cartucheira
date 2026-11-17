@@ -9,8 +9,16 @@ namespace CartucheiraVideo.Infrastructure.Playlist;
 /// <c>BackgroundArtPreset</c> já cadastrado em Configurações → Arte de Fundo (Presentation/
 /// Configuration; esta camada nunca conhece esse tipo, só guarda o Id cru) — nulo/vazio quando o
 /// Programa não tem um fundo padrão escolhido.
+///
+/// <see cref="DefaultGcFields"/> — Sprint GC (2026-11-17, pedido do usuário "tem que ter um campo
+/// no setup do programa para colocar o GC padrao, que aquele texto que ficara qd nada tiver para
+/// ser enviado"): mesmo formato livre nome→valor de <c>Core.PlaylistLauda.GcFields</c>, só que aqui
+/// é o conjunto que fica no ar sempre que nenhuma Lauda específica estiver mandando o seu próprio
+/// (ver <c>Presentation.ViewModels.GcViewModel</c>) — nunca vazio por engano vira "sem GC nenhum
+/// no ar" (a Cartucheira esconde o Título do vMix em vez de mandar campos em branco), decisão
+/// deliberada igual à de <c>ActiveBackgroundArtId</c> nulo pra Arte de Fundo.
 /// </summary>
-public sealed record PlaylistProgramRecord(string Id, string Name, string FolderName, string? DefaultBackgroundArtId);
+public sealed record PlaylistProgramRecord(string Id, string Name, string FolderName, string? DefaultBackgroundArtId, IReadOnlyDictionary<string, string>? DefaultGcFields = null);
 
 /// <summary>Uma Edição (Data) de um Programa, no vocabulário cru desta camada.</summary>
 public sealed record PlaylistEditionRecord(string Id, string DateIso, string FolderName, string FolderPath);
@@ -94,8 +102,11 @@ public static class PlaylistFileStore
             : (false, error, Array.Empty<PlaylistProgramRecord>());
     }
 
-    /// <summary><paramref name="defaultBackgroundArtId"/> — Sprint 3 (2026-11-16): opcional, Id de um preset de Arte de Fundo já cadastrado (esta camada não valida se o Id existe de verdade — quem tem a lista de presets é a Presentation; um Id que não bate com nenhum preset mais tarde é só ignorado na hora de usar, nunca vira erro aqui).</summary>
-    public static (bool Ok, string? Error, PlaylistProgramRecord? Program) CreateProgram(string rootFolder, string name, string? defaultBackgroundArtId = null)
+    /// <summary>
+    /// <paramref name="defaultBackgroundArtId"/> — Sprint 3 (2026-11-16): opcional, Id de um preset de Arte de Fundo já cadastrado (esta camada não valida se o Id existe de verdade — quem tem a lista de presets é a Presentation; um Id que não bate com nenhum preset mais tarde é só ignorado na hora de usar, nunca vira erro aqui).
+    /// <paramref name="defaultGcFields"/> — Sprint GC (2026-11-17): opcional, campos nome→valor do "GC padrão" deste Programa (ver <see cref="PlaylistProgramRecord.DefaultGcFields"/>); nulo/vazio é um Programa sem GC padrão nenhum.
+    /// </summary>
+    public static (bool Ok, string? Error, PlaylistProgramRecord? Program) CreateProgram(string rootFolder, string name, string? defaultBackgroundArtId = null, Dictionary<string, string>? defaultGcFields = null)
     {
         if (string.IsNullOrWhiteSpace(rootFolder))
         {
@@ -120,7 +131,12 @@ public static class PlaylistFileStore
             var folderName = MakeUniqueFolderName(rootFolder, name.Trim());
             Directory.CreateDirectory(Path.Combine(rootFolder, folderName));
 
-            var entry = new ProgramEntryDto(Guid.NewGuid().ToString(), name.Trim(), folderName, string.IsNullOrWhiteSpace(defaultBackgroundArtId) ? null : defaultBackgroundArtId);
+            var entry = new ProgramEntryDto(
+                Guid.NewGuid().ToString(),
+                name.Trim(),
+                folderName,
+                string.IsNullOrWhiteSpace(defaultBackgroundArtId) ? null : defaultBackgroundArtId,
+                defaultGcFields is { Count: > 0 } ? defaultGcFields : null);
             index!.Programs.Add(entry);
 
             var writeError = WriteJson(Path.Combine(rootFolder, ProgramsIndexFileName), index);
@@ -138,7 +154,7 @@ public static class PlaylistFileStore
     }
 
     private static PlaylistProgramRecord ToProgramRecord(ProgramEntryDto dto) =>
-        new(dto.Id, dto.Name, dto.FolderName, dto.DefaultBackgroundArtId);
+        new(dto.Id, dto.Name, dto.FolderName, dto.DefaultBackgroundArtId, dto.DefaultGcFields);
 
     /// <summary>
     /// Busca um Programa pelo Id — Sprint 3 (2026-11-16): exposto publicamente (até então
@@ -642,7 +658,7 @@ public static class PlaylistFileStore
         return candidate;
     }
 
-    private sealed record ProgramEntryDto(string Id, string Name, string FolderName, string? DefaultBackgroundArtId = null);
+    private sealed record ProgramEntryDto(string Id, string Name, string FolderName, string? DefaultBackgroundArtId = null, Dictionary<string, string>? DefaultGcFields = null);
 
     private sealed record ProgramsIndexDto(List<ProgramEntryDto> Programs);
 

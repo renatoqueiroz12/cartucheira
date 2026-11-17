@@ -49,6 +49,9 @@
       <button type="button" class="nav-item" data-view="teleprompter-view">
         <span class="nav-item-icon">▤</span> Teleprompter
       </button>
+      <button type="button" class="nav-item" data-view="gc-view">
+        <span class="nav-item-icon">◈</span> GC
+      </button>
       <button type="button" class="nav-item admin-only hidden" data-view="users-view">
         <span class="nav-item-icon">◉</span> Usuários
       </button>
@@ -79,6 +82,11 @@
             <select id="new-program-background-art">
               <option value="">Sem fundo padrão</option>
             </select>
+            <!-- Sprint GC (2026-11-17, pedido do usuário "tem que ter um campo no setup do programa
+                 para colocar o GC padrao, que aquele texto que ficara qd nada tiver para ser
+                 enviado"): mesmo formato "Nome: Valor" por linha já usado pelo GC de cada Lauda
+                 (#new-lauda-gc) — reaproveita parseGcFields/stringifyGcFields (ver app.js). -->
+            <textarea id="new-program-gc" rows="2" placeholder="GC padrão (opcional) — um campo por linha, formato Nome: Valor. Fica no ar sempre que nenhuma Lauda específica estiver mandando o seu próprio GC."></textarea>
             <button type="submit">Criar Programa</button>
           </form>
           <p id="not-admin-hint" class="hint hidden">Só Administradores criam Programas novos — peça pra um Admin criar e liberar o acesso pra você.</p>
@@ -209,6 +217,43 @@
         </div>
         <p id="tp-error" class="error hidden"></p>
         <p class="hint">O texto exibido acima (e o espelho/controles) é atualizado em tempo real — se outra pessoa também estiver nesta tela (ou mexer no Teleprompter de outro jeito, inclusive na própria Cartucheira), você vê a mudança na hora, sem precisar atualizar a página.</p>
+      </section>
+
+      <!-- Sprint GC (2026-11-17, pedido do usuário "precisamos criar o modulo GC [...] temos que
+           ter um controle parecido ao tp [...] tenho o monitoramento do que esta no ar, parecido
+           com o tp"): mesma estrutura da view Teleprompter (badge Automático/Manual, controle
+           manual, monitoramento ao vivo via SSE) — a diferença é que o GC não tem janela/voz, é só
+           um conjunto de campos nome→valor mandado pro Título do vMix (ver GcViewModel).
+
+           #gc-monitor desenha o "mockup configurável" confirmado com o usuário depois da pesquisa
+           que mostrou que o vMix não manda uma imagem real do Título pela rede (ver
+           GcSettingsSnapshot/GcFieldLayout) — um retângulo por campo cadastrado em Configurações →
+           GC, na posição/tamanho configurados, com o VALOR atual. Lista de campos vazia (nenhum
+           cadastrado ainda) cai pra uma lista simples nome/valor (#gc-monitor-fallback). -->
+      <section id="gc-view" class="view hidden">
+        <div class="tp-status-row">
+          <span id="gc-status-badge" class="tp-status-badge auto">Automático</span>
+          <span class="hint tp-status-hint">Automático = segue o TP/VT da Lauda ao vivo (ou o GC padrão do Programa, se nada estiver no ar). Manual = você manda os campos aqui, até desligar o manual de novo.</span>
+        </div>
+
+        <label class="checkbox-label tp-manual-toggle">
+          <input type="checkbox" id="gc-manual-toggle" /> Controle manual (desliga o disparo automático)
+        </label>
+
+        <div id="gc-monitor" class="gc-monitor"></div>
+        <ul id="gc-monitor-fallback" class="list gc-monitor-fallback hidden"></ul>
+        <p class="hint">Monitoramento do que está no ar agora — mockup aproximado (posições configuradas em Configurações → GC na própria Cartucheira), não uma imagem real do vMix.</p>
+
+        <div class="field-row">
+          <label for="gc-fields-input">Campos (manual)</label>
+          <textarea id="gc-fields-input" rows="6" placeholder="Um campo por linha, formato Nome: Valor&#10;Ex.:&#10;Nome: João Silva&#10;Cargo: Secretário de Trânsito"></textarea>
+        </div>
+        <div class="field-row-buttons">
+          <button type="button" id="gc-send-fields-button">Enviar GC</button>
+          <button type="button" id="gc-clear-fields-button" class="secondary">Tirar do ar</button>
+        </div>
+        <p id="gc-error" class="error hidden"></p>
+        <p class="hint">Os campos acima (e o monitoramento) são atualizados em tempo real pra qualquer tela aberta nesta view, igual a view Teleprompter.</p>
       </section>
 
       <section id="users-view" class="view hidden">

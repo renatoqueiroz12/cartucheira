@@ -136,4 +136,7 @@ public sealed class AppSettingsSnapshot
 
     /// <summary>Configuração do módulo Teleprompter (tela de saída, espelhamento, microfone, Deck fonte) — Sprint Teleprompter (2026-11-16). Ver <see cref="TeleprompterSettingsSnapshot"/>.</summary>
     public TeleprompterSettingsSnapshot Teleprompter { get; set; } = new();
+
+    /// <summary>Configuração do módulo GC (disparo automático pro vMix, GC padrão, monitoramento remoto) — Sprint GC (2026-11-17). Ver <see cref="GcSettingsSnapshot"/>.</summary>
+    public GcSettingsSnapshot Gc { get; set; } = new();
 }

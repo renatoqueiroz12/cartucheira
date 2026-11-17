@@ -20,7 +20,7 @@ public sealed class PlaylistItemViewModel : ViewModelBase
     private bool _isCurrent;
     private bool _isNext;
 
-    public PlaylistItemViewModel(int index, string name, TimeSpan? duration, string filePath, bool isCurrent, bool isNext, string? tpText = null)
+    public PlaylistItemViewModel(int index, string name, TimeSpan? duration, string filePath, bool isCurrent, bool isNext, string? tpText = null, IReadOnlyDictionary<string, string>? gcFields = null)
     {
         Index = index;
         Name = name;
@@ -29,6 +29,7 @@ public sealed class PlaylistItemViewModel : ViewModelBase
         _isNext = isNext;
         DurationDisplay = duration?.ToString(@"mm\:ss") ?? "—";
         TpText = tpText;
+        GcFields = gcFields ?? new Dictionary<string, string>();
     }
 
     /// <summary>Posição 1-based na sequência (coluna "#" do mockup).</summary>
@@ -48,6 +49,9 @@ public sealed class PlaylistItemViewModel : ViewModelBase
 
     /// <summary>Texto de teleprompter (TP) desta Lauda (<see cref="Core.PlaylistLauda.TpText"/>) — nulo pros itens de exemplo (ver <see cref="PlaylistViewModel.CreateSampleItems"/>) ou Laudas sem TP preenchido. Lido pelo <c>MainViewModel</c> (mesmos pontos que chamam <see cref="PlaylistViewModel.MarkLoadedInDeck"/>) pra repassar ao <see cref="TeleprompterViewModel"/>.</summary>
     public string? TpText { get; }
+
+    /// <summary>Campos de GC desta Lauda (<see cref="Core.PlaylistLauda.GcFields"/>) — vazio pros itens de exemplo ou Laudas sem nenhum campo de GC preenchido. Lido pelo <c>MainViewModel</c> (mesmos pontos que leem <see cref="TpText"/>) pra repassar ao <c>GcViewModel</c> — Sprint GC (2026-11-17).</summary>
+    public IReadOnlyDictionary<string, string> GcFields { get; }
 
     /// <summary>Linha destacada — este é o item tocando agora (selo "TOCANDO" vermelho no mockup).</summary>
     public bool IsCurrent

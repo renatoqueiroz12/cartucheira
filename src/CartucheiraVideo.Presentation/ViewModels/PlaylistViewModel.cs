@@ -186,6 +186,20 @@ public sealed class PlaylistViewModel : ViewModelBase
     }
 
     /// <summary>
+    /// Sprint GC (2026-11-17) — qual Lauda desta Playlist está carregada em <paramref name="deck"/>
+    /// AGORA, segundo o mesmo rastreio de <see cref="MarkLoadedInDeck"/> (atualizado a cada carga
+    /// manual ou automática). Usado pelo <c>MainViewModel</c> em <c>OnDeckPlay</c>/<c>OnDeckStop</c>/
+    /// <c>OnDeckMediaEnded</c> pra saber os <see cref="PlaylistItemViewModel.GcFields"/> da Lauda que
+    /// está indo ao ar/saindo do ar — nulo se este Deck nunca teve nenhuma Lauda desta Playlist
+    /// carregada nele (ex.: tocou algo da aba Explorer), mesmo critério de "nada a fazer" de
+    /// <see cref="TryGetNextItemForAutoAdvance"/>.
+    /// </summary>
+    public PlaylistItemViewModel? TryGetLoadedItem(DeckViewModel deck) =>
+        _loadedLaudaIndexByDeck.TryGetValue(deck, out var currentIndex)
+            ? Items.FirstOrDefault(i => i.Index == currentIndex)
+            : null;
+
+    /// <summary>
     /// Recalcula "TOCANDO"/"PRÓXIMO" (<see cref="PlaylistItemViewModel.IsCurrent"/>/
     /// <see cref="PlaylistItemViewModel.IsNext"/>) a partir do rastreio real de qual Lauda está em
     /// qual Deck — substitui a fotografia fixa que existia antes da Sprint 4 (sempre item[0]/

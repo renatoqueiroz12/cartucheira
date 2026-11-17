@@ -173,81 +173,96 @@
            (fundo preto, texto branco negrito, linha de referência azul a 35% da altura — ver
            TeleprompterOutputWindow.xaml) com o scroll sincronizado ao vivo via SSE, mais os
            controles: Play/Pause com velocidade (1-10), passo manual, voltar ao início. -->
-      <section id="teleprompter-view" class="view hidden">
-        <div class="tp-status-row">
-          <span id="tp-status-badge" class="tp-status-badge auto">Automático</span>
-          <span class="hint tp-status-hint">Automático = segue a Lauda carregada no Deck fonte e a voz (se ligada em Configurações). Manual = você digita o texto aqui, voz desligada, e os controles de rolagem abaixo ficam disponíveis.</span>
-        </div>
-
-        <label class="checkbox-label tp-manual-toggle">
-          <input type="checkbox" id="tp-manual-toggle" /> Controle manual (desliga o automático e a voz)
-        </label>
-
-        <!-- Espelho da tela do TP — ver comentário da seção sobre a pesquisa que confirmou esta
-             abordagem (texto+posição, não vídeo). scaleX(-1) via JS quando a janela real está
-             espelhada (tp-mirror-flipped). -->
-        <div id="tp-mirror" class="tp-mirror">
-          <div id="tp-mirror-cueline" class="tp-mirror-cueline"></div>
-          <div id="tp-mirror-text" class="tp-mirror-text"></div>
-        </div>
-        <p class="hint tp-mirror-hint">Espelho em tempo real do que está na tela do Teleprompter — mesma posição de leitura, mesma fonte. Não é um vídeo da tela, é o mesmo texto sincronizado (veja mais em app.js).</p>
-
-        <!-- Controles de rolagem — só funcionam com o Controle manual ligado (desabilitados nesta
-             mesma lógica de #tp-text-input/#tp-send-text-button, ver app.js). -->
-        <div class="tp-controls">
-          <div class="tp-controls-row">
-            <button type="button" id="tp-jump-start-button" title="Voltar ao início">⏮ Início</button>
-            <button type="button" id="tp-step-up-button" title="Passo manual pra cima">▲ Passo</button>
-            <button type="button" id="tp-step-down-button" title="Passo manual pra baixo">▼ Passo</button>
-            <button type="button" id="tp-play-pause-button" class="tp-play-pause" title="Rolagem automática por tempo">▶ Play</button>
+      <!-- Fix v1.0.102 (2026-11-17, pedido do usuário "poderia ajustar pra usar mais o lado direito
+           da tela, esta indo tudo pra baixo e o lado direito da tela livre"): layout de 2 colunas
+           (.tp-layout, ver styles.css) em vez de uma coluna única esticando #main-body (que tinha um
+           max-width fixo pensado pra formulários/listas estreitas das outras views, não pra esta).
+           Coluna esquerda = "o que está no ar" (status, espelho, controles de rolagem); coluna
+           direita = "preparar o que vai pro ar" (Playlist, caixa de texto, Enviar). Em telas estreitas
+           (media query) volta a empilhar como antes. -->
+      <section id="teleprompter-view" class="view hidden tp-layout">
+        <div class="tp-col-left">
+          <div class="tp-status-row">
+            <span id="tp-status-badge" class="tp-status-badge auto">Automático</span>
+            <span class="hint tp-status-hint">Automático = segue a Lauda carregada no Deck fonte e a voz (se ligada em Configurações). Manual = você digita o texto aqui, voz desligada, e os controles de rolagem abaixo ficam disponíveis.</span>
           </div>
-          <div class="tp-controls-row tp-speed-row">
-            <label for="tp-speed-slider">Velocidade</label>
-            <input type="range" id="tp-speed-slider" min="1" max="10" step="1" value="5" />
-            <span id="tp-speed-value">5</span>
-          </div>
-        </div>
 
-        <!-- Sprint Playlist-TP (2026-11-17, pedido do usuário "no teleprompter, ele clique lá, carrega
-             o playlist e traga as laudas de teleprompter daquele playlist [...] caso precise operar
-             manual, ele carrega os textos ali, vai clicando, ele vai jogando o texto ali onde vai ser
-             exibido"): navegador Programa → Edição → Laudas reaproveitando as MESMAS rotas já
-             existentes da view "Programas" (GET /api/playlist/programs/editions/laudas) — nenhuma
-             rota nova. Clicar numa Lauda só PREENCHE #tp-text-input (decisão confirmada com o
-             usuário: nunca manda pro ar sozinho, sempre precisa do "Enviar texto" depois — dá chance
-             de revisar). Mostra TODAS as Laudas da Edição (decisão confirmada), não só as com texto
-             de TP preenchido — as sem texto aparecem esmaecidas (.tp-playlist-item-empty) em vez de
-             escondidas, pra manter a ordem/contexto completo do bloco visível. -->
-        <div class="tp-playlist-picker">
-          <button type="button" id="tp-playlist-toggle-button" class="secondary">▸ Carregar texto de uma Playlist</button>
-          <div id="tp-playlist-panel" class="tp-playlist-panel hidden">
-            <div class="field-row">
-              <label for="tp-playlist-program-select">Programa</label>
-              <select id="tp-playlist-program-select">
-                <option value="">Escolha um Programa...</option>
-              </select>
+          <label class="checkbox-label tp-manual-toggle">
+            <input type="checkbox" id="tp-manual-toggle" /> Controle manual (desliga o automático e a voz)
+          </label>
+
+          <!-- Espelho da tela do TP — ver comentário da seção sobre a pesquisa que confirmou esta
+               abordagem (texto+posição, não vídeo). scaleX(-1) via JS quando a janela real está
+               espelhada (tp-mirror-flipped). -->
+          <div id="tp-mirror" class="tp-mirror">
+            <div id="tp-mirror-cueline" class="tp-mirror-cueline"></div>
+            <div id="tp-mirror-text" class="tp-mirror-text"></div>
+          </div>
+          <p class="hint tp-mirror-hint">Espelho em tempo real do que está na tela do Teleprompter — mesma posição de leitura, mesma fonte. Não é um vídeo da tela, é o mesmo texto sincronizado (veja mais em app.js).</p>
+
+          <!-- Controles de rolagem — só funcionam com o Controle manual ligado (desabilitados nesta
+               mesma lógica de #tp-text-input/#tp-send-text-button, ver app.js). -->
+          <div class="tp-controls">
+            <div class="tp-controls-row">
+              <button type="button" id="tp-jump-start-button" title="Voltar ao início">⏮ Início</button>
+              <button type="button" id="tp-step-up-button" title="Passo manual pra cima">▲ Passo</button>
+              <button type="button" id="tp-step-down-button" title="Passo manual pra baixo">▼ Passo</button>
+              <button type="button" id="tp-play-pause-button" class="tp-play-pause" title="Rolagem automática por tempo">▶ Play</button>
             </div>
-            <div class="field-row">
-              <label for="tp-playlist-edition-select">Edição (data)</label>
-              <select id="tp-playlist-edition-select" disabled>
-                <option value="">Escolha uma Edição...</option>
-              </select>
+            <!-- Fix v1.0.102 (2026-11-17, pedido do usuário "de 1 em 1 esta com muita diferença"):
+                 step 1 → 0.1 (91 posições em vez de 10) — mesma faixa 1-10, resolução 10x mais fina.
+                 Ver TeleprompterViewModel.PixelsPerSecondForSpeed (agora double) e
+                 app.js#tpSpeedSlider pro resto da mudança. -->
+            <div class="tp-controls-row tp-speed-row">
+              <label for="tp-speed-slider">Velocidade</label>
+              <input type="range" id="tp-speed-slider" min="1" max="10" step="0.1" value="5" />
+              <span id="tp-speed-value">5.0</span>
             </div>
-            <ul id="tp-playlist-laudas-list" class="list tp-playlist-laudas-list"></ul>
-            <p id="tp-playlist-error" class="error hidden"></p>
-            <p class="hint">Clique numa Lauda pra jogar o texto de Teleprompter dela na caixa "Texto exibido" abaixo — ainda precisa clicar em "Enviar texto" pra pôr no ar de verdade. Laudas sem texto de Teleprompter aparecem esmaecidas (não têm o que carregar).</p>
           </div>
         </div>
 
-        <div class="field-row">
-          <label for="tp-text-input">Texto exibido</label>
-          <textarea id="tp-text-input" rows="10" placeholder="Digite aqui o texto do teleprompter..."></textarea>
+        <div class="tp-col-right">
+          <!-- Sprint Playlist-TP (2026-11-17, pedido do usuário "no teleprompter, ele clique lá, carrega
+               o playlist e traga as laudas de teleprompter daquele playlist [...] caso precise operar
+               manual, ele carrega os textos ali, vai clicando, ele vai jogando o texto ali onde vai ser
+               exibido"): navegador Programa → Edição → Laudas reaproveitando as MESMAS rotas já
+               existentes da view "Programas" (GET /api/playlist/programs/editions/laudas) — nenhuma
+               rota nova. Clicar numa Lauda só PREENCHE #tp-text-input (decisão confirmada com o
+               usuário: nunca manda pro ar sozinho, sempre precisa do "Enviar texto" depois — dá chance
+               de revisar). Mostra TODAS as Laudas da Edição (decisão confirmada), não só as com texto
+               de TP preenchido — as sem texto aparecem esmaecidas (.tp-playlist-item-empty) em vez de
+               escondidas, pra manter a ordem/contexto completo do bloco visível. -->
+          <div class="tp-playlist-picker">
+            <button type="button" id="tp-playlist-toggle-button" class="secondary">▸ Carregar texto de uma Playlist</button>
+            <div id="tp-playlist-panel" class="tp-playlist-panel hidden">
+              <div class="field-row">
+                <label for="tp-playlist-program-select">Programa</label>
+                <select id="tp-playlist-program-select">
+                  <option value="">Escolha um Programa...</option>
+                </select>
+              </div>
+              <div class="field-row">
+                <label for="tp-playlist-edition-select">Edição (data)</label>
+                <select id="tp-playlist-edition-select" disabled>
+                  <option value="">Escolha uma Edição...</option>
+                </select>
+              </div>
+              <ul id="tp-playlist-laudas-list" class="list tp-playlist-laudas-list"></ul>
+              <p id="tp-playlist-error" class="error hidden"></p>
+              <p class="hint">Clique numa Lauda pra jogar o texto de Teleprompter dela na caixa "Texto exibido" abaixo — ainda precisa clicar em "Enviar texto" pra pôr no ar de verdade. Laudas sem texto de Teleprompter aparecem esmaecidas (não têm o que carregar).</p>
+            </div>
+          </div>
+
+          <div class="field-row">
+            <label for="tp-text-input">Texto exibido</label>
+            <textarea id="tp-text-input" rows="10" placeholder="Digite aqui o texto do teleprompter..."></textarea>
+          </div>
+          <div class="field-row-buttons">
+            <button type="button" id="tp-send-text-button">Enviar texto</button>
+          </div>
+          <p id="tp-error" class="error hidden"></p>
+          <p class="hint">O texto exibido acima (e o espelho/controles) é atualizado em tempo real — se outra pessoa também estiver nesta tela (ou mexer no Teleprompter de outro jeito, inclusive na própria Cartucheira), você vê a mudança na hora, sem precisar atualizar a página.</p>
         </div>
-        <div class="field-row-buttons">
-          <button type="button" id="tp-send-text-button">Enviar texto</button>
-        </div>
-        <p id="tp-error" class="error hidden"></p>
-        <p class="hint">O texto exibido acima (e o espelho/controles) é atualizado em tempo real — se outra pessoa também estiver nesta tela (ou mexer no Teleprompter de outro jeito, inclusive na própria Cartucheira), você vê a mudança na hora, sem precisar atualizar a página.</p>
       </section>
 
       <!-- Sprint GC (2026-11-17, pedido do usuário "precisamos criar o modulo GC [...] temos que
@@ -261,30 +276,36 @@
            GcSettingsSnapshot/GcFieldLayout) — um retângulo por campo cadastrado em Configurações →
            GC, na posição/tamanho configurados, com o VALOR atual. Lista de campos vazia (nenhum
            cadastrado ainda) cai pra uma lista simples nome/valor (#gc-monitor-fallback). -->
-      <section id="gc-view" class="view hidden">
-        <div class="tp-status-row">
-          <span id="gc-status-badge" class="tp-status-badge auto">Automático</span>
-          <span class="hint tp-status-hint">Automático = segue o TP/VT da Lauda ao vivo (ou o GC padrão do Programa, se nada estiver no ar). Manual = você manda os campos aqui, até desligar o manual de novo.</span>
+      <!-- Fix v1.0.102 (2026-11-17): mesmo layout de 2 colunas da view Teleprompter (ver comentário
+           lá) — esquerda = o que está no ar (monitor), direita = controle manual. -->
+      <section id="gc-view" class="view hidden tp-layout">
+        <div class="tp-col-left">
+          <div class="tp-status-row">
+            <span id="gc-status-badge" class="tp-status-badge auto">Automático</span>
+            <span class="hint tp-status-hint">Automático = segue o TP/VT da Lauda ao vivo (ou o GC padrão do Programa, se nada estiver no ar). Manual = você manda os campos aqui, até desligar o manual de novo.</span>
+          </div>
+
+          <label class="checkbox-label tp-manual-toggle">
+            <input type="checkbox" id="gc-manual-toggle" /> Controle manual (desliga o disparo automático)
+          </label>
+
+          <div id="gc-monitor" class="gc-monitor"></div>
+          <ul id="gc-monitor-fallback" class="list gc-monitor-fallback hidden"></ul>
+          <p class="hint">Monitoramento do que está no ar agora — mockup aproximado (posições configuradas em Configurações → GC na própria Cartucheira), não uma imagem real do vMix.</p>
         </div>
 
-        <label class="checkbox-label tp-manual-toggle">
-          <input type="checkbox" id="gc-manual-toggle" /> Controle manual (desliga o disparo automático)
-        </label>
-
-        <div id="gc-monitor" class="gc-monitor"></div>
-        <ul id="gc-monitor-fallback" class="list gc-monitor-fallback hidden"></ul>
-        <p class="hint">Monitoramento do que está no ar agora — mockup aproximado (posições configuradas em Configurações → GC na própria Cartucheira), não uma imagem real do vMix.</p>
-
-        <div class="field-row">
-          <label for="gc-fields-input">Campos (manual)</label>
-          <textarea id="gc-fields-input" rows="6" placeholder="Um campo por linha, formato Nome: Valor&#10;Ex.:&#10;Nome: João Silva&#10;Cargo: Secretário de Trânsito"></textarea>
+        <div class="tp-col-right">
+          <div class="field-row">
+            <label for="gc-fields-input">Campos (manual)</label>
+            <textarea id="gc-fields-input" rows="6" placeholder="Um campo por linha, formato Nome: Valor&#10;Ex.:&#10;Nome: João Silva&#10;Cargo: Secretário de Trânsito"></textarea>
+          </div>
+          <div class="field-row-buttons">
+            <button type="button" id="gc-send-fields-button">Enviar GC</button>
+            <button type="button" id="gc-clear-fields-button" class="secondary">Tirar do ar</button>
+          </div>
+          <p id="gc-error" class="error hidden"></p>
+          <p class="hint">Os campos acima (e o monitoramento) são atualizados em tempo real pra qualquer tela aberta nesta view, igual a view Teleprompter.</p>
         </div>
-        <div class="field-row-buttons">
-          <button type="button" id="gc-send-fields-button">Enviar GC</button>
-          <button type="button" id="gc-clear-fields-button" class="secondary">Tirar do ar</button>
-        </div>
-        <p id="gc-error" class="error hidden"></p>
-        <p class="hint">Os campos acima (e o monitoramento) são atualizados em tempo real pra qualquer tela aberta nesta view, igual a view Teleprompter.</p>
       </section>
 
       <section id="users-view" class="view hidden">

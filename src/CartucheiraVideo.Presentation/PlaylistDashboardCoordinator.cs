@@ -1132,7 +1132,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         string CurrentText,
         double ScrollFraction,
         bool AutoScrollPlaying,
-        int AutoScrollSpeed,
+        double AutoScrollSpeed,
         double FontSizePt,
         bool Mirrored);
 
@@ -1146,5 +1146,6 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
     private sealed record AutoScrollPlayRequest(bool Playing);
 
-    private sealed record AutoScrollSpeedRequest(int Speed);
+    /// <summary>Fix v1.0.102 (2026-11-17, pedido do usuário "de 1 em 1 esta com muita diferença") — <c>Speed</c> passou de <c>int</c> pra <c>double</c>: mesma faixa 1-10, resolução 10x mais fina (slider de 0.1 em 0.1, ver app.js).</summary>
+    private sealed record AutoScrollSpeedRequest(double Speed);
 }

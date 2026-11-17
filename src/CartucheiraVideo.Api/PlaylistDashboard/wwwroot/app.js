@@ -824,8 +824,12 @@ function applyTeleprompterState(state) {
   tpPlayPauseButton.textContent = state.autoScrollPlaying ? "⏸ Pause" : "▶ Play";
   tpPlayPauseButton.classList.toggle("playing", !!state.autoScrollPlaying);
   if (!tpSpeedDragging) {
-    tpSpeedSlider.value = state.autoScrollSpeed || 5;
-    tpSpeedValue.textContent = String(state.autoScrollSpeed || 5);
+    // Fix v1.0.102 (2026-11-17, "de 1 em 1 esta com muita diferença") — speed agora é um número
+    // fracionário (0.1 em 0.1, não mais inteiro de 1 em 1); toFixed(1) pra sempre mostrar "5.0", não
+    // às vezes "5" às vezes "4.7" (consistência visual).
+    const speed = state.autoScrollSpeed || 5;
+    tpSpeedSlider.value = speed;
+    tpSpeedValue.textContent = speed.toFixed(1);
   }
 }
 
@@ -948,7 +952,7 @@ tpPlayPauseButton.addEventListener("click", async () => {
 // a cada pixel arrastado.
 tpSpeedSlider.addEventListener("input", () => {
   tpSpeedDragging = true;
-  tpSpeedValue.textContent = tpSpeedSlider.value;
+  tpSpeedValue.textContent = Number(tpSpeedSlider.value).toFixed(1);
 });
 
 tpSpeedSlider.addEventListener("change", async () => {

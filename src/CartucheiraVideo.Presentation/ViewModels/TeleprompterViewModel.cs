@@ -139,8 +139,13 @@ public sealed class TeleprompterViewModel : IDisposable
     /// honesto sem nenhum precedente nesta base pra calibrar contra (primeira rolagem automática por
     /// TEMPO deste projeto; a existente, por voz, rola por PALAVRA CASADA, não por tempo), ajustável
     /// se o usuário testar e achar rápido/lento demais.
+    /// <para><b>Fix v1.0.102 (2026-11-17)</b>: trocado de <c>int</c> pra <c>double</c> — usuário
+    /// reportou "de 1 em 1 esta com muita diferença" (cada passo do slider, 1 de 10 possíveis, pulava
+    /// 15px/s de uma vez, 10% da faixa inteira). Mesma faixa 1-10, resolução 10x mais fina (slider de
+    /// 0.1 em 0.1 no app.js, 91 posições em vez de 10) — nenhuma mudança na FÓRMULA
+    /// (<see cref="PixelsPerSecondForSpeed"/>), só na granularidade do número que entra nela.</para>
     /// </summary>
-    private int _autoScrollSpeed = 5;
+    private double _autoScrollSpeed = 5;
 
     /// <summary>
     /// Fix v1.0.100 (2026-11-17, "a tela do tp esta tremida qd começa a executar" — rolagem automática
@@ -192,8 +197,8 @@ public sealed class TeleprompterViewModel : IDisposable
     /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — idem, se o Play automático remoto está rolando agora.</summary>
     public bool IsAutoScrollPlaying => _autoScrollPlaying;
 
-    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — idem, velocidade atual (1-10) do Play automático remoto.</summary>
-    public int AutoScrollSpeed => _autoScrollSpeed;
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — idem, velocidade atual (1-10) do Play automático remoto. Fix v1.0.102: <c>double</c>, não mais <c>int</c> (ver comentário de <see cref="_autoScrollSpeed"/>).</summary>
+    public double AutoScrollSpeed => _autoScrollSpeed;
 
     /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — posição de rolagem atual (0..1), lida direto da janela de saída (ver <see cref="TeleprompterOutputWindow.GetScrollFraction"/>) — zero se não houver janela nenhuma aberta agora.
     /// <para><b>Fix v1.0.99 (2026-11-17)</b>: esta leitura toca a janela WPF (<see cref="_window"/>), um objeto com dono de thread — e este getter é chamado pela thread da requisição HTTP sempre que a dashboard pede <c>GET /api/teleprompter/state</c> (ver <see cref="PlaylistDashboardCoordinator.HandleGetTeleprompterState"/>), não pela UI thread. Sem o <see cref="RunOnUiThread{T}"/> abaixo, isso lançava "O thread de chamada não pode acessar este objeto porque ele pertence a um thread diferente" — mesma família de bug já corrigida nos MÉTODOS (<see cref="SetManualOverride"/>/<see cref="SetManualText"/>, Sprint Controle-Remoto-TP parte 2) mas que passou batido nestas três PROPRIEDADES, criadas só na parte 3 e nunca eu havia a reparado de verdade pela dashboard com o DevTools aberto até agora.</para></summary>
@@ -418,13 +423,13 @@ public sealed class TeleprompterViewModel : IDisposable
         });
     }
 
-    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — troca a velocidade (1-10, ver <see cref="_autoScrollSpeed"/>); tem efeito mesmo com o Play pausado (só aplica no próximo tick, se/quando o Play for ligado) — sem gate de manual, trocar um número guardado não tem nenhum efeito colateral por si só.</summary>
-    public void SetAutoScrollSpeed(int speed)
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — troca a velocidade (1-10, ver <see cref="_autoScrollSpeed"/>); tem efeito mesmo com o Play pausado (só aplica no próximo tick, se/quando o Play for ligado) — sem gate de manual, trocar um número guardado não tem nenhum efeito colateral por si só. Fix v1.0.102: <paramref name="speed"/> é <c>double</c> agora (resolução 10x mais fina); comparação de "já é esse valor" usa uma tolerância pequena em vez de igualdade exata de double (double vindo de JSON/slider nunca bate byte a byte com o double guardado, mesmo representando "o mesmo número").</summary>
+    public void SetAutoScrollSpeed(double speed)
     {
         Application.Current?.Dispatcher.Invoke(() =>
         {
             var clamped = Math.Clamp(speed, 1, 10);
-            if (_autoScrollSpeed == clamped)
+            if (Math.Abs(_autoScrollSpeed - clamped) < 0.001)
             {
                 return;
             }
@@ -497,7 +502,7 @@ public sealed class TeleprompterViewModel : IDisposable
     /// velocidade 1, 145px/s na velocidade 10) — palpite honesto, sem nenhum precedente nesta base
     /// pra calibrar contra (ver comentário de <see cref="_autoScrollSpeed"/>).
     /// </summary>
-    private static double PixelsPerSecondForSpeed(int speed) => 10 + ((speed - 1) * 15);
+    private static double PixelsPerSecondForSpeed(double speed) => 10 + ((speed - 1) * 15);
 
     /// <summary>Fix v1.0.100 (2026-11-17) — ver comentário completo em <see cref="_autoScrollStopwatch"/> sobre a troca do <see cref="DispatcherTimer"/> de intervalo fixo por <see cref="CompositionTarget.Rendering"/> + tempo real decorrido.</summary>
     private void StartAutoScrollTimer()

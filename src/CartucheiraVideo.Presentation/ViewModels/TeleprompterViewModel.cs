@@ -40,6 +40,24 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 ///    um <see cref="System.Windows.Threading.DispatcherTimer"/> pra renderizá-la periodicamente
 ///    (<see cref="TeleprompterOutputWindow.RenderToUyvy"/>) e mandar pro <c>Ndi.NdiSender</c> deste
 ///    módulo.
+/// 5. <see cref="SetManualOverride"/>/<see cref="SetManualText"/> (Sprint Controle-Remoto-TP,
+///    2026-11-17, pedido do usuário "controle manual do tp para caso necessario desabiliiatr a
+///    funcçao auto [...] e controle de voz [...] isso precisa ser feito de outro pc, nao onde esta
+///    a cartucheira, para issso um outro software ou url que va controlando"): chamados pelo
+///    <c>PlaylistDashboardCoordinator</c> a partir das rotas <c>POST /api/teleprompter/manual</c>/
+///    <c>POST /api/teleprompter/text</c> da dashboard web — NUNCA por nenhuma tela da própria
+///    Cartucheira desktop, de propósito (o pedido explícito foi controlar de OUTRO computador, não
+///    local). Estado é só de runtime (<see cref="_isManualOverride"/> nunca é persistido em
+///    settings.json, mesmo princípio do "disjuntor" <c>PlaylistViewModel.AutoModeEnabled</c>/
+///    <c>DeckViewModel.IsAutoMode</c>): sempre volta a desligado (automático) ao reiniciar o
+///    programa. Decisão confirmada com o usuário: ligar o manual desliga a voz junto, sem chave
+///    separada — ver <see cref="RefreshVoiceEngine"/>. <see cref="StateChanged"/> (parte 2,
+///    2026-11-17, pedido "2 segundos e muito, precisamos pensar outra alternativa" ao polling da
+///    dashboard web) dispara sempre que o estado muda de verdade, pro <c>PlaylistDashboardCoordinator</c>
+///    empurrar via Server-Sent Events em vez da dashboard ficar perguntando de novo e de novo —
+///    mesma sprint que corrigiu <see cref="SetManualOverride"/>/<see cref="SetManualText"/> pra
+///    marshalar pra UI thread (<c>Dispatcher.Invoke</c>), porque só nessa parte 2 ficou claro que
+///    os dois são chamados de uma thread de requisição HTTP em segundo plano, nunca da UI thread.
 /// </summary>
 public sealed class TeleprompterViewModel : IDisposable
 {
@@ -75,6 +93,55 @@ public sealed class TeleprompterViewModel : IDisposable
     private string? _ndiChannelName;
     private DispatcherTimer? _ndiTimer;
 
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17): liga/desliga por <see cref="SetManualOverride"/>, só
+    /// de runtime (nunca persistido — ver comentário de classe). Enquanto ligado, <see cref="NotifyDeckLoaded"/>
+    /// deixa de empurrar texto pra janela/voz automaticamente (só atualiza <see cref="_autoScriptText"/>
+    /// por baixo, pra ter o que restaurar quando desligar) e <see cref="RefreshVoiceEngine"/> nunca
+    /// liga o motor de voz, mesmo que a configuração salva peça.
+    /// </summary>
+    private bool _isManualOverride;
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17): último texto recebido pelo caminho automático
+    /// (<see cref="NotifyDeckLoaded"/>, Playlist/Lauda) — guardado SEPARADO de <see cref="_currentScriptText"/>
+    /// (o que está exibido agora, que pode ser texto manual) justamente pra poder restaurar o texto
+    /// automático mais recente quando o controle manual for desligado, mesmo que a Playlist tenha
+    /// avançado pra outra Lauda enquanto o manual estava ligado.
+    /// </summary>
+    private string _autoScriptText = string.Empty;
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17): última configuração aplicada por <see cref="ApplySettings"/>
+    /// — guardada pra <see cref="SetManualOverride"/> poder religar a voz (se a configuração salva
+    /// pedir) ao desligar o manual, sem precisar que o <c>MainViewModel</c> chame <see cref="ApplySettings"/>
+    /// de novo só pra isso.
+    /// </summary>
+    private TeleprompterSettingsSnapshot? _lastSettings;
+
+    /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — exposto pro <c>PlaylistDashboardCoordinator</c> relatar o estado atual (GET /api/teleprompter/state).</summary>
+    public bool IsManualOverride => _isManualOverride;
+
+    /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — texto exibido agora (automático ou manual), idem.</summary>
+    public string CurrentText => _currentScriptText;
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 2 (2026-11-17, pedido do usuário "2 segundos e muito,
+    /// precisamos pensar outra alternativa" ao polling de 2s da dashboard web): disparado sempre que
+    /// <see cref="IsManualOverride"/> ou <see cref="CurrentText"/> muda de verdade (nunca em chamadas
+    /// que acabam sendo um no-op, ex.: <see cref="SetManualOverride"/> repetindo o mesmo estado) — o
+    /// <c>PlaylistDashboardCoordinator</c> assina este evento uma única vez (construtor) e manda pro
+    /// <c>PlaylistSseChannel</c> da rota <c>/api/teleprompter/stream</c>, pra dashboard ficar sabendo
+    /// na hora, sem precisar perguntar de novo e de novo. Pode disparar em qualquer thread (ver
+    /// <see cref="SetManualOverride"/>/<see cref="SetManualText"/>, chamados de uma thread de
+    /// requisição HTTP, dentro de um <c>Dispatcher.Invoke</c> — então este evento também dispara na
+    /// UI thread nesses casos); quem assina nunca deve tocar em nada de WPF aqui dentro, só
+    /// serializar/mandar pela rede (ver <c>PlaylistDashboardCoordinator.OnTeleprompterStateChanged</c>).
+    /// </summary>
+    public event Action? StateChanged;
+
+    private void RaiseStateChanged() => StateChanged?.Invoke();
+
     public TeleprompterViewModel(DeckViewModel deckA, DeckViewModel deckB, Action<string> onStatus)
     {
         _deckA = deckA ?? throw new ArgumentNullException(nameof(deckA));
@@ -95,6 +162,7 @@ public sealed class TeleprompterViewModel : IDisposable
     {
         ArgumentNullException.ThrowIfNull(settings);
 
+        _lastSettings = settings;
         _sourceDeckSetting = settings.SourceDeckSetting;
 
         RefreshWindow(settings);
@@ -116,9 +184,101 @@ public sealed class TeleprompterViewModel : IDisposable
             return;
         }
 
-        _currentScriptText = tpText ?? string.Empty;
+        _autoScriptText = tpText ?? string.Empty;
+
+        if (_isManualOverride)
+        {
+            // Sprint Controle-Remoto-TP (2026-11-17): enquanto o controle manual estiver ligado (de
+            // outro PC, via dashboard), o texto automático da Playlist/Lauda só fica guardado em
+            // _autoScriptText pra quando o manual for desligado (ver SetManualOverride) — nunca
+            // sobrescreve o que o produtor está controlando manualmente agora, mesmo que outra Lauda
+            // seja carregada nesse meio tempo.
+            return;
+        }
+
+        _currentScriptText = _autoScriptText;
         _window?.SetText(_currentScriptText);
         _voiceEngine.UpdateScript(_currentScriptText);
+        RaiseStateChanged();
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17) — liga/desliga o controle manual remoto, chamado pelo
+    /// <c>PlaylistDashboardCoordinator</c> (POST /api/teleprompter/manual da dashboard web), nunca
+    /// por nenhuma tela da própria Cartucheira desktop (pedido explícito do usuário: controle de
+    /// OUTRO computador). Idempotente (repetir o mesmo estado não faz nada). Decisão confirmada com
+    /// o usuário: ligar o manual desliga o acompanhamento por voz junto, automaticamente, sem chave
+    /// separada; desligar o manual restaura o texto automático mais recente (<see cref="_autoScriptText"/>)
+    /// e religa a voz se a configuração salva pedir (<see cref="RefreshVoiceEngine"/>).
+    ///
+    /// <see cref="Application.Current"/>?.<c>Dispatcher.Invoke</c> envolvendo o corpo inteiro —
+    /// achado AO IMPLEMENTAR a parte 2 desta sprint (canal SSE, 2026-11-17): este método é chamado
+    /// pelo <c>PlaylistDashboardCoordinator</c> direto de uma thread de requisição HTTP em segundo
+    /// plano (ver <c>PlaylistDashboardHost.ListenLoopAsync</c>/<c>Task.Run</c>), nunca da UI thread —
+    /// mas toca em <see cref="_window"/> (<c>TeleprompterOutputWindow.SetText</c>, um objeto WPF só
+    /// pode ser tocado pela thread que o criou) e, indiretamente, em <c>_onStatus</c> (atualiza uma
+    /// propriedade vinculada por binding). Mesmo contrato de sempre deste projeto pra chamadas que
+    /// chegam de fora da UI thread (ver <see cref="OnScriptPositionChanged"/>/
+    /// <see cref="OnVoiceStatusChanged"/>) — <c>Invoke</c> (não <c>BeginInvoke</c>) de propósito:
+    /// bloqueia a thread HTTP até a UI thread terminar, porque o chamador (<c>HandleSetTeleprompterManual</c>)
+    /// precisa ler <see cref="IsManualOverride"/>/<see cref="CurrentText"/> JÁ atualizados pra montar
+    /// a resposta HTTP.
+    /// </summary>
+    public void SetManualOverride(bool enabled)
+    {
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            if (_isManualOverride == enabled)
+            {
+                return;
+            }
+
+            _isManualOverride = enabled;
+
+            if (enabled)
+            {
+                _voiceEngine.Stop();
+                _onStatus("Teleprompter: controle manual ligado (remoto) — acompanhamento automático da Playlist e por voz desligados até desligar o manual.");
+            }
+            else
+            {
+                _currentScriptText = _autoScriptText;
+                _window?.SetText(_currentScriptText);
+                _voiceEngine.UpdateScript(_currentScriptText);
+
+                if (_lastSettings is not null)
+                {
+                    RefreshVoiceEngine(_lastSettings);
+                }
+
+                _onStatus("Teleprompter: controle manual desligado — voltou ao automático (Playlist/Lauda e voz, conforme Configurações).");
+            }
+
+            RaiseStateChanged();
+        });
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17) — define o texto exibido manualmente, chamado pelo
+    /// <c>PlaylistDashboardCoordinator</c> (POST /api/teleprompter/text). Só tem efeito se o
+    /// controle manual estiver ligado (<see cref="SetManualOverride"/>) — ignorado de propósito fora
+    /// desse estado, pra uma requisição atrasada/fora de ordem nunca sobrescrever o texto automático
+    /// por engano. Mesmo <c>Dispatcher.Invoke</c> de <see cref="SetManualOverride"/> e pelo mesmo
+    /// motivo — chamado de uma thread de requisição HTTP, toca em <see cref="_window"/>.
+    /// </summary>
+    public void SetManualText(string text)
+    {
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            if (!_isManualOverride)
+            {
+                return;
+            }
+
+            _currentScriptText = text ?? string.Empty;
+            _window?.SetText(_currentScriptText);
+            RaiseStateChanged();
+        });
     }
 
     public void Dispose()
@@ -334,11 +494,18 @@ public sealed class TeleprompterViewModel : IDisposable
         }
     }
 
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17): <see cref="_isManualOverride"/> checado ANTES de
+    /// <see cref="TeleprompterSettingsSnapshot.VoiceTrackingEnabled"/> — garante a decisão
+    /// confirmada com o usuário ("manual desliga a voz junto") nos dois pontos que chamam este
+    /// método (<see cref="ApplySettings"/>, quando a Configuração é salva enquanto o manual já está
+    /// ligado; e <see cref="SetManualOverride"/>, ao desligar o manual), sem duplicar a checagem.
+    /// </summary>
     private void RefreshVoiceEngine(TeleprompterSettingsSnapshot settings)
     {
         _voiceEngine.Stop();
 
-        if (!settings.VoiceTrackingEnabled)
+        if (_isManualOverride || !settings.VoiceTrackingEnabled)
         {
             return;
         }

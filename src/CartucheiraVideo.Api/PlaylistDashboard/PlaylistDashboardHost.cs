@@ -52,6 +52,15 @@ namespace CartucheiraVideo.Api.PlaylistDashboard;
 ///
 /// Nunca lança: erro processando UMA requisição nunca derruba o servidor inteiro, mesma defesa já
 /// usada pelo <see cref="LocalTriggerApiHost"/>.
+///
+/// **Server-Sent Events — Sprint Controle-Remoto-TP, parte 2 (2026-11-17, pedido do usuário "2
+/// segundos e muito, precisamos pensar outra alternativa" ao polling de 2s da v1.0.95)**:
+/// <see cref="RegisterSseRoute"/>/<see cref="PlaylistSseChannel"/> dão uma rota que nunca devolve
+/// uma resposta completa — fica com a conexão aberta indefinidamente, recebendo <c>Broadcast</c>s
+/// de quem registrou o canal sempre que houver algo novo pra mandar, em vez da dashboard ter que
+/// perguntar de novo e de novo. Mesmo gate de sessão das rotas normais; ver comentário de classe
+/// completo de <see cref="PlaylistSseChannel"/> pro resto (thread-safety, detecção de desconexão,
+/// heartbeat).
 /// </summary>
 public sealed class PlaylistDashboardHost : IDisposable
 {
@@ -95,6 +104,7 @@ public sealed class PlaylistDashboardHost : IDisposable
     private readonly Dictionary<string, PlaylistUploadHandler> _uploadRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PlaylistLoginHandler> _loginRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _logoutRoutes = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PlaylistSseChannel> _sseRoutes = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _routesLock = new();
     private readonly Dictionary<string, SessionEntry> _sessions = new(StringComparer.Ordinal);
     private readonly object _sessionsLock = new();
@@ -165,6 +175,28 @@ public sealed class PlaylistDashboardHost : IDisposable
         {
             _logoutRoutes.Add(RouteKey(method, path));
         }
+    }
+
+    /// <summary>
+    /// Registra uma rota de "Server-Sent Events" — Sprint Controle-Remoto-TP, parte 2 (2026-11-17,
+    /// ver comentário de classe de <see cref="PlaylistSseChannel"/> pro motivo: trocar polling por
+    /// um servidor que AVISA a dashboard na hora que algo muda). Devolve o <see cref="PlaylistSseChannel"/>
+    /// na hora do registro (não é assíncrono nem depende de nenhuma conexão já ter chegado) — quem
+    /// chamou guarda essa referência e chama <see cref="PlaylistSseChannel.Broadcast"/> sempre que
+    /// tiver algo novo pra mandar pra quem estiver conectado àquela rota, nenhuma conexão precisa já
+    /// existir no momento do registro. Mesma exigência de sessão válida de <see cref="RegisterApiRoute"/>
+    /// (ver <see cref="ProcessRequest"/>) — só GET faz sentido pra uma rota de streaming, mas o
+    /// método é um parâmetro aqui só pra manter a mesma assinatura das outras rotas desta classe.
+    /// </summary>
+    public PlaylistSseChannel RegisterSseRoute(string method, string path)
+    {
+        var channel = new PlaylistSseChannel();
+        lock (_routesLock)
+        {
+            _sseRoutes[RouteKey(method, path)] = channel;
+        }
+
+        return channel;
     }
 
     /// <summary>Abre a porta e começa a escutar — nunca lança: falhas viram <see cref="PlaylistDashboardStartResult.Failure"/>.</summary>
@@ -338,6 +370,31 @@ public sealed class PlaylistDashboardHost : IDisposable
 
             var apiResponse = apiHandler!(query, body, user);
             WriteResponse(response, apiResponse.StatusCode, apiResponse.ContentType, apiResponse.Body);
+            return;
+        }
+
+        // Sprint Controle-Remoto-TP, parte 2 (2026-11-17): mesmo gate de sessão das rotas de
+        // API/upload acima, mas o "handler" aqui é só REGISTRAR a conexão — ver
+        // PlaylistSseChannel.AddConnection. Deliberadamente NUNCA fecha `response` neste caminho
+        // (nem com WriteResponse nem com ServeStaticFile): a conexão precisa ficar aberta
+        // indefinidamente pra receber Broadcast()s futuros, bem diferente de toda outra rota desta
+        // classe (que sempre devolve uma resposta completa e fecha).
+        PlaylistSseChannel? sseChannel;
+        lock (_routesLock)
+        {
+            _sseRoutes.TryGetValue(routeKey, out sseChannel);
+        }
+
+        if (sseChannel is not null)
+        {
+            var user = TryResolveSession(request);
+            if (user is null)
+            {
+                WriteResponse(response, 401, "text/plain; charset=utf-8", "não autenticado — faça login.");
+                return;
+            }
+
+            sseChannel.AddConnection(response);
             return;
         }
 
@@ -524,6 +581,29 @@ public sealed class PlaylistDashboardHost : IDisposable
 
         _disposed = true;
         _cts?.Cancel();
+
+        // Sprint Controle-Remoto-TP, parte 2 (2026-11-17): fecha toda conexão SSE aberta (ver
+        // PlaylistSseChannel.Dispose) ANTES de parar o listener — mesmo sem isso o socket cairia
+        // sozinho quando o listener fechar, mas fechar explicitamente evita um Broadcast() tardio
+        // (ex.: TeleprompterViewModel.StateChanged disparando no exato instante da troca de porta)
+        // tentar escrever numa conexão de um host que já era pra estar morto.
+        List<PlaylistSseChannel> sseChannelsSnapshot;
+        lock (_routesLock)
+        {
+            sseChannelsSnapshot = _sseRoutes.Values.ToList();
+        }
+
+        foreach (var channel in sseChannelsSnapshot)
+        {
+            try
+            {
+                channel.Dispose();
+            }
+            catch (Exception)
+            {
+                // best-effort — não trava o resto do Dispose por causa disso.
+            }
+        }
 
         try
         {

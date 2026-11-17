@@ -274,7 +274,10 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
         // Sprint Playlist-Dashboard (2026-11-14): sobe a dashboard web (ou fica honestamente
         // desligada, se a pasta raiz ainda não foi configurada) — ver ReapplyPlaylistDashboardSettings.
-        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus, () => _persistedSettings.BackgroundArtPresets);
+        // Sprint Controle-Remoto-TP (2026-11-17): _teleprompter já foi construído acima (linha
+        // _teleprompter = new TeleprompterViewModel(...)) — passado direto (mesmo princípio de
+        // DeckA/DeckB), não por callback, porque a instância nunca troca durante a vida do programa.
+        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus, () => _persistedSettings.BackgroundArtPresets, _teleprompter);
         ReapplyPlaylistDashboardSettings();
 
         ApplyExternalTriggerSettings();
@@ -351,7 +354,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.94";
+    public string VersionLabel => "v1.0.96";
 
     public DeckViewModel DeckA { get; }
 

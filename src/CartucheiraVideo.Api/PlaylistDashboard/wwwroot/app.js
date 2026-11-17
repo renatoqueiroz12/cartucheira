@@ -20,6 +20,7 @@ const views = Array.from(document.querySelectorAll(".view"));
 // Sprint 6 (2026-11-16) — título/subtítulo do topo por view, pra mudar junto com o menu lateral.
 const VIEW_META = {
   "programs-view": { title: "Programas", subtitle: "Organização de materiais por Programa e Data." },
+  "teleprompter-view": { title: "Teleprompter", subtitle: "Controle remoto do texto do teleprompter — de qualquer PC na rede local." },
   "users-view": { title: "Usuários", subtitle: "Quem acessa a dashboard e quais Programas cada um vê/edita." },
 };
 
@@ -39,6 +40,13 @@ const toggleNewLaudaButton = document.getElementById("toggle-new-lauda-button");
 const laudaFormTitle = document.getElementById("lauda-form-title");
 const laudaFormSubmit = document.getElementById("lauda-form-submit");
 const newProgramBackgroundArtSelect = document.getElementById("new-program-background-art");
+
+// Sprint Controle-Remoto-TP (2026-11-17) — tela de Teleprompter (qualquer usuário logado).
+const tpStatusBadge = document.getElementById("tp-status-badge");
+const tpManualToggle = document.getElementById("tp-manual-toggle");
+const tpTextInput = document.getElementById("tp-text-input");
+const tpSendTextButton = document.getElementById("tp-send-text-button");
+const tpError = document.getElementById("tp-error");
 
 // Sprint 6 — tela de Usuários (Admin).
 const usersList = document.getElementById("users-list");
@@ -82,6 +90,16 @@ let draggedLaudaId = null;
 // editado no modal (null = modal em modo "Novo usuário").
 let currentPrograms = [];
 let editingUserId = null;
+
+// Sprint Controle-Remoto-TP, parte 2 (2026-11-17, pedido do usuário "2 segundos e muito,
+// precisamos pensar outra alternativa" ao polling de 2s da parte 1): tpEventSource é a conexão de
+// Server-Sent Events (só existe enquanto a view "teleprompter-view" estiver aberta, ver
+// showView/navItems abaixo) — o servidor empurra o estado na hora que algo muda, em vez desta
+// página ficar perguntando de novo e de novo. tpManualState guarda o último "manualOverride"
+// conhecido, pra decidir se o checkbox/textarea devem ficar habilitados sem esperar a resposta de
+// uma ação do próprio usuário.
+let tpEventSource = null;
+let tpManualState = false;
 
 function showError(message) {
   errorMessage.textContent = message;
@@ -483,9 +501,19 @@ async function checkAuthAndInit() {
 navItems.forEach((item) => {
   item.addEventListener("click", async () => {
     const viewId = item.dataset.view;
+
+    // Sprint Controle-Remoto-TP (2026-11-17, EventSource desde a parte 2): a conexão de estado do
+    // Teleprompter só fica aberta enquanto a view dele estiver aberta — sair da view (clicar em
+    // qualquer outro item do menu) fecha, mesmo que seja pra outra view que não "desliga" nada
+    // sozinha.
+    stopTeleprompterStream();
+
     showView(viewId);
+
     if (viewId === "users-view") {
       await loadUsers();
+    } else if (viewId === "teleprompter-view") {
+      startTeleprompterStream();
     }
   });
 });
@@ -507,6 +535,7 @@ loginForm.addEventListener("submit", async (event) => {
 });
 
 logoutButton.addEventListener("click", async () => {
+  stopTeleprompterStream();
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch (err) {
@@ -639,6 +668,108 @@ document.getElementById("new-lauda-form").addEventListener("submit", async (even
   } catch (err) {
     laudaUploadStatus.classList.add("hidden");
     showError(err.message);
+  }
+});
+
+// ===================== Sprint Controle-Remoto-TP (2026-11-17) — Teleprompter remoto =====================
+// Pedido do usuário: controlar o Teleprompter (desligar o automático/voz e digitar texto na mão)
+// de OUTRO PC, não da própria máquina da Cartucheira — esta view + as rotas server-side
+// (PlaylistDashboardCoordinator.HandleGetTeleprompterState/HandleSetTeleprompterManual/
+// HandleSetTeleprompterText) são esse "outro software ou url". Sem tela de permissão por Programa
+// (ver comentário de classe do PlaylistDashboardCoordinator) — qualquer usuário logado controla.
+//
+// Parte 2 (2026-11-17, pedido do usuário "2 segundos e muito, precisamos pensar outra
+// alternativa"): o polling original de 2s virou um EventSource (Server-Sent Events) — o servidor
+// (PlaylistSseChannel, do lado de PlaylistDashboardCoordinator.OnTeleprompterStateChanged) empurra
+// o estado pra ESTA aba na hora que algo muda em QUALQUER lugar (outra aba, ou a própria Lauda
+// carregada mudando automaticamente), sem esperar nenhum intervalo. A única consulta "pergunta-
+// resposta" que resta é a de GET /api/teleprompter/state ao abrir a view, só pra ter alguma coisa
+// na tela antes do EventSource terminar de conectar.
+
+/// Aplica um estado {manualOverride, currentText} na UI — chamado tanto pela carga inicial (GET)
+/// quanto por qualquer evento recebido do EventSource, e direto pela resposta de uma ação (toggle/
+/// enviar texto, que já chega com o estado atualizado, sem precisar esperar o evento do servidor).
+function applyTeleprompterState(state) {
+  tpManualState = state.manualOverride;
+  tpManualToggle.checked = state.manualOverride;
+  tpStatusBadge.textContent = state.manualOverride ? "Manual" : "Automático";
+  tpStatusBadge.classList.toggle("manual", state.manualOverride);
+  tpStatusBadge.classList.toggle("auto", !state.manualOverride);
+  tpTextInput.disabled = !state.manualOverride;
+  tpSendTextButton.disabled = !state.manualOverride;
+
+  // Não sobrescreve o que a pessoa está digitando agora (foco no campo) — só atualiza o texto
+  // mostrado quando o campo não está em uso, pra não "brigar" com quem está editando.
+  if (document.activeElement !== tpTextInput) {
+    tpTextInput.value = state.currentText || "";
+  }
+}
+
+async function loadTeleprompterState() {
+  try {
+    const state = await apiGet("/api/teleprompter/state");
+    tpError.classList.add("hidden");
+    applyTeleprompterState(state);
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  }
+}
+
+/// Sprint Controle-Remoto-TP, parte 2: abre a conexão de verdade (EventSource nativo do navegador,
+/// cookie de sessão já vai sozinho porque é uma chamada same-origin) de novo a cada vez que a view
+/// é aberta, fecha ao saltar pra outra view (ver navItems abaixo) — evita manter uma conexão eterna
+/// em segundo plano em views que ninguém está olhando. GET inicial primeiro (não espera o
+/// EventSource conectar pra mostrar alguma coisa), depois liga o stream pras próximas atualizações.
+function startTeleprompterStream() {
+  stopTeleprompterStream();
+  loadTeleprompterState();
+
+  tpEventSource = new EventSource("/api/teleprompter/stream");
+  tpEventSource.addEventListener("state", (event) => {
+    tpError.classList.add("hidden");
+    applyTeleprompterState(JSON.parse(event.data));
+  });
+  tpEventSource.addEventListener("error", () => {
+    // O EventSource do navegador já tenta reconectar sozinho (comportamento nativo, sem código
+    // nenhum nosso) — só avisa na tela que a conexão caiu, pra não parecer que simplesmente parou
+    // de atualizar sem motivo. Some sozinho no próximo evento "state" recebido com sucesso.
+    tpError.textContent = "conexão com a Cartucheira caiu — tentando reconectar...";
+    tpError.classList.remove("hidden");
+  });
+}
+
+function stopTeleprompterStream() {
+  if (tpEventSource !== null) {
+    tpEventSource.close();
+    tpEventSource = null;
+  }
+}
+
+tpManualToggle.addEventListener("change", async () => {
+  tpError.classList.add("hidden");
+  const wanted = tpManualToggle.checked;
+  tpManualToggle.disabled = true;
+  try {
+    const state = await apiPost("/api/teleprompter/manual", { enabled: wanted });
+    applyTeleprompterState(state);
+  } catch (err) {
+    tpManualToggle.checked = tpManualState; // desfaz a marcação — a chamada falhou.
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  } finally {
+    tpManualToggle.disabled = false;
+  }
+});
+
+tpSendTextButton.addEventListener("click", async () => {
+  tpError.classList.add("hidden");
+  try {
+    const state = await apiPost("/api/teleprompter/text", { text: tpTextInput.value });
+    applyTeleprompterState(state);
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
   }
 });
 

@@ -46,6 +46,9 @@
       <button type="button" class="nav-item active" data-view="programs-view">
         <span class="nav-item-icon">▦</span> Programas
       </button>
+      <button type="button" class="nav-item" data-view="teleprompter-view">
+        <span class="nav-item-icon">▤</span> Teleprompter
+      </button>
       <button type="button" class="nav-item admin-only hidden" data-view="users-view">
         <span class="nav-item-icon">◉</span> Usuários
       </button>
@@ -147,6 +150,31 @@
           <ul id="laudas-list" class="list laudas-list"></ul>
           <p class="hint">Clique numa Lauda pra abrir e editar. Arraste pelas setas (⠿) pra reordenar. Sem validação real de VT/imagens ainda (duração/resolução/codec ficam em branco até uma sprint futura).</p>
         </section>
+      </section>
+
+      <!-- Sprint Controle-Remoto-TP (2026-11-17, pedido do usuário "controle manual do tp [...] de
+           outro pc, nao onde esta a cartucheira [...] um outro software ou url que va controlando"):
+           esta view é exatamente esse "outro software" — qualquer PC/celular na rede local com a
+           dashboard aberta controla o Teleprompter, sem precisar estar na máquina da Cartucheira. -->
+      <section id="teleprompter-view" class="view hidden">
+        <div class="tp-status-row">
+          <span id="tp-status-badge" class="tp-status-badge auto">Automático</span>
+          <span class="hint tp-status-hint">Automático = segue a Lauda carregada no Deck fonte e a voz (se ligada em Configurações). Manual = você digita o texto aqui, voz desligada.</span>
+        </div>
+
+        <label class="checkbox-label tp-manual-toggle">
+          <input type="checkbox" id="tp-manual-toggle" /> Controle manual (desliga o automático e a voz)
+        </label>
+
+        <div class="field-row">
+          <label for="tp-text-input">Texto exibido</label>
+          <textarea id="tp-text-input" rows="10" placeholder="Digite aqui o texto do teleprompter..."></textarea>
+        </div>
+        <div class="field-row-buttons">
+          <button type="button" id="tp-send-text-button">Enviar texto</button>
+        </div>
+        <p id="tp-error" class="error hidden"></p>
+        <p class="hint">O texto exibido acima é atualizado em tempo real — se outra pessoa também estiver nesta tela (ou mexer no Teleprompter de outro jeito), você vê a mudança na hora, sem precisar atualizar a página.</p>
       </section>
 
       <section id="users-view" class="view hidden">

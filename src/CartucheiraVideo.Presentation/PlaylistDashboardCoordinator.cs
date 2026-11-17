@@ -39,6 +39,32 @@ namespace CartucheiraVideo.Presentation;
 /// entrada (desktop e web) continuam escrevendo no mesmo <c>users.json</c>, nenhuma duplica lógica de
 /// validação/proteção contra autoexclusão do último Admin (tudo isso já vive dentro do
 /// <c>UserStore</c>, chamado dos dois lados).
+///
+/// **Controle Remoto do Teleprompter — Sprint Controle-Remoto-TP (2026-11-17, pedido do usuário
+/// "controle manual do tp [...] isso precisa ser feito de outro pc, nao onde esta a cartucheira,
+/// para issso um outro software ou url que va controlando")**: três rotas novas
+/// (<see cref="HandleGetTeleprompterState"/>/<see cref="HandleSetTeleprompterManual"/>/
+/// <see cref="HandleSetTeleprompterText"/>) ligam a dashboard web direto no
+/// <see cref="_teleprompter"/> (referência direta — os dois vivem na Presentation, sem violar o
+/// isolamento de camadas do resto do projeto; não precisa de callback <c>Func</c>/<c>Action</c>
+/// como <see cref="_getBackgroundArtPresets"/> porque a instância é fixa durante toda a vida do
+/// <c>MainViewModel</c>, nunca troca). Deliberadamente SEM checagem de <c>IsAdmin</c>/
+/// <see cref="HasAccessToProgram"/>: o Teleprompter não pertence a nenhum Programa específico (é
+/// uma Cartucheira/Teleprompter só por estúdio), então qualquer usuário autenticado na dashboard
+/// pode ligar/desligar o manual e mandar texto — mesmo critério já usado por
+/// <see cref="HandleListBackgroundArtPresets"/> (rota sem checagem extra, só sessão válida). Essa
+/// escolha não foi perguntada explicitamente ao usuário; se ele preferir deixar só pra Admin, é
+/// só adicionar a mesma checagem de <see cref="HandleListUsers"/> aqui.
+///
+/// **Parte 2 — Server-Sent Events (2026-11-17, pedido do usuário "2 segundos e muito, precisamos
+/// pensar outra alternativa" ao polling de 2s da v1.0.95, confirmando que na própria Cartucheira o
+/// texto vai pra tela "praticamente em tempo real")**: <see cref="_teleprompterSseChannel"/>/
+/// <see cref="OnTeleprompterStateChanged"/> substituem esse polling por um push de verdade — a
+/// dashboard abre uma conexão (<c>GET /api/teleprompter/stream</c>) e o servidor manda um evento
+/// na hora que <see cref="ViewModels.TeleprompterViewModel.StateChanged"/> dispara, zero intervalo
+/// de espera artificial. As três rotas REST da parte 1 continuam todas existindo sem mudança
+/// nenhuma (ações continuam sendo pedidas por POST normal; SSE é só pro sentido contrário,
+/// servidor→navegador).
 /// </summary>
 public sealed class PlaylistDashboardCoordinator : IDisposable
 {
@@ -50,7 +76,19 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
     private readonly Action<string> _onStatus;
     private readonly Func<IReadOnlyList<BackgroundArtPreset>> _getBackgroundArtPresets;
+    private readonly ViewModels.TeleprompterViewModel _teleprompter;
     private PlaylistDashboardHost? _host;
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 2 (2026-11-17) — canal de Server-Sent Events da rota
+    /// <c>GET /api/teleprompter/stream</c>, recriado em todo <see cref="ApplySettings"/> junto com o
+    /// resto do <see cref="_host"/> (ver <see cref="OnTeleprompterStateChanged"/>, assinado UMA
+    /// única vez no construtor em <see cref="_teleprompter"/>.<c>StateChanged</c> — sempre lê este
+    /// campo no momento do disparo, nunca guarda uma referência velha). Nulo sempre que não houver
+    /// dashboard rodando (pasta raiz vazia, porta ocupada etc.) — <see cref="OnTeleprompterStateChanged"/>
+    /// usa <c>?.</c> de propósito, broadcast sem ninguém escutando não é erro.
+    /// </summary>
+    private PlaylistSseChannel? _teleprompterSseChannel;
 
     /// <summary>
     /// <paramref name="getBackgroundArtPresets"/> — Sprint 3 (2026-11-16, pedido do usuário "cada
@@ -60,11 +98,23 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     /// Id ativo nenhum, só expõe a LISTA pra dashboard poder montar o &lt;select&gt; do formulário
     /// "Novo Programa"; quem decide qual fundo fica ativo ao abrir a Playlist é o
     /// <c>MainViewModel</c> (ver <c>PlaylistViewModel</c>/Sprint 4), não esta classe.
+    ///
+    /// <paramref name="teleprompter"/> — Sprint Controle-Remoto-TP (2026-11-17): referência DIRETA
+    /// (não um callback, diferente de <paramref name="getBackgroundArtPresets"/>) porque a
+    /// instância é construída uma única vez pelo <c>MainViewModel</c> e vive durante todo o
+    /// programa, mesmo princípio de <c>DeckA</c>/<c>DeckB</c> serem passados direto pra outros
+    /// construtores desta base. Ver comentário de classe completo sobre as três rotas novas.
     /// </summary>
-    public PlaylistDashboardCoordinator(Action<string> onStatus, Func<IReadOnlyList<BackgroundArtPreset>> getBackgroundArtPresets)
+    public PlaylistDashboardCoordinator(Action<string> onStatus, Func<IReadOnlyList<BackgroundArtPreset>> getBackgroundArtPresets, ViewModels.TeleprompterViewModel teleprompter)
     {
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
         _getBackgroundArtPresets = getBackgroundArtPresets ?? throw new ArgumentNullException(nameof(getBackgroundArtPresets));
+        _teleprompter = teleprompter ?? throw new ArgumentNullException(nameof(teleprompter));
+
+        // Sprint Controle-Remoto-TP, parte 2 (2026-11-17): assinado uma única vez aqui (a instância
+        // de _teleprompter nunca troca durante a vida do programa — ver comentário do parâmetro
+        // acima) em vez de a cada ApplySettings, que só recria _host/_teleprompterSseChannel.
+        _teleprompter.StateChanged += OnTeleprompterStateChanged;
     }
 
     /// <summary>
@@ -79,6 +129,7 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
         _host?.Dispose();
         _host = null;
+        _teleprompterSseChannel = null; // Dispose() do _host acima já fechou as conexões deste canal.
 
         if (string.IsNullOrWhiteSpace(settings.RootFolder))
         {
@@ -116,17 +167,43 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         host.RegisterUploadRoute("PUT", "/api/playlist/laudas/vt", (query, stream, user) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Video, user));
         host.RegisterUploadRoute("PUT", "/api/playlist/laudas/imagem", (query, stream, user) => HandleUploadFile(rootFolder, query, stream, PlaylistUploadKind.Image, user));
 
+        // Sprint Controle-Remoto-TP (2026-11-17): sem checagem de IsAdmin/HasAccessToProgram de
+        // propósito — ver comentário de classe completo sobre essa escolha.
+        host.RegisterApiRoute("GET", "/api/teleprompter/state", (_, _, _) => HandleGetTeleprompterState());
+        host.RegisterApiRoute("POST", "/api/teleprompter/manual", (_, body, _) => HandleSetTeleprompterManual(body));
+        host.RegisterApiRoute("POST", "/api/teleprompter/text", (_, body, _) => HandleSetTeleprompterText(body));
+
+        // Sprint Controle-Remoto-TP, parte 2 (2026-11-17): canal de push em vez da dashboard ter que
+        // perguntar de novo e de novo (ver comentário de classe completo sobre o pedido do usuário
+        // que motivou isto). GET /api/teleprompter/state acima continua existindo — é o que a
+        // dashboard usa pra pegar o estado inicial ao abrir a view, antes do EventSource conectar.
+        var teleprompterSseChannel = host.RegisterSseRoute("GET", "/api/teleprompter/stream");
+
         var result = host.Start();
         if (result.Succeeded)
         {
             _host = host;
+            _teleprompterSseChannel = teleprompterSseChannel;
             _onStatus($"Playlist: dashboard disponível na rede local na porta {result.Port} (pasta raiz: {rootFolder}).");
         }
         else
         {
             host.Dispose();
+            _teleprompterSseChannel = null;
             _onStatus($"Playlist: não consegui abrir a dashboard — {result.ErrorMessage}");
         }
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 2 (2026-11-17) — assinado em <see cref="_teleprompter"/>.
+    /// <c>StateChanged</c> (ver construtor). Nunca toca em nada de WPF (o evento pode disparar numa
+    /// thread de requisição HTTP OU na UI thread, dependendo de quem mudou o estado — ver comentário
+    /// de <c>TeleprompterViewModel.StateChanged</c>) — só serializa dois valores primitivos e escreve
+    /// bytes num socket, seguro de qualquer thread.
+    /// </summary>
+    private void OnTeleprompterStateChanged()
+    {
+        _teleprompterSseChannel?.Broadcast("state", JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
     }
 
     /// <summary>Sprint 5 (2026-11-16) — POST /api/auth/login, única rota pública além do logout. Mensagem genérica de erro de propósito (ver <c>UserStore.VerifyCredentials</c>).</summary>
@@ -601,6 +678,66 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new UploadResultDto(savedFileName), JsonOptions));
     }
 
+    /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — GET /api/teleprompter/state: pra tela remota saber se o manual está ligado e o que está exibido agora (automático ou manual), tanto ao abrir a página quanto no polling periódico (ver app.js).</summary>
+    private PlaylistDashboardResponse HandleGetTeleprompterState() =>
+        PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+
+    private TeleprompterStateDto ToTeleprompterStateDto() => new(_teleprompter.IsManualOverride, _teleprompter.CurrentText);
+
+    /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — POST /api/teleprompter/manual: liga/desliga o controle manual remoto (ver <see cref="ViewModels.TeleprompterViewModel.SetManualOverride"/> pro efeito completo, incluindo desligar a voz junto ao ligar).</summary>
+    private PlaylistDashboardResponse HandleSetTeleprompterManual(string? body)
+    {
+        SetTeleprompterManualRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<SetTeleprompterManualRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"enabled\").");
+        }
+
+        if (request is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"enabled\" é obrigatório (true/false).");
+        }
+
+        _teleprompter.SetManualOverride(request.Enabled);
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17) — POST /api/teleprompter/text: define o texto exibido
+    /// manualmente. Só tem efeito com o manual já ligado (ver <see cref="ViewModels.TeleprompterViewModel.SetManualText"/>);
+    /// aqui devolve 409 nesse caso em vez de aceitar silenciosamente, pra tela remota avisar o
+    /// produtor em vez de parecer que salvou e não fez nada.
+    /// </summary>
+    private PlaylistDashboardResponse HandleSetTeleprompterText(string? body)
+    {
+        SetTeleprompterTextRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<SetTeleprompterTextRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"text\").");
+        }
+
+        if (request is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"text\" é obrigatório (pode ser \"\" pra limpar).");
+        }
+
+        if (!_teleprompter.IsManualOverride)
+        {
+            return PlaylistDashboardResponse.PlainTextError(409, "ligue o controle manual antes de mandar texto (POST /api/teleprompter/manual com \"enabled\": true).");
+        }
+
+        _teleprompter.SetManualText(request.Text ?? string.Empty);
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
     private static LaudaDto ToLaudaDto(PlaylistLaudaRecord lauda) => new(
         lauda.Id,
         lauda.Order,
@@ -638,8 +775,10 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
     public void Dispose()
     {
+        _teleprompter.StateChanged -= OnTeleprompterStateChanged;
         _host?.Dispose();
         _host = null;
+        _teleprompterSseChannel = null;
     }
 
     private sealed record ProgramDto(string Id, string Name);
@@ -709,4 +848,11 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     private sealed record UpdateUserPermissionsRequest(string? Id, bool IsAdmin, List<string>? AllowedProgramIds);
 
     private sealed record ResetPasswordRequest(string? Id, string? NewPassword);
+
+    /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — devolvido por GET /api/teleprompter/state E depois de POST /api/teleprompter/manual|text (pra tela remota atualizar sem precisar de uma segunda chamada).</summary>
+    private sealed record TeleprompterStateDto(bool ManualOverride, string CurrentText);
+
+    private sealed record SetTeleprompterManualRequest(bool Enabled);
+
+    private sealed record SetTeleprompterTextRequest(string? Text);
 }

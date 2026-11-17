@@ -85,6 +85,9 @@ public partial class TeleprompterOutputWindow : Window
         PromptTextBox.FontSize = pointSize;
     }
 
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17, pedido do usuário "o que tiver no tp precisa aparecer ali... com os controles de tp"): guardado separado do próprio <see cref="ScaleTransform"/> porque não dá pra "perguntar" pro <see cref="Transform"/> atual se ele é a identidade ou um espelho sem comparar referência — mais simples ter o bool de verdade. Lido por <see cref="IsMirrored"/>, que o <c>TeleprompterViewModel</c> expõe pro espelho da dashboard web saber se deve espelhar o texto também.</summary>
+    private bool _mirrored;
+
     /// <summary>Espelha o texto horizontalmente (ver comentário no XAML) — liga/desliga um <see cref="ScaleTransform"/> no Grid raiz.</summary>
     public void SetMirror(bool mirrored)
     {
@@ -93,7 +96,14 @@ public partial class TeleprompterOutputWindow : Window
         // gira em torno do centro da janela, não do canto, então o conteúdo continua ocupando a
         // tela inteira em vez de "sair" pela esquerda.
         RootGrid.RenderTransform = mirrored ? new ScaleTransform(-1, 1) : Transform.Identity;
+        _mirrored = mirrored;
     }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — exposto pro <c>TeleprompterViewModel</c> relatar o estado atual pro espelho da dashboard web (ver <see cref="SetMirror"/>).</summary>
+    public bool IsMirrored => _mirrored;
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — idem, tamanho de fonte atual (ver <see cref="SetFontSize"/>), pro espelho da dashboard web escalar o texto na mesma proporção.</summary>
+    public double CurrentFontSize => PromptTextBox.FontSize;
 
     /// <summary>
     /// Rola o texto pra trazer o caractere <paramref name="charOffset"/> (deslocamento no MESMO
@@ -130,29 +140,29 @@ public partial class TeleprompterOutputWindow : Window
         PromptTextBox.ScrollToVerticalOffset(Math.Max(0, targetContentY - desiredViewportY));
     }
 
-    /// <summary>Controle manual sempre disponível — setas/Page Up/Down tratadas aqui (a própria janela, não o TextBox — ver comentário no XAML sobre Focusable="False") porque o TextBox nunca recebe foco de teclado.</summary>
+    /// <summary>Controle manual sempre disponível — setas/Page Up/Down tratadas aqui (a própria janela, não o TextBox — ver comentário no XAML sobre Focusable="False") porque o TextBox nunca recebe foco de teclado. Chama os mesmos wrappers públicos de <see cref="StepScrollUp"/>/<see cref="StepScrollDown"/>/etc. usados pelo controle remoto (Sprint Controle-Remoto-TP, parte 3, 2026-11-17) — local (teclado) e remoto (dashboard web) sempre executam exatamente o mesmo código, nunca duas implementações da mesma ação.</summary>
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         switch (e.Key)
         {
             case Key.Up:
-                PromptTextBox.LineUp();
+                StepScrollUp();
                 e.Handled = true;
                 break;
             case Key.Down:
-                PromptTextBox.LineDown();
+                StepScrollDown();
                 e.Handled = true;
                 break;
             case Key.PageUp:
-                PromptTextBox.PageUp();
+                PageScrollUp();
                 e.Handled = true;
                 break;
             case Key.PageDown:
-                PromptTextBox.PageDown();
+                PageScrollDown();
                 e.Handled = true;
                 break;
             case Key.Home:
-                PromptTextBox.ScrollToHome();
+                ScrollToStart();
                 e.Handled = true;
                 break;
             case Key.End:
@@ -173,16 +183,68 @@ public partial class TeleprompterOutputWindow : Window
         {
             if (e.Delta > 0)
             {
-                PromptTextBox.LineUp();
+                StepScrollUp();
             }
             else
             {
-                PromptTextBox.LineDown();
+                StepScrollDown();
             }
         }
 
         e.Handled = true;
         base.OnPreviewMouseWheel(e);
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17, pedido do usuário "ter os controles de tp
+    /// [...] pesquise sobre software de tp e controles pra colocar nele pra poder controlar
+    /// manual") — seis wrappers públicos que fazem exatamente o que as teclas/roda do mouse já
+    /// faziam localmente (ver acima), agora também chamáveis pelo <c>TeleprompterViewModel</c> a
+    /// partir de uma ação vinda da dashboard web. Nenhuma lógica nova aqui, só expõe o que o
+    /// <see cref="PromptTextBox"/> (um <c>TextBox</c> comum) já sabe fazer.
+    /// </summary>
+    public void StepScrollUp() => PromptTextBox.LineUp();
+
+    public void StepScrollDown() => PromptTextBox.LineDown();
+
+    public void PageScrollUp() => PromptTextBox.PageUp();
+
+    public void PageScrollDown() => PromptTextBox.PageDown();
+
+    public void ScrollToStart() => PromptTextBox.ScrollToHome();
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — avança (ou recua, se <paramref name="pixels"/>
+    /// for negativo) a rolagem em pixels de conteúdo — usado pelo Play automático remoto
+    /// (<c>TeleprompterViewModel</c>, um <see cref="System.Windows.Threading.DispatcherTimer"/>
+    /// chamando isto a cada tick com um incremento pequeno, calculado a partir da velocidade
+    /// escolhida). <see cref="TextBoxBase.ScrollToVerticalOffset"/> já satura sozinho nos limites
+    /// (0 e o fim do conteúdo) — não precisa clamping manual aqui.
+    /// </summary>
+    public void AdvanceScrollByPixels(double pixels) => PromptTextBox.ScrollToVerticalOffset(PromptTextBox.VerticalOffset + pixels);
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — posição de rolagem atual como fração 0..1
+    /// do total rolável (0 = início, 1 = fim) — pro espelho da dashboard web saber ONDE no texto a
+    /// leitura está agora, pra sincronizar sua própria barra/posição visual. Overflow zero (texto
+    /// curto, cabe todo na tela) devolve 0 de propósito (nada pra rolar, "está no início" é a
+    /// única resposta que faz sentido).
+    /// </summary>
+    public double GetScrollFraction()
+    {
+        var overflow = Math.Max(0, PromptTextBox.ExtentHeight - PromptTextBox.ViewportHeight);
+        return overflow <= 0 ? 0 : Math.Clamp(PromptTextBox.VerticalOffset / overflow, 0, 1);
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — inverso de <see cref="GetScrollFraction"/>:
+    /// pula direto pra uma posição 0..1 do total rolável, usado pela barra arrastável (scrubber) do
+    /// controle remoto da dashboard web.
+    /// </summary>
+    public void SetScrollFraction(double fraction)
+    {
+        var overflow = Math.Max(0, PromptTextBox.ExtentHeight - PromptTextBox.ViewportHeight);
+        PromptTextBox.ScrollToVerticalOffset(Math.Clamp(fraction, 0, 1) * overflow);
     }
 
     private void PositionCueLine()

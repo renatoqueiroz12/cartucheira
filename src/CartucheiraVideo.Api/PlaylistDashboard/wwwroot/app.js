@@ -48,6 +48,18 @@ const tpTextInput = document.getElementById("tp-text-input");
 const tpSendTextButton = document.getElementById("tp-send-text-button");
 const tpError = document.getElementById("tp-error");
 
+// Parte 3 (2026-11-17) — espelho da tela + controles de rolagem (Play/Pause+velocidade, passo,
+// início). Ver comentário da seção "Teleprompter remoto" mais abaixo pro porquê desta abordagem.
+const tpMirror = document.getElementById("tp-mirror");
+const tpMirrorCueline = document.getElementById("tp-mirror-cueline");
+const tpMirrorText = document.getElementById("tp-mirror-text");
+const tpJumpStartButton = document.getElementById("tp-jump-start-button");
+const tpStepUpButton = document.getElementById("tp-step-up-button");
+const tpStepDownButton = document.getElementById("tp-step-down-button");
+const tpPlayPauseButton = document.getElementById("tp-play-pause-button");
+const tpSpeedSlider = document.getElementById("tp-speed-slider");
+const tpSpeedValue = document.getElementById("tp-speed-value");
+
 // Sprint 6 — tela de Usuários (Admin).
 const usersList = document.getElementById("users-list");
 const usersError = document.getElementById("users-error");
@@ -100,6 +112,11 @@ let editingUserId = null;
 // uma ação do próprio usuário.
 let tpEventSource = null;
 let tpManualState = false;
+
+// Parte 3 (2026-11-17) — tpSpeedDragging evita a mesma "briga" que já existe pro #tp-text-input
+// (ver applyTeleprompterState): enquanto o usuário está arrastando o slider de velocidade, um
+// evento "state" chegando no meio do arrasto não deveria resetar a posição dele.
+let tpSpeedDragging = false;
 
 function showError(message) {
   errorMessage.textContent = message;
@@ -685,10 +702,34 @@ document.getElementById("new-lauda-form").addEventListener("submit", async (even
 // carregada mudando automaticamente), sem esperar nenhum intervalo. A única consulta "pergunta-
 // resposta" que resta é a de GET /api/teleprompter/state ao abrir a view, só pra ter alguma coisa
 // na tela antes do EventSource terminar de conectar.
+//
+// Parte 3 (2026-11-17, pedido do usuário "essa tela que abriu no browser precisa ser um espelho
+// das tela do tp [...] como se fosse um acesso remoto da tela e ai ter os controles de tp"):
+// pesquisa sobre apps profissionais de teleprompter com controle remoto (RemoteCue, PromptSmart
+// Pro, TeleCuePro) confirmou que a prática padrão NÃO é um vídeo literal da tela — é um espelho de
+// TEXTO + POSIÇÃO DE LEITURA sincronizados, porque isso é visualmente idêntico, muito mais barato
+// (nenhuma captura/encode/stream de vídeo, só os mesmos bytes de texto + um número de 0 a 1) e
+// funciona em qualquer PC/celular sem plugin nenhum. #tp-mirror reproduz a aparência exata da
+// janela real (TeleprompterOutputWindow.xaml: fundo preto, texto branco negrito Segoe UI, linha de
+// referência azul a 35%) com scrollTop/transform calculados a partir de scrollFraction/fontSizePt/
+// mirrored, todos vindos do mesmo estado já empurrado pelo SSE — nenhuma rota nova só pra isso.
+// Os controles (Play/Pause+velocidade 1-10, passo manual, início) são o segundo achado da pesquisa:
+// o controle mais básico/universal de qualquer teleprompter remoto profissional, confirmado com o
+// usuário ("Sim, é isso" / "Escala simples 1-10") em vez de medir em palavras-por-minuto.
 
-/// Aplica um estado {manualOverride, currentText} na UI — chamado tanto pela carga inicial (GET)
-/// quanto por qualquer evento recebido do EventSource, e direto pela resposta de uma ação (toggle/
-/// enviar texto, que já chega com o estado atualizado, sem precisar esperar o evento do servidor).
+/// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — escala aproximada de pixels-de-fonte-CSS por
+/// ponto de FontSizePt da janela real, só pro espelho web parecer proporcionalmente do mesmo
+/// "tamanho" que a janela de verdade. Palpite honesto baseado numa largura de referência de 1920px
+/// (a landing mais comum de monitor/TV de teleprompter nesta base, ver Theme.xaml) — não existe
+/// medição real de DPI/monitor do lado do navegador, então isto é só uma aproximação visual, nunca
+/// um valor que precise ser exato.
+const TP_MIRROR_REFERENCE_WIDTH_PX = 1920;
+
+/// Aplica um estado {manualOverride, currentText, scrollFraction, autoScrollPlaying,
+/// autoScrollSpeed, fontSizePt, mirrored} na UI — chamado tanto pela carga inicial (GET) quanto por
+/// qualquer evento recebido do EventSource, e direto pela resposta de uma ação (toggle/enviar
+/// texto/rolar/Play/velocidade, que já chegam com o estado atualizado, sem precisar esperar o
+/// evento do servidor).
 function applyTeleprompterState(state) {
   tpManualState = state.manualOverride;
   tpManualToggle.checked = state.manualOverride;
@@ -698,10 +739,38 @@ function applyTeleprompterState(state) {
   tpTextInput.disabled = !state.manualOverride;
   tpSendTextButton.disabled = !state.manualOverride;
 
+  const controlsEnabled = state.manualOverride;
+  tpJumpStartButton.disabled = !controlsEnabled;
+  tpStepUpButton.disabled = !controlsEnabled;
+  tpStepDownButton.disabled = !controlsEnabled;
+  tpPlayPauseButton.disabled = !controlsEnabled;
+  tpSpeedSlider.disabled = !controlsEnabled;
+
   // Não sobrescreve o que a pessoa está digitando agora (foco no campo) — só atualiza o texto
   // mostrado quando o campo não está em uso, pra não "brigar" com quem está editando.
   if (document.activeElement !== tpTextInput) {
     tpTextInput.value = state.currentText || "";
+  }
+
+  // Espelho: mesmo texto, posição de leitura sincronizada via scrollFraction (0..1) — ver
+  // comentário da seção completo sobre o porquê deste ser um espelho de texto, não de vídeo.
+  // translateY + scaleX combinados num único transform (em vez de margin-top + classe CSS
+  // separada) pra evitar qualquer ordem de aplicação estranha entre os dois efeitos.
+  tpMirrorText.textContent = state.currentText || "";
+  const fontSizePx = (state.fontSizePt || 28) * (tpMirror.clientWidth / TP_MIRROR_REFERENCE_WIDTH_PX) * 1.333;
+  tpMirrorText.style.fontSize = Math.max(10, fontSizePx) + "px";
+  const scrollable = Math.max(0, tpMirrorText.scrollHeight - tpMirror.clientHeight);
+  const translateY = -((state.scrollFraction || 0) * scrollable);
+  const flip = state.mirrored ? " scaleX(-1)" : "";
+  tpMirrorText.style.transform = `translateY(${translateY}px)${flip}`;
+
+  // Play/Pause + velocidade — não sobrescreve o slider enquanto o usuário está arrastando (mesmo
+  // cuidado do textarea acima).
+  tpPlayPauseButton.textContent = state.autoScrollPlaying ? "⏸ Pause" : "▶ Play";
+  tpPlayPauseButton.classList.toggle("playing", !!state.autoScrollPlaying);
+  if (!tpSpeedDragging) {
+    tpSpeedSlider.value = state.autoScrollSpeed || 5;
+    tpSpeedValue.textContent = String(state.autoScrollSpeed || 5);
   }
 }
 
@@ -767,6 +836,94 @@ tpSendTextButton.addEventListener("click", async () => {
   try {
     const state = await apiPost("/api/teleprompter/text", { text: tpTextInput.value });
     applyTeleprompterState(state);
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  }
+});
+
+// Parte 3 (2026-11-17) — controles de rolagem remota. Mesmo padrão de tratamento de erro dos dois
+// listeners acima (mostra em #tp-error, nunca trava a tela); nenhum desabilita/reabilita o próprio
+// botão clicado (diferente do toggle manual) porque a resposta volta rápido o bastante (chamada
+// local na rede do estúdio) pra não precisar desse cuidado extra.
+tpJumpStartButton.addEventListener("click", async () => {
+  tpError.classList.add("hidden");
+  try {
+    applyTeleprompterState(await apiPost("/api/teleprompter/jump-start", {}));
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  }
+});
+
+tpStepUpButton.addEventListener("click", async () => {
+  tpError.classList.add("hidden");
+  try {
+    applyTeleprompterState(await apiPost("/api/teleprompter/scroll-step", { direction: "up" }));
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  }
+});
+
+tpStepDownButton.addEventListener("click", async () => {
+  tpError.classList.add("hidden");
+  try {
+    applyTeleprompterState(await apiPost("/api/teleprompter/scroll-step", { direction: "down" }));
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  }
+});
+
+tpPlayPauseButton.addEventListener("click", async () => {
+  tpError.classList.add("hidden");
+  const wantedPlaying = tpPlayPauseButton.textContent.includes("Play"); // estado atual mostrado, não tpManualState (isto é independente do manual).
+  try {
+    applyTeleprompterState(await apiPost("/api/teleprompter/autoscroll/play", { playing: wantedPlaying }));
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  }
+});
+
+// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — "input" (dispara a cada arrasto, não só ao
+// soltar) pra dar feedback imediato do número ao lado do slider; a chamada de rede em si só vai no
+// "change" final (soltar o slider/clicar numa posição), pra não inundar o servidor de requisições
+// a cada pixel arrastado.
+tpSpeedSlider.addEventListener("input", () => {
+  tpSpeedDragging = true;
+  tpSpeedValue.textContent = tpSpeedSlider.value;
+});
+
+tpSpeedSlider.addEventListener("change", async () => {
+  tpError.classList.add("hidden");
+  try {
+    applyTeleprompterState(await apiPost("/api/teleprompter/autoscroll/speed", { speed: Number(tpSpeedSlider.value) }));
+  } catch (err) {
+    tpError.textContent = err.message;
+    tpError.classList.remove("hidden");
+  } finally {
+    tpSpeedDragging = false;
+  }
+});
+
+// Arrastar a barra do espelho (#tp-mirror) pula direto pra essa posição do texto — scrubber, mesmo
+// conceito de "clicar numa posição da barra de progresso" de qualquer player de mídia. Clique
+// simples (sem arrastar) já funciona igual, por ser só um "mousedown" seguido de "click" sem
+// movimento. Só ativo com o manual ligado (mesmo gate dos outros controles, ver
+// applyTeleprompterState) — checagem feita aqui porque o próprio elemento nunca fica "disabled"
+// (não é um <button>/<input>), diferente dos outros controles desta seção.
+tpMirror.addEventListener("click", async (event) => {
+  if (!tpManualState) {
+    return;
+  }
+
+  tpError.classList.add("hidden");
+  const rect = tpMirror.getBoundingClientRect();
+  const fraction = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+  try {
+    applyTeleprompterState(await apiPost("/api/teleprompter/scroll-to", { fraction }));
   } catch (err) {
     tpError.textContent = err.message;
     tpError.classList.remove("hidden");

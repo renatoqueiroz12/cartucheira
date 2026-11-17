@@ -173,6 +173,18 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         host.RegisterApiRoute("POST", "/api/teleprompter/manual", (_, body, _) => HandleSetTeleprompterManual(body));
         host.RegisterApiRoute("POST", "/api/teleprompter/text", (_, body, _) => HandleSetTeleprompterText(body));
 
+        // Sprint Controle-Remoto-TP, parte 3 (2026-11-17, pedido do usuário "essa tela que abriu no
+        // browser precisa ser um espelho das tela do tp [...] e ai ter os controles de tp") — cinco
+        // rotas novas pro espelho de rolagem (texto+posição, ver pesquisa citada no comentário de
+        // classe) e os controles Play/Pause+velocidade/passo/início. Mesmo critério de acesso das
+        // três rotas da parte 1 (sem IsAdmin/HasAccessToProgram): o Teleprompter é por estúdio, não
+        // por Programa.
+        host.RegisterApiRoute("POST", "/api/teleprompter/scroll-step", (_, body, _) => HandleTeleprompterScrollStep(body));
+        host.RegisterApiRoute("POST", "/api/teleprompter/scroll-to", (_, body, _) => HandleTeleprompterScrollTo(body));
+        host.RegisterApiRoute("POST", "/api/teleprompter/jump-start", (_, _, _) => HandleTeleprompterJumpStart());
+        host.RegisterApiRoute("POST", "/api/teleprompter/autoscroll/play", (_, body, _) => HandleTeleprompterAutoScrollPlay(body));
+        host.RegisterApiRoute("POST", "/api/teleprompter/autoscroll/speed", (_, body, _) => HandleTeleprompterAutoScrollSpeed(body));
+
         // Sprint Controle-Remoto-TP, parte 2 (2026-11-17): canal de push em vez da dashboard ter que
         // perguntar de novo e de novo (ver comentário de classe completo sobre o pedido do usuário
         // que motivou isto). GET /api/teleprompter/state acima continua existindo — é o que a
@@ -682,7 +694,14 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
     private PlaylistDashboardResponse HandleGetTeleprompterState() =>
         PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
 
-    private TeleprompterStateDto ToTeleprompterStateDto() => new(_teleprompter.IsManualOverride, _teleprompter.CurrentText);
+    private TeleprompterStateDto ToTeleprompterStateDto() => new(
+        _teleprompter.IsManualOverride,
+        _teleprompter.CurrentText,
+        _teleprompter.ScrollFraction,
+        _teleprompter.IsAutoScrollPlaying,
+        _teleprompter.AutoScrollSpeed,
+        _teleprompter.FontSizePt,
+        _teleprompter.IsMirrored);
 
     /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — POST /api/teleprompter/manual: liga/desliga o controle manual remoto (ver <see cref="ViewModels.TeleprompterViewModel.SetManualOverride"/> pro efeito completo, incluindo desligar a voz junto ao ligar).</summary>
     private PlaylistDashboardResponse HandleSetTeleprompterManual(string? body)
@@ -735,6 +754,121 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         }
 
         _teleprompter.SetManualText(request.Text ?? string.Empty);
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — POST /api/teleprompter/scroll-step: passo
+    /// manual (seta pra cima/baixo), equivalente remoto da tecla local (ver
+    /// <see cref="ViewModels.TeleprompterViewModel.StepScrollUp"/>/<c>StepScrollDown</c>, que já
+    /// ignoram silenciosamente fora do manual — esta rota nunca devolve 409 por isso, igual
+    /// <see cref="HandleSetTeleprompterManual"/>).
+    /// </summary>
+    private PlaylistDashboardResponse HandleTeleprompterScrollStep(string? body)
+    {
+        ScrollStepRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<ScrollStepRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"direction\": \"up\"|\"down\").");
+        }
+
+        if (request is null || (request.Direction != "up" && request.Direction != "down"))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"direction\" é obrigatório (\"up\" ou \"down\").");
+        }
+
+        if (request.Direction == "up")
+        {
+            _teleprompter.StepScrollUp();
+        }
+        else
+        {
+            _teleprompter.StepScrollDown();
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — POST /api/teleprompter/scroll-to: pula direto pra uma fração 0..1 do texto (barra arrastável/scrubber do espelho remoto).</summary>
+    private PlaylistDashboardResponse HandleTeleprompterScrollTo(string? body)
+    {
+        ScrollToRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<ScrollToRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"fraction\": número de 0 a 1).");
+        }
+
+        if (request is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"fraction\" é obrigatório (número de 0 a 1).");
+        }
+
+        _teleprompter.SetScrollFractionRemote(request.Fraction);
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — POST /api/teleprompter/jump-start (sem corpo): volta pro início do texto, equivalente remoto da tecla Home local.</summary>
+    private PlaylistDashboardResponse HandleTeleprompterJumpStart()
+    {
+        _teleprompter.JumpToStart();
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — POST /api/teleprompter/autoscroll/play:
+    /// liga/desliga a rolagem automática por tempo (ver
+    /// <see cref="ViewModels.TeleprompterViewModel.SetAutoScrollPlaying"/> — controle central desta
+    /// parte 3, já que com o manual ligado a rolagem por voz fica desligada e sem isto o produtor só
+    /// teria o passo manual).
+    /// </summary>
+    private PlaylistDashboardResponse HandleTeleprompterAutoScrollPlay(string? body)
+    {
+        AutoScrollPlayRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<AutoScrollPlayRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"playing\").");
+        }
+
+        if (request is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"playing\" é obrigatório (true/false).");
+        }
+
+        _teleprompter.SetAutoScrollPlaying(request.Playing);
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
+    }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — POST /api/teleprompter/autoscroll/speed: troca a velocidade (escala 1-10, ver comentário de <c>TeleprompterViewModel._autoScrollSpeed</c> sobre a escolha dessa escala em vez de palavras-por-minuto).</summary>
+    private PlaylistDashboardResponse HandleTeleprompterAutoScrollSpeed(string? body)
+    {
+        AutoScrollSpeedRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<AutoScrollSpeedRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"speed\": número de 1 a 10).");
+        }
+
+        if (request is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"speed\" é obrigatório (número de 1 a 10).");
+        }
+
+        _teleprompter.SetAutoScrollSpeed(request.Speed);
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
     }
 
@@ -849,10 +983,34 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
     private sealed record ResetPasswordRequest(string? Id, string? NewPassword);
 
-    /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — devolvido por GET /api/teleprompter/state E depois de POST /api/teleprompter/manual|text (pra tela remota atualizar sem precisar de uma segunda chamada).</summary>
-    private sealed record TeleprompterStateDto(bool ManualOverride, string CurrentText);
+    /// <summary>
+    /// Sprint Controle-Remoto-TP (2026-11-17) — devolvido por GET /api/teleprompter/state E depois
+    /// de toda rota POST /api/teleprompter/* (pra tela remota atualizar sem precisar de uma segunda
+    /// chamada). Expandido na parte 3 (2026-11-17) com os campos do espelho de rolagem/autoscroll —
+    /// <see cref="ScrollFraction"/> (0..1, posição de leitura atual, ver
+    /// <c>TeleprompterViewModel.ScrollFraction</c>), <see cref="AutoScrollPlaying"/>/
+    /// <see cref="AutoScrollSpeed"/> (estado do Play remoto), <see cref="FontSizePt"/>/
+    /// <see cref="Mirrored"/> (só pra dashboard desenhar o espelho fiel ao tamanho de fonte/
+    /// orientação reais da janela local, sem ter que duplicar essa configuração).
+    /// </summary>
+    private sealed record TeleprompterStateDto(
+        bool ManualOverride,
+        string CurrentText,
+        double ScrollFraction,
+        bool AutoScrollPlaying,
+        int AutoScrollSpeed,
+        double FontSizePt,
+        bool Mirrored);
 
     private sealed record SetTeleprompterManualRequest(bool Enabled);
 
     private sealed record SetTeleprompterTextRequest(string? Text);
+
+    private sealed record ScrollStepRequest(string? Direction);
+
+    private sealed record ScrollToRequest(double Fraction);
+
+    private sealed record AutoScrollPlayRequest(bool Playing);
+
+    private sealed record AutoScrollSpeedRequest(int Speed);
 }

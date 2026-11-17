@@ -618,3 +618,166 @@ input[type="file"] {
   color: var(--text-faint);
   font-size: 12px;
 }
+
+/* ===================== Tela de Teleprompter remoto (Sprint Controle-Remoto-TP, 2026-11-17) ===================== */
+
+.tp-status-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.tp-status-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.tp-status-badge.auto {
+  background: rgba(45, 190, 96, 0.14);
+  color: var(--green);
+  border: 1px solid rgba(45, 190, 96, 0.4);
+}
+
+.tp-status-badge.manual {
+  background: rgba(227, 179, 65, 0.16);
+  color: var(--amber);
+  border: 1px solid rgba(227, 179, 65, 0.45);
+}
+
+.tp-status-hint {
+  margin: 0;
+}
+
+.tp-manual-toggle {
+  margin-bottom: 18px;
+  padding: 10px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+#tp-text-input {
+  width: 100%;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+#tp-text-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Espelho da tela do TP (parte 3, 2026-11-17) — reproduz a MESMA aparência visual da janela real
+   (ver TeleprompterOutputWindow.xaml: fundo preto, texto branco negrito Segoe UI, linha de
+   referência azul a 35% da altura) — pesquisa sobre RemoteCue/PromptSmart Pro/TeleCuePro confirmou
+   que esse é o padrão profissional de "espelho" (texto+posição sincronizados, não vídeo literal da
+   tela — ver comentário de app.js). Altura fixa (não a tela cheia) porque isto é um painel de
+   controle dentro de uma dashboard com mais coisas na tela, não a própria saída de TP. */
+.tp-mirror {
+  position: relative;
+  width: 100%;
+  height: 260px;
+  margin-bottom: 10px;
+  background: #000000;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.tp-mirror-cueline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 35%;
+  height: 2px;
+  background: rgba(45, 125, 255, 0.33); /* #552D7DFF da janela real, mesmo --blue */
+  pointer-events: none;
+  z-index: 2;
+}
+
+.tp-mirror-text {
+  position: absolute;
+  inset: 0;
+  padding: 24px 28px;
+  color: #ffffff;
+  font-family: "Segoe UI", var(--font-sans, sans-serif);
+  font-weight: 700;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  transform-origin: 50% 50%;
+  transition: transform 0.08s linear; /* acompanha o scroll-sync (~7Hz) sem ficar "pulando" visualmente */
+}
+
+/* transform (translateY pra posição de leitura + scaleX(-1) quando espelhado) é escrito direto em
+   JS (ver applyTeleprompterState em app.js) — nenhuma classe CSS de espelho aqui, pra evitar
+   conflito de ordem entre os dois efeitos no mesmo transform. */
+
+.tp-mirror-hint {
+  margin-top: -4px;
+  margin-bottom: 18px;
+}
+
+/* Controles de rolagem remota (parte 3, 2026-11-17) — Play/Pause+velocidade, passo manual, início.
+   Mesmo gate de "só com manual ligado" do textarea/botão de texto já existentes (ver app.js). */
+.tp-controls {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.tp-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tp-controls-row + .tp-controls-row {
+  margin-top: 10px;
+}
+
+.tp-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tp-play-pause {
+  margin-left: auto;
+  background: var(--blue);
+  min-width: 90px;
+}
+
+.tp-play-pause:hover {
+  background: #1a56cc;
+}
+
+.tp-play-pause.playing {
+  background: var(--amber);
+  color: var(--bg0);
+}
+
+.tp-speed-row label {
+  color: var(--text-mid);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.tp-speed-row input[type="range"] {
+  flex: 1;
+  accent-color: var(--blue);
+}
+
+#tp-speed-value {
+  width: 20px;
+  text-align: center;
+  color: var(--text-hi);
+  font-weight: 700;
+  flex-shrink: 0;
+}

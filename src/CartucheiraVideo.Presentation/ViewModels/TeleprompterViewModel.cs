@@ -119,11 +119,68 @@ public sealed class TeleprompterViewModel : IDisposable
     /// </summary>
     private TeleprompterSettingsSnapshot? _lastSettings;
 
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17, pedido do usuário "ter os controles de tp
+    /// [...] pesquise sobre software de tp e controles pra colocar nele pra poder controlar
+    /// manual"): true enquanto o Play remoto estiver rolando o texto automaticamente por TEMPO (ver
+    /// <see cref="SetAutoScrollPlaying"/>) — só de runtime, mesmo princípio de
+    /// <see cref="_isManualOverride"/> (nunca persistido, sempre volta a pausado ao reiniciar o
+    /// programa). Só tem efeito com o manual ligado — não existe "Play automático" fora do controle
+    /// manual, porque no automático é a Playlist/voz que decide a rolagem.
+    /// </summary>
+    private bool _autoScrollPlaying;
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17): escala simples 1-10 (decisão confirmada com
+    /// o usuário, em vez de palavras-por-minuto — "mais rápido de ajustar sob pressão no ar"), 5 é o
+    /// padrão. Convertido pra pixels/segundo em <see cref="PixelsPerSecondForSpeed"/> — palpite
+    /// honesto sem nenhum precedente nesta base pra calibrar contra (primeira rolagem automática por
+    /// TEMPO deste projeto; a existente, por voz, rola por PALAVRA CASADA, não por tempo), ajustável
+    /// se o usuário testar e achar rápido/lento demais.
+    /// </summary>
+    private int _autoScrollSpeed = 5;
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — tick a 20Hz (suave o bastante pra rolagem de texto parecer contínua, sem sobrecarregar a UI thread) enquanto <see cref="_autoScrollPlaying"/> estiver ligado.</summary>
+    private static readonly TimeSpan AutoScrollTickInterval = TimeSpan.FromMilliseconds(50);
+
+    private DispatcherTimer? _autoScrollTimer;
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17): tick mais espaçado (~7Hz) que só CHECA se a
+    /// posição de rolagem mudou desde a última vez (por QUALQUER motivo — voz, teclado/roda do mouse
+    /// local, Play automático remoto, passo/arrasto remoto) e dispara <see cref="RaiseStateChanged"/>
+    /// só quando mudou de verdade — garante que o espelho da dashboard web acompanha a rolagem mesmo
+    /// quando ela vem de um caminho que não chama <c>RaiseStateChanged</c> diretamente (ex.:
+    /// <see cref="OnScriptPositionChanged"/>, a rolagem por voz, ou as teclas/roda do mouse na
+    /// própria janela local). Vive enquanto <see cref="_window"/> existir (ver <see cref="RefreshWindow"/>),
+    /// não precisa do NDI ligado — mesmo <see cref="DispatcherTimer"/> do NDI, mas mais barato (só lê
+    /// um double, nunca renderiza nada) e seguro de deixar sempre rodando.
+    /// </summary>
+    private static readonly TimeSpan ScrollSyncInterval = TimeSpan.FromMilliseconds(150);
+
+    private DispatcherTimer? _scrollSyncTimer;
+    private double _lastKnownScrollFraction;
+
     /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — exposto pro <c>PlaylistDashboardCoordinator</c> relatar o estado atual (GET /api/teleprompter/state).</summary>
     public bool IsManualOverride => _isManualOverride;
 
     /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — texto exibido agora (automático ou manual), idem.</summary>
     public string CurrentText => _currentScriptText;
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — idem, se o Play automático remoto está rolando agora.</summary>
+    public bool IsAutoScrollPlaying => _autoScrollPlaying;
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — idem, velocidade atual (1-10) do Play automático remoto.</summary>
+    public int AutoScrollSpeed => _autoScrollSpeed;
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — posição de rolagem atual (0..1), lida direto da janela de saída (ver <see cref="TeleprompterOutputWindow.GetScrollFraction"/>) — zero se não houver janela nenhuma aberta agora.</summary>
+    public double ScrollFraction => _window?.GetScrollFraction() ?? 0;
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — tamanho de fonte ATUAL da janela de saída, pro espelho da dashboard web escalar o texto na mesma proporção (ver <see cref="TeleprompterOutputWindow.CurrentFontSize"/>). Zero se não houver janela nenhuma aberta agora.</summary>
+    public double FontSizePt => _window?.CurrentFontSize ?? 0;
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — espelhamento ATUAL da janela de saída, idem (ver <see cref="TeleprompterOutputWindow.IsMirrored"/>).</summary>
+    public bool IsMirrored => _window?.IsMirrored ?? false;
 
     /// <summary>
     /// Sprint Controle-Remoto-TP, parte 2 (2026-11-17, pedido do usuário "2 segundos e muito,
@@ -281,6 +338,217 @@ public sealed class TeleprompterViewModel : IDisposable
         });
     }
 
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17, pedido do usuário "pesquise sobre software de
+    /// tp e controles pra colocar nele pra poder controlar manual" — pesquisa confirmou Play/Pause
+    /// com velocidade como o controle mais básico/universal de qualquer teleprompter remoto,
+    /// RemoteCue/PromptSmart Pro/TeleCuePro) — liga/desliga a rolagem automática por TEMPO (não por
+    /// voz nem Lauda), controlada pela dashboard web. Só tem efeito com o manual ligado (mesmo
+    /// motivo de <see cref="SetManualText"/>: fora do manual é a Playlist/voz que decide a rolagem,
+    /// nunca isto) — ignorado silenciosamente fora desse estado. Desligar o manual
+    /// (<see cref="SetManualOverride"/>) também para isto automaticamente (via <see cref="StopAutoScrollTimer"/>
+    /// chamado de dentro de <see cref="RefreshWindow"/>/<see cref="Dispose"/>), pra nunca ficar um
+    /// Play rolando sozinho depois que o automático volta — ver <see cref="OnAutoScrollTick"/> pro
+    /// auto-pause ao chegar no fim do texto.
+    /// </summary>
+    public void SetAutoScrollPlaying(bool playing)
+    {
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            if (!_isManualOverride || _autoScrollPlaying == playing)
+            {
+                return;
+            }
+
+            _autoScrollPlaying = playing;
+
+            if (playing)
+            {
+                StartAutoScrollTimer();
+            }
+            else
+            {
+                StopAutoScrollTimer();
+            }
+
+            RaiseStateChanged();
+        });
+    }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — troca a velocidade (1-10, ver <see cref="_autoScrollSpeed"/>); tem efeito mesmo com o Play pausado (só aplica no próximo tick, se/quando o Play for ligado) — sem gate de manual, trocar um número guardado não tem nenhum efeito colateral por si só.</summary>
+    public void SetAutoScrollSpeed(int speed)
+    {
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            var clamped = Math.Clamp(speed, 1, 10);
+            if (_autoScrollSpeed == clamped)
+            {
+                return;
+            }
+
+            _autoScrollSpeed = clamped;
+            RaiseStateChanged();
+        });
+    }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — passo manual pra cima (mesma ação da seta/roda do mouse locais, ver <see cref="TeleprompterOutputWindow.StepScrollUp"/>), só com o manual ligado.</summary>
+    public void StepScrollUp() => StepScroll(up: true);
+
+    /// <summary>Idem, passo manual pra baixo.</summary>
+    public void StepScrollDown() => StepScroll(up: false);
+
+    private void StepScroll(bool up)
+    {
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            if (!_isManualOverride || _window is null)
+            {
+                return;
+            }
+
+            if (up)
+            {
+                _window.StepScrollUp();
+            }
+            else
+            {
+                _window.StepScrollDown();
+            }
+
+            RaiseStateChanged();
+        });
+    }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — volta pro início do texto (mesma ação da tecla Home local), só com o manual ligado.</summary>
+    public void JumpToStart()
+    {
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            if (!_isManualOverride || _window is null)
+            {
+                return;
+            }
+
+            _window.ScrollToStart();
+            RaiseStateChanged();
+        });
+    }
+
+    /// <summary>Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — pula direto pra uma posição 0..1 do texto, usado pela barra arrastável (scrubber) do controle remoto, só com o manual ligado.</summary>
+    public void SetScrollFractionRemote(double fraction)
+    {
+        Application.Current?.Dispatcher.Invoke(() =>
+        {
+            if (!_isManualOverride || _window is null)
+            {
+                return;
+            }
+
+            _window.SetScrollFraction(fraction);
+            RaiseStateChanged();
+        });
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17) — 1-10 pra pixels/segundo, linear (10px/s na
+    /// velocidade 1, 145px/s na velocidade 10) — palpite honesto, sem nenhum precedente nesta base
+    /// pra calibrar contra (ver comentário de <see cref="_autoScrollSpeed"/>).
+    /// </summary>
+    private static double PixelsPerSecondForSpeed(int speed) => 10 + ((speed - 1) * 15);
+
+    private void StartAutoScrollTimer()
+    {
+        if (_autoScrollTimer is not null)
+        {
+            return;
+        }
+
+        _autoScrollTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = AutoScrollTickInterval };
+        _autoScrollTimer.Tick += (_, _) => OnAutoScrollTick();
+        _autoScrollTimer.Start();
+    }
+
+    private void StopAutoScrollTimer()
+    {
+        if (_autoScrollTimer is null)
+        {
+            return;
+        }
+
+        _autoScrollTimer.Stop();
+        _autoScrollTimer = null;
+    }
+
+    /// <summary>
+    /// Chamado a cada tick do <see cref="_autoScrollTimer"/> — avança a rolagem um pouquinho (ver
+    /// <see cref="PixelsPerSecondForSpeed"/>) e pausa automaticamente ao chegar no fim do texto
+    /// (<see cref="TeleprompterOutputWindow.GetScrollFraction"/> em 1.0) — sem isso o timer ficaria
+    /// rodando pra sempre sem nenhum efeito visível depois do fim, e o Play remoto continuaria
+    /// mostrando "tocando" mesmo parado de verdade. Chamar <see cref="SetAutoScrollPlaying"/> daqui
+    /// dentro é seguro (sem deadlock): este tick já roda na UI thread (todo <c>DispatcherTimer.Tick</c>
+    /// roda nela), e <c>Dispatcher.Invoke</c> chamado da própria thread do Dispatcher executa
+    /// imediatamente, sem bloquear nem esperar nada.
+    /// </summary>
+    private void OnAutoScrollTick()
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        var pixelsPerTick = PixelsPerSecondForSpeed(_autoScrollSpeed) * AutoScrollTickInterval.TotalSeconds;
+        _window.AdvanceScrollByPixels(pixelsPerTick);
+
+        if (_window.GetScrollFraction() >= 1.0)
+        {
+            SetAutoScrollPlaying(false);
+        }
+    }
+
+    /// <summary>
+    /// Sprint Controle-Remoto-TP, parte 3 (2026-11-17): liga junto com <see cref="_window"/> (ver
+    /// <see cref="RefreshWindow"/>) — barato o bastante (só lê um double, nunca renderiza nada) pra
+    /// ficar sempre rodando enquanto existir uma janela, independente do NDI/controle manual estarem
+    /// ligados — é o que garante que o espelho da dashboard web acompanha QUALQUER rolagem (voz,
+    /// teclado local, Play remoto, passo/arrasto remoto), não só as que já chamam
+    /// <see cref="RaiseStateChanged"/> diretamente.
+    /// </summary>
+    private void StartScrollSyncTimer()
+    {
+        if (_scrollSyncTimer is not null)
+        {
+            return;
+        }
+
+        _lastKnownScrollFraction = _window?.GetScrollFraction() ?? 0;
+        _scrollSyncTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = ScrollSyncInterval };
+        _scrollSyncTimer.Tick += (_, _) => OnScrollSyncTick();
+        _scrollSyncTimer.Start();
+    }
+
+    private void StopScrollSyncTimer()
+    {
+        if (_scrollSyncTimer is null)
+        {
+            return;
+        }
+
+        _scrollSyncTimer.Stop();
+        _scrollSyncTimer = null;
+    }
+
+    private void OnScrollSyncTick()
+    {
+        var fraction = _window?.GetScrollFraction() ?? 0;
+        if (Math.Abs(fraction - _lastKnownScrollFraction) <= 0.0005)
+        {
+            return;
+        }
+
+        _lastKnownScrollFraction = fraction;
+        RaiseStateChanged();
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -294,6 +562,8 @@ public sealed class TeleprompterViewModel : IDisposable
         _voiceEngine.Dispose();
 
         StopNdi();
+        StopAutoScrollTimer();
+        StopScrollSyncTimer();
 
         _window?.Close();
         _window = null;
@@ -340,6 +610,13 @@ public sealed class TeleprompterViewModel : IDisposable
         {
             // Nenhuma tela escolhida/conectada E NDI desligado — mesma "falha honesta" de sempre: a
             // seleção de tela continua salva, só não existe janela nenhuma aberta enquanto isso.
+            // Sprint Controle-Remoto-TP, parte 3 (2026-11-17): sem janela não tem o que rolar nem o
+            // que sincronizar — para os dois timers novos (autoscroll e scroll-sync) e reseta o
+            // estado de "tocando", senão a dashboard remota ficaria mostrando Play ligado pra sempre
+            // apontando pra uma janela que não existe mais.
+            StopAutoScrollTimer();
+            StopScrollSyncTimer();
+            _autoScrollPlaying = false;
             _window?.Close();
             _window = null;
             return;
@@ -363,6 +640,11 @@ public sealed class TeleprompterViewModel : IDisposable
             {
                 _window.PositionOffScreen();
             }
+
+            // Sprint Controle-Remoto-TP, parte 3 (2026-11-17): janela nova = start do timer de
+            // sincronismo de rolagem (ver comentário de <see cref="_scrollSyncTimer"/>) — sem isso o
+            // espelho da dashboard nunca saberia que a posição de leitura mudou.
+            StartScrollSyncTimer();
         }
 
         _window.SetMirror(settings.MirrorMode);

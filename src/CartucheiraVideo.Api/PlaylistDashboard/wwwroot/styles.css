@@ -632,7 +632,8 @@ input[type="file"] {
   box-shadow: 0 16px 50px rgba(0, 0, 0, 0.55);
 }
 
-#user-form {
+#user-form,
+#program-gc-form {
   flex-direction: column;
   gap: 0;
 }

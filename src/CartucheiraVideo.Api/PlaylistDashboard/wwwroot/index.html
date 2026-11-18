@@ -309,9 +309,39 @@
         </div>
 
         <div class="tp-col-right">
+          <!-- Sprint GC-Playlist (2026-11-18, pedido do usuário "vamos precisar ter as mesma funções
+               que tem no tp para poder operar manual e monitorar o que esta no ar"): mesmo navegador
+               Programa→Edição→Lauda do Teleprompter acima (tp-playlist-picker), reaproveitando as
+               MESMAS rotas — nenhuma rota nova. Diferença confirmada com o usuário (AskUserQuestion):
+               o Programa escolhido aqui define o ESQUEMA de campos (GC não pertence a um Programa
+               fixo, ver comentário de classe do Coordinator — é este picker que dá esse contexto), e
+               clicar numa Lauda carrega os valores em CAIXINHAS FIXAS (renderGcManualFieldInputs),
+               não na antiga caixa de texto livre "Nome: Valor" — mesma consistência do v1.0.104. -->
+          <div class="tp-playlist-picker">
+            <button type="button" id="gc-playlist-toggle-button" class="secondary">▸ Carregar de uma Playlist</button>
+            <div id="gc-playlist-panel" class="tp-playlist-panel hidden">
+              <div class="field-row">
+                <label for="gc-playlist-program-select">Programa</label>
+                <select id="gc-playlist-program-select">
+                  <option value="">Escolha um Programa...</option>
+                </select>
+              </div>
+              <div class="field-row">
+                <label for="gc-playlist-edition-select">Edição (data)</label>
+                <select id="gc-playlist-edition-select" disabled>
+                  <option value="">Escolha uma Edição...</option>
+                </select>
+              </div>
+              <ul id="gc-playlist-laudas-list" class="list tp-playlist-laudas-list"></ul>
+              <p id="gc-playlist-error" class="error hidden"></p>
+              <p class="hint">Escolher um Programa já mostra as caixinhas de campo dele abaixo (vazias, pra digitar na mão). Clicar numa Lauda carrega os valores dela nas caixinhas — ainda precisa clicar em "Enviar GC" pra pôr no ar de verdade.</p>
+            </div>
+          </div>
+
           <div class="field-row">
-            <label for="gc-fields-input">Campos (manual)</label>
-            <textarea id="gc-fields-input" rows="6" placeholder="Um campo por linha, formato Nome: Valor&#10;Ex.:&#10;Nome: João Silva&#10;Cargo: Secretário de Trânsito"></textarea>
+            <label>Campos (manual)</label>
+            <div id="gc-fields-dynamic" class="gc-fields-dynamic"></div>
+            <p id="gc-fields-hint" class="hint">Escolha um Programa acima ("Carregar de uma Playlist") pra ver os campos de GC dele.</p>
           </div>
           <div class="field-row-buttons">
             <button type="button" id="gc-send-fields-button">Enviar GC</button>

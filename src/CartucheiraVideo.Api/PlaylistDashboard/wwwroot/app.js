@@ -77,11 +77,21 @@ const gcStatusBadge = document.getElementById("gc-status-badge");
 const gcManualToggle = document.getElementById("gc-manual-toggle");
 const gcMonitor = document.getElementById("gc-monitor");
 const gcMonitorFallback = document.getElementById("gc-monitor-fallback");
-const gcFieldsInput = document.getElementById("gc-fields-input");
 const gcSendFieldsButton = document.getElementById("gc-send-fields-button");
 const gcClearFieldsButton = document.getElementById("gc-clear-fields-button");
 const gcError = document.getElementById("gc-error");
 const newProgramGcInput = document.getElementById("new-program-gc");
+
+// Sprint GC-Playlist (2026-11-18) — navegador Programa→Edição→Lauda do GC (mesmo princípio do
+// tp-playlist-picker) + caixinhas fixas de campo (substituem a antiga #gc-fields-input).
+const gcPlaylistToggleButton = document.getElementById("gc-playlist-toggle-button");
+const gcPlaylistPanel = document.getElementById("gc-playlist-panel");
+const gcPlaylistProgramSelect = document.getElementById("gc-playlist-program-select");
+const gcPlaylistEditionSelect = document.getElementById("gc-playlist-edition-select");
+const gcPlaylistLaudasList = document.getElementById("gc-playlist-laudas-list");
+const gcPlaylistError = document.getElementById("gc-playlist-error");
+const gcFieldsDynamicContainer = document.getElementById("gc-fields-dynamic");
+const gcFieldsHint = document.getElementById("gc-fields-hint");
 
 // Sprint 6 — tela de Usuários (Admin).
 const usersList = document.getElementById("users-list");
@@ -164,6 +174,18 @@ let tpManualState = false;
 let gcEventSource = null;
 let gcManualState = false;
 let gcFieldLayout = [];
+
+// Sprint GC-Playlist (2026-11-18) — mesmo princípio de isolamento de tpPlaylistProgramId/
+// tpPlaylistEditionId acima, só que pro navegador Programa→Edição→Lauda dentro da view "gc-view".
+// gcSelectedFieldNames é o ESQUEMA (só os NOMES) do Programa escolhido no picker — é ele que decide
+// quais caixinhas aparecem em "Campos (manual)" (ver renderGcManualFieldInputs). Diferente do
+// Teleprompter (um texto só), o GC pode ter vários campos nomeados, e o GC em si não pertence a
+// nenhum Programa fixo (ver comentário de classe do PlaylistDashboardCoordinator) — por isso esse
+// esquema só existe enquanto o operador escolhe um Programa aqui, não vem do servidor.
+let gcPlaylistProgramsCache = null;
+let gcPlaylistProgramId = null;
+let gcPlaylistEditionId = null;
+let gcSelectedFieldNames = [];
 
 // Parte 3 (2026-11-17) — tpSpeedDragging evita a mesma "briga" que já existe pro #tp-text-input
 // (ver applyTeleprompterState): enquanto o usuário está arrastando o slider de velocidade, um
@@ -666,6 +688,11 @@ logoutButton.addEventListener("click", async () => {
   resetTeleprompterPlaylistPicker();
   tpPlaylistPanel.classList.add("hidden");
   tpPlaylistToggleButton.textContent = "▸ Carregar texto de uma Playlist";
+  // Sprint GC-Playlist (2026-11-18): mesma limpeza, agora pro navegador Programa→Edição→Laudas do GC.
+  gcPlaylistProgramsCache = null;
+  resetGcPlaylistPicker();
+  gcPlaylistPanel.classList.add("hidden");
+  gcPlaylistToggleButton.textContent = "▸ Carregar de uma Playlist";
   try {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch (err) {
@@ -1276,6 +1303,40 @@ function renderGcMonitor(fields) {
   });
 }
 
+/// Sprint GC-Playlist (2026-11-18): monta uma caixinha de texto PRA CADA nome em
+/// gcSelectedFieldNames (o esquema do Programa escolhido no picker), pré-preenchida com
+/// `values[nome]` quando existir — mesmo princípio de renderLaudaGcFieldInputs (v1.0.104), só que
+/// aqui o esquema vem do picker em vez de selectedProgramId. Sem nenhum Programa escolhido ainda =
+/// lista vazia = só a dica (#gc-fields-hint) aparece, nenhuma caixinha.
+function renderGcManualFieldInputs(values) {
+  gcFieldsDynamicContainer.innerHTML = "";
+  gcFieldsHint.classList.toggle("hidden", gcSelectedFieldNames.length > 0);
+  gcSelectedFieldNames.forEach((name) => {
+    const row = document.createElement("div");
+    row.className = "gc-field-row";
+    const label = document.createElement("label");
+    label.textContent = name;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.gcFieldName = name;
+    input.value = (values && values[name]) || "";
+    input.disabled = !gcManualState;
+    row.appendChild(label);
+    row.appendChild(input);
+    gcFieldsDynamicContainer.appendChild(row);
+  });
+}
+
+/// Inverso de renderGcManualFieldInputs — lê as caixinhas de volta pro dicionário nome→valor que
+/// POST /api/gc/fields espera (ver gcSendFieldsButton abaixo).
+function collectGcManualFieldsFromForm() {
+  const fields = {};
+  gcFieldsDynamicContainer.querySelectorAll("[data-gc-field-name]").forEach((input) => {
+    fields[input.dataset.gcFieldName] = input.value;
+  });
+  return fields;
+}
+
 /// Aplica um estado {manualOverride, fields, isShowingDefault, isOnAir} na UI — mesmo papel de
 /// applyTeleprompterState.
 function applyGcState(state) {
@@ -1285,14 +1346,14 @@ function applyGcState(state) {
   gcStatusBadge.classList.toggle("manual", state.manualOverride);
   gcStatusBadge.classList.toggle("auto", !state.manualOverride);
 
-  gcFieldsInput.disabled = !state.manualOverride;
   gcSendFieldsButton.disabled = !state.manualOverride;
   gcClearFieldsButton.disabled = !state.manualOverride;
 
   // Mesmo cuidado de "não brigar com quem está digitando" de applyTeleprompterState — só
-  // sobrescreve o campo quando ele não está em uso.
-  if (document.activeElement !== gcFieldsInput) {
-    gcFieldsInput.value = stringifyGcFields(state.fields);
+  // redesenha as caixinhas quando o foco não está em nenhuma delas (evita apagar o que o operador
+  // está digitando no meio de uma atualização via SSE).
+  if (!gcFieldsDynamicContainer.contains(document.activeElement)) {
+    renderGcManualFieldInputs(state.fields);
   }
 
   renderGcMonitor(state.fields);
@@ -1351,7 +1412,7 @@ gcManualToggle.addEventListener("change", async () => {
 gcSendFieldsButton.addEventListener("click", async () => {
   gcError.classList.add("hidden");
   try {
-    applyGcState(await apiPost("/api/gc/fields", { fields: parseGcFields(gcFieldsInput.value) }));
+    applyGcState(await apiPost("/api/gc/fields", { fields: collectGcManualFieldsFromForm() }));
   } catch (err) {
     gcError.textContent = err.message;
     gcError.classList.remove("hidden");
@@ -1365,6 +1426,123 @@ gcClearFieldsButton.addEventListener("click", async () => {
   } catch (err) {
     gcError.textContent = err.message;
     gcError.classList.remove("hidden");
+  }
+});
+
+// ===================== Sprint GC-Playlist (2026-11-18) — Playlist dentro do GC =====================
+// Pedido do usuário depois de testar o v1.0.104: "vamos precisar ter as mesma funções que tem no
+// tp para poder operar manual e monitorar o que esta no ar" — mesmo navegador Programa→Edição→
+// Lauda do Teleprompter (ver bloco "Sprint Playlist-TP" acima), reaproveitando as MESMAS rotas
+// GET /api/playlist/programs/editions/laudas — nenhuma rota nova. Decisão confirmada com o usuário
+// (AskUserQuestion): ao clicar numa Lauda, os valores entram em CAIXINHAS FIXAS (uma por campo do
+// Programa escolhido), não na antiga caixa de texto livre — mesma consistência do v1.0.104.
+
+function resetGcPlaylistPicker() {
+  gcPlaylistProgramId = null;
+  gcPlaylistEditionId = null;
+  gcSelectedFieldNames = [];
+  gcPlaylistEditionSelect.innerHTML = '<option value="">Escolha uma Edição...</option>';
+  gcPlaylistEditionSelect.disabled = true;
+  gcPlaylistLaudasList.innerHTML = "";
+  gcPlaylistError.classList.add("hidden");
+  renderGcManualFieldInputs({});
+}
+
+gcPlaylistToggleButton.addEventListener("click", async () => {
+  const opening = gcPlaylistPanel.classList.contains("hidden");
+  gcPlaylistPanel.classList.toggle("hidden", !opening);
+  gcPlaylistToggleButton.textContent = opening ? "▾ Carregar de uma Playlist" : "▸ Carregar de uma Playlist";
+
+  if (!opening) {
+    return;
+  }
+
+  if (gcPlaylistProgramsCache !== null) {
+    return; // já carregado numa abertura anterior desta mesma sessão de página.
+  }
+
+  gcPlaylistError.classList.add("hidden");
+  try {
+    gcPlaylistProgramsCache = await apiGet("/api/playlist/programs");
+    gcPlaylistProgramSelect.innerHTML = '<option value="">Escolha um Programa...</option>';
+    gcPlaylistProgramsCache.forEach((program) => {
+      const option = document.createElement("option");
+      option.value = program.id;
+      option.textContent = program.name;
+      gcPlaylistProgramSelect.appendChild(option);
+    });
+  } catch (err) {
+    gcPlaylistProgramsCache = null;
+    gcPlaylistError.textContent = err.message;
+    gcPlaylistError.classList.remove("hidden");
+  }
+});
+
+/// Escolher um Programa já troca o ESQUEMA de campos (gcSelectedFieldNames) e redesenha as
+/// caixinhas vazias — não precisa clicar numa Lauda pra começar a digitar na mão.
+gcPlaylistProgramSelect.addEventListener("change", async () => {
+  gcPlaylistProgramId = gcPlaylistProgramSelect.value || null;
+  gcPlaylistEditionId = null;
+  gcPlaylistEditionSelect.innerHTML = '<option value="">Escolha uma Edição...</option>';
+  gcPlaylistLaudasList.innerHTML = "";
+  gcPlaylistError.classList.add("hidden");
+
+  const program = gcPlaylistProgramsCache ? gcPlaylistProgramsCache.find((p) => p.id === gcPlaylistProgramId) : null;
+  gcSelectedFieldNames = program && program.defaultGcFields ? Object.keys(program.defaultGcFields) : [];
+  renderGcManualFieldInputs({});
+
+  if (!gcPlaylistProgramId) {
+    gcPlaylistEditionSelect.disabled = true;
+    return;
+  }
+
+  try {
+    const editions = await apiGet(`/api/playlist/editions?programId=${encodeURIComponent(gcPlaylistProgramId)}`);
+    editions.forEach((edition) => {
+      const option = document.createElement("option");
+      option.value = edition.id;
+      option.textContent = edition.dateIso;
+      gcPlaylistEditionSelect.appendChild(option);
+    });
+    gcPlaylistEditionSelect.disabled = false;
+  } catch (err) {
+    gcPlaylistError.textContent = err.message;
+    gcPlaylistError.classList.remove("hidden");
+  }
+});
+
+/// Mostra TODAS as Laudas da Edição (mesma decisão confirmada do Teleprompter) — as sem nenhum
+/// campo de GC preenchido ficam esmaecidas (.tp-playlist-item-empty) em vez de escondidas.
+gcPlaylistEditionSelect.addEventListener("change", async () => {
+  gcPlaylistEditionId = gcPlaylistEditionSelect.value || null;
+  gcPlaylistLaudasList.innerHTML = "";
+  gcPlaylistError.classList.add("hidden");
+
+  if (!gcPlaylistEditionId) {
+    return;
+  }
+
+  try {
+    const laudas = await apiGet(`/api/playlist/laudas?programId=${encodeURIComponent(gcPlaylistProgramId)}&editionId=${encodeURIComponent(gcPlaylistEditionId)}`);
+    gcPlaylistLaudasList.innerHTML = "";
+    laudas
+      .slice()
+      .sort((a, b) => a.order - b.order)
+      .forEach((lauda) => {
+        const hasGc = lauda.gcFields && Object.values(lauda.gcFields).some((value) => value && value.trim().length > 0);
+        const item = document.createElement("li");
+        item.className = hasGc ? "clickable" : "clickable tp-playlist-item-empty";
+        item.textContent = `${lauda.order + 1}. ${lauda.title || "(sem título)"} — ${lauda.type || "sem tipo"}${hasGc ? "" : " (sem GC preenchido)"}`;
+        item.addEventListener("click", () => {
+          // Mesma decisão confirmada do Teleprompter: só preenche as caixinhas, nunca envia
+          // sozinho — "Enviar GC" continua sendo o único jeito de pôr no ar de verdade.
+          renderGcManualFieldInputs(lauda.gcFields || {});
+        });
+        gcPlaylistLaudasList.appendChild(item);
+      });
+  } catch (err) {
+    gcPlaylistError.textContent = err.message;
+    gcPlaylistError.classList.remove("hidden");
   }
 });
 

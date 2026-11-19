@@ -53,6 +53,35 @@ public sealed class PlaylistItemViewModel : ViewModelBase
     /// <summary>Campos de GC desta Lauda (<see cref="Core.PlaylistLauda.GcFields"/>) — vazio pros itens de exemplo ou Laudas sem nenhum campo de GC preenchido. Lido pelo <c>MainViewModel</c> (mesmos pontos que leem <see cref="TpText"/>) pra repassar ao <c>GcViewModel</c> — Sprint GC (2026-11-17).</summary>
     public IReadOnlyDictionary<string, string> GcFields { get; }
 
+    /// <summary>
+    /// Sprint UI-Playlist-Mais-Info (2026-11-19, pedido do usuário "no playlist do lado direito
+    /// deixar as linhas de cada lauda maior com fontes maiores e colocar mais infos - titulo da
+    /// lauda e o campo descriptions do GC e o tempo"): valor do campo de <see cref="GcFields"/> cujo
+    /// NOME contém "description" (procura por substring, sem distinguir maiúsculas/minúsculas — o
+    /// nome exato do campo vem de Configurações → GC e pode mudar, ex.: "Description.Text", então
+    /// não dá pra travar numa chave fixa). Mostrado como subtítulo discreto embaixo do nome da Lauda
+    /// na aba Playlist (ver FileExplorerPanel.xaml), pra dar mais contexto no relance sem precisar
+    /// abrir a Lauda pra editar.
+    /// </summary>
+    public string GcDescriptionPreview
+    {
+        get
+        {
+            foreach (var pair in GcFields)
+            {
+                if (pair.Key.Contains("description", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    return pair.Value;
+                }
+            }
+
+            return string.Empty;
+        }
+    }
+
+    /// <summary>Verdadeiro quando <see cref="GcDescriptionPreview"/> tem algo pra mostrar — controla a visibilidade da linha extra no template (ver <c>BoolToVis</c> em FileExplorerPanel.xaml).</summary>
+    public bool HasGcDescriptionPreview => !string.IsNullOrWhiteSpace(GcDescriptionPreview);
+
     /// <summary>Linha destacada — este é o item tocando agora (selo "TOCANDO" vermelho no mockup).</summary>
     public bool IsCurrent
     {

@@ -10,7 +10,25 @@
         Title="{Binding Title}"
         Height="900" Width="1600"
         MinHeight="700" MinWidth="1200"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        WindowState="Maximized">
+
+    <!--
+        Fix v1.0.111 (2026-11-19, pedido do usuario: "vou usar um monitor pequeno touch para a
+        cartucheira, preciso que ela seja ajustavel a tela [...] a resolucao e 1920x1080, mas ta
+        abrindo maior pegando espaco nos outros monitores"). Causa: a janela sempre abria com
+        Height=900/Width=1600 em unidades independentes de dispositivo (96 DPI) do WPF, SEM levar em
+        conta a escala de DPI do monitor de verdade — num monitor touch pequeno, o Windows costuma
+        aplicar uma escala alta (125%/150%/etc.) pra manter os elementos num tamanho fisico usavel;
+        com escala de 150%, por exemplo, "1600x900" declarado vira ~2400x1350 pixels FISICOS, maior
+        que a tela 1920x1080 inteira, estourando pros monitores vizinhos. WindowState="Maximized"
+        (acima) resolve isso pela raiz: o WPF calcula o tamanho maximizado com base na AREA DE
+        TRABALHO REAL do monitor onde a janela abre (ja considerando a escala de DPI daquele monitor
+        especifico — o projeto ja roda "Per-Monitor-V2 DPI aware" por padrao, confirmado no Fix
+        v1.0.58 de ScreenOutputWindow), entao a janela sempre preenche certinho qualquer monitor,
+        pequeno ou grande, sem vazar pros outros. Height/Width/MinHeight/MinWidth continuam servindo
+        de tamanho de fallback pra quando o operador restaurar a janela (desmaximizar) manualmente.
+    -->
 
     <!--
         Conversao visual pro mockup v8 (2026-08-08, "CartucheiraVideo_MockupV8_Redesign.html") —
@@ -715,7 +733,16 @@
                             que sempre apareceu, só nos estados reais abaixo (ON AIR/local/pausado/
                             erro/drag-over) — nenhum desses Triggers foi tocado.
                         -->
-                        <Border Margin="0,0,0,10" Background="{DynamicResource Brush.Bg3}" CornerRadius="8" Padding="18,14"
+                        <!--
+                            Fix v1.0.112 (2026-11-19, pedido do usuário depois de ver a janela
+                            maximizada num monitor maior/touch: "nos decks deixar tudo um pouco
+                            maior nos botoes, usar mais os espacos"). Padding do card e todos os
+                            tamanhos de ícone/fonte dos botões de transporte abaixo foram ajustados
+                            com valores inline explícitos (não os StaticResource FontSize.* globais,
+                            que são compartilhados com outras telas) — ver também o preview (coluna
+                            220→260) e a barra de seek (22→26) mais abaixo.
+                        -->
+                        <Border Margin="0,0,0,10" Background="{DynamicResource Brush.Bg3}" CornerRadius="8" Padding="20,16"
                                 BorderThickness="2" BorderBrush="Transparent"
                                 AllowDrop="True"
                                 DragEnter="DeckBorder_DragEnter"
@@ -850,10 +877,10 @@
                                 </Grid>
 
                                 <!-- Linha central: preview a esquerda, 6 botoes de transporte quadrados a direita (mockup v8, notas #9/#10/#17). -->
-                                <Grid Grid.Row="1" Margin="0,0,0,12">
+                                <Grid Grid.Row="1" Margin="0,0,0,14">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="220" />
-                                        <ColumnDefinition Width="20" />
+                                        <ColumnDefinition Width="260" />
+                                        <ColumnDefinition Width="24" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
 
@@ -894,31 +921,31 @@
 
                                         <!-- Play — botão principal, ocupa as duas linhas. Gradiente vívido novo (Brush.PlayGradient, Theme.xaml) a pedido explícito do usuário ("cores mais vivas"). -->
                                         <Button Grid.Column="0" Grid.Row="0" Grid.RowSpan="2" Command="{Binding PlayCommand}"
-                                                Style="{StaticResource Theme.DeckBigButton}" Margin="0,0,8,0"
+                                                Style="{StaticResource Theme.DeckBigButton}" Margin="0,0,10,0"
                                                 Background="{DynamicResource Brush.PlayGradient}">
                                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <Path Data="{StaticResource Icon.Play}" Fill="#FF0A0A0A" Width="28" Height="28" Stretch="Uniform" Margin="0,0,0,8" />
-                                                <TextBlock Text="Play" FontSize="{StaticResource FontSize.Label}" FontWeight="Black" Foreground="#FF0A0A0A" HorizontalAlignment="Center" />
+                                                <Path Data="{StaticResource Icon.Play}" Fill="#FF0A0A0A" Width="36" Height="36" Stretch="Uniform" Margin="0,0,0,10" />
+                                                <TextBlock Text="Play" FontSize="20" FontWeight="Black" Foreground="#FF0A0A0A" HorizontalAlignment="Center" />
                                             </StackPanel>
                                         </Button>
 
                                         <!-- Pause — empilhado com o Stop ao lado do Play. Gradiente vívido novo (Brush.PauseGradient). -->
                                         <Button Grid.Column="1" Grid.Row="0" Command="{Binding PauseCommand}"
-                                                Style="{StaticResource Theme.DeckBigButton}" Margin="0,0,8,4"
+                                                Style="{StaticResource Theme.DeckBigButton}" Margin="0,0,10,5"
                                                 Background="{DynamicResource Brush.PauseGradient}">
                                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <Path Data="{StaticResource Icon.Pause}" Fill="#FF0A0A0A" Width="18" Height="18" Stretch="Uniform" Margin="0,0,0,3" />
-                                                <TextBlock Text="Pause" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="#FF0A0A0A" HorizontalAlignment="Center" />
+                                                <Path Data="{StaticResource Icon.Pause}" Fill="#FF0A0A0A" Width="24" Height="24" Stretch="Uniform" Margin="0,0,0,4" />
+                                                <TextBlock Text="Pause" FontSize="14" FontWeight="Bold" Foreground="#FF0A0A0A" HorizontalAlignment="Center" />
                                             </StackPanel>
                                         </Button>
 
                                         <!-- Stop — embaixo do Pause. Gradiente vívido novo (Brush.StopGradient). -->
                                         <Button Grid.Column="1" Grid.Row="1" Command="{Binding StopCommand}"
-                                                Style="{StaticResource Theme.DeckBigButton}" Margin="0,4,8,0"
+                                                Style="{StaticResource Theme.DeckBigButton}" Margin="0,5,10,0"
                                                 Background="{DynamicResource Brush.StopGradient}">
                                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <Path Data="{StaticResource Icon.Stop}" Fill="White" Width="16" Height="16" Stretch="Uniform" Margin="0,0,0,3" />
-                                                <TextBlock Text="Stop" FontSize="{StaticResource FontSize.Small}" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
+                                                <Path Data="{StaticResource Icon.Stop}" Fill="White" Width="22" Height="22" Stretch="Uniform" Margin="0,0,0,4" />
+                                                <TextBlock Text="Stop" FontSize="14" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" />
                                             </StackPanel>
                                         </Button>
 
@@ -935,16 +962,16 @@
 
                                         <!-- Clear (ajustes de Deck, 2026-08-09): esvazia o Deck de vez, tira a midia do Engine tambem (diferente do Stop, que so volta a posicao pro inicio). Vermelho suave — ação destrutiva. -->
                                         <Button Grid.Column="2" Grid.Row="0" Command="{Binding ClearCommand}"
-                                                Margin="0,0,8,4" Background="{DynamicResource Brush.RedSoft}" BorderBrush="{DynamicResource Brush.RedLine}" BorderThickness="1"
+                                                Margin="0,0,10,5" Background="{DynamicResource Brush.RedSoft}" BorderBrush="{DynamicResource Brush.RedLine}" BorderThickness="1"
                                                 Style="{StaticResource Theme.DeckBigButton}">
                                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <Path Data="{StaticResource Icon.X}" Stroke="{DynamicResource Brush.Red}" StrokeThickness="1.6" Width="15" Height="15" Stretch="Uniform" Margin="0,0,0,3" />
-                                                <TextBlock Text="Clear" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.Red}" HorizontalAlignment="Center" />
+                                                <Path Data="{StaticResource Icon.X}" Stroke="{DynamicResource Brush.Red}" StrokeThickness="1.8" Width="20" Height="20" Stretch="Uniform" Margin="0,0,0,4" />
+                                                <TextBlock Text="Clear" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Brush.Red}" HorizontalAlignment="Center" />
                                             </StackPanel>
                                         </Button>
 
                                         <!-- Loop — violeta suave quando inativo; ativo continua solido azul (trigger inalterado). -->
-                                        <Button Grid.Column="3" Grid.Row="0" Command="{Binding ToggleLoopCommand}" Margin="0,0,0,4" BorderThickness="1">
+                                        <Button Grid.Column="3" Grid.Row="0" Command="{Binding ToggleLoopCommand}" Margin="0,0,0,5" BorderThickness="1">
                                             <Button.Style>
                                                 <Style TargetType="Button" BasedOn="{StaticResource Theme.DeckBigButton}">
                                                     <Setter Property="Background" Value="{DynamicResource Brush.VioletSoft}" />
@@ -961,29 +988,29 @@
                                             </Button.Style>
                                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                                                 <Path Data="{StaticResource Icon.Repeat}" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                                      StrokeThickness="1.6" Width="15" Height="15" Stretch="Uniform" Margin="0,0,0,3" />
-                                                <TextBlock Text="Loop" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold"
+                                                      StrokeThickness="1.8" Width="20" Height="20" Stretch="Uniform" Margin="0,0,0,4" />
+                                                <TextBlock Text="Loop" FontSize="13" FontWeight="Bold"
                                                            Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" HorizontalAlignment="Center" />
                                             </StackPanel>
                                         </Button>
 
                                         <!-- Next — azul suave. -->
                                         <Button Grid.Column="2" Grid.Row="1" Command="{Binding NextCommand}"
-                                                Margin="0,4,8,0" Background="{DynamicResource Brush.BlueSoft}" BorderBrush="{DynamicResource Brush.BlueLine}" BorderThickness="1"
+                                                Margin="0,5,10,0" Background="{DynamicResource Brush.BlueSoft}" BorderBrush="{DynamicResource Brush.BlueLine}" BorderThickness="1"
                                                 Style="{StaticResource Theme.DeckBigButton}">
                                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <Path Data="{StaticResource Icon.SkipForward}" Fill="{DynamicResource Brush.Blue}" Width="15" Height="15" Stretch="Uniform" Margin="0,0,0,3" />
-                                                <TextBlock Text="Next" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.Blue}" HorizontalAlignment="Center" />
+                                                <Path Data="{StaticResource Icon.SkipForward}" Fill="{DynamicResource Brush.Blue}" Width="20" Height="20" Stretch="Uniform" Margin="0,0,0,4" />
+                                                <TextBlock Text="Next" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Brush.Blue}" HorizontalAlignment="Center" />
                                             </StackPanel>
                                         </Button>
 
                                         <!-- Preview — ciano suave. -->
                                         <Button Grid.Column="3" Grid.Row="1" Command="{Binding PreviewCommand}"
-                                                Margin="0,4,0,0" Background="{DynamicResource Brush.CyanSoft}" BorderBrush="{DynamicResource Brush.CyanLine}" BorderThickness="1"
+                                                Margin="0,5,0,0" Background="{DynamicResource Brush.CyanSoft}" BorderBrush="{DynamicResource Brush.CyanLine}" BorderThickness="1"
                                                 Style="{StaticResource Theme.DeckBigButton}">
                                             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                                                <Path Data="{StaticResource Icon.Eye}" Stroke="{DynamicResource Brush.Cyan}" StrokeThickness="1.4" Width="15" Height="15" Stretch="Uniform" Margin="0,0,0,3" />
-                                                <TextBlock Text="Preview" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.Cyan}" HorizontalAlignment="Center" />
+                                                <Path Data="{StaticResource Icon.Eye}" Stroke="{DynamicResource Brush.Cyan}" StrokeThickness="1.6" Width="20" Height="20" Stretch="Uniform" Margin="0,0,0,4" />
+                                                <TextBlock Text="Preview" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Brush.Cyan}" HorizontalAlignment="Center" />
                                             </StackPanel>
                                         </Button>
                                     </Grid>
@@ -1021,7 +1048,7 @@
                                          "aumentar um pouco essa barra") — ver Theme.xaml (estilo global do Slider). -->
                                     <Slider Value="{Binding Progress, Mode=OneWay}" Minimum="0" Maximum="100"
                                             IsMoveToPointEnabled="True" IsEnabled="{Binding HasVideo}"
-                                            Height="22" Margin="0,8,0,5"
+                                            Height="26" Margin="0,10,0,6"
                                             PreviewMouseLeftButtonDown="SeekSlider_PreviewMouseLeftButtonDown"
                                             PreviewMouseLeftButtonUp="SeekSlider_PreviewMouseLeftButtonUp"
                                             LostMouseCapture="SeekSlider_LostMouseCapture" />
@@ -1033,15 +1060,16 @@
                                         <!-- Sprint Deck-Seek-Bar-Fix (2026-09-15): FontSize.Small (11px) -> FontSize.Meta
                                              (13px, mesmo tamanho já usado pra duração/resolução/codec no FileExplorerPanel)
                                              — pedido do usuário ("o tempo tb esta muito pequeno"). -->
-                                        <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                                        <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
                                         <!-- Sprint Deck-Seek-Bar (2026-09-12): duração TOTAL do arquivo, junto do tempo
                                              restante — pedido explícito do usuário ("mostre tb o time frame"). Antes desta
                                              sprint só existiam tempo decorrido (esquerda) e tempo restante (aqui), nunca a
-                                             duração total do arquivo carregado. -->
+                                             duração total do arquivo carregado.
+                                             Fix v1.0.112: 13 -> 15 junto com o resto dos ajustes de espaço do Deck. -->
                                         <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                            <TextBlock Text="{Binding RemainingTime}" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
-                                            <TextBlock Text=" / " FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
-                                            <TextBlock Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                                            <TextBlock Text="{Binding RemainingTime}" FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
+                                            <TextBlock Text=" / " FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
+                                            <TextBlock Text="{Binding DurationDisplay}" FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
                                         </StackPanel>
                                     </Grid>
                                 </StackPanel>

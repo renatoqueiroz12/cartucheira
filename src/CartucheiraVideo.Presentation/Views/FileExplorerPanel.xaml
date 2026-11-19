@@ -326,11 +326,20 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
+            <!--
+                Fix v1.0.112 (2026-11-19, pedido do usuário depois de testar a janela maximizada
+                (v1.0.111) num monitor touch: "no playlist do lado direito deixar as linhas de cada
+                lauda maior com fontes maiores e colocar mais infos - titulo da lauda e o campo
+                descriptions do GC e o tempo"). Coluna DURAÇÃO alargada de 80 pra 100 (cabe a fonte
+                maior sem cortar); fontes inline explícitas (não os StaticResource compartilhados
+                FontSize.ListName/Meta/Micro) pra não mexer no tamanho da lista do Explorer, que usa
+                os mesmos recursos e não foi pedido pra mudar.
+            -->
             <Grid Grid.Row="0" Background="{DynamicResource Brush.Bg3}" Margin="0,0,0,1">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="40" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="100" />
                     <ColumnDefinition Width="130" />
                 </Grid.ColumnDefinitions>
                 <TextBlock Grid.Column="0" Text="#" Margin="18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
@@ -356,33 +365,47 @@
                 </ListBox.ItemContainerStyle>
                 <ListBox.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:PlaylistItemViewModel}">
-                        <Grid ToolTip="Duplo clique para carregar num Deck" Margin="0,2">
+                        <Grid ToolTip="Duplo clique para carregar num Deck" Margin="0,4">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="40" />
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="100" />
                                 <ColumnDefinition Width="130" />
                             </Grid.ColumnDefinitions>
-                            <Border Grid.Column="0" Margin="18,0,0,0" Width="2" Height="18" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            <Border Grid.Column="0" Margin="18,0,0,0" Width="2" Height="22" HorizontalAlignment="Left" VerticalAlignment="Center"
                                     Background="{DynamicResource Brush.Blue}" Visibility="{Binding IsNext, Converter={StaticResource BoolToVis}}" />
-                            <TextBlock Grid.Column="0" Text="{Binding Index}" Margin="24,7,4,7" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="4,7">
-                                <Border Width="40" Height="26" Background="{DynamicResource Brush.Bg0}" CornerRadius="3" Margin="0,0,12,0">
-                                    <Path Data="{StaticResource Icon.Film}" Stroke="{DynamicResource Brush.TextLow}" StrokeThickness="1.3"
-                                          Width="14" Height="14" Stretch="Uniform" />
-                                </Border>
-                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Brush.TextHi}"
-                                           FontSize="{StaticResource FontSize.ListName}" FontWeight="Bold" VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="0" Text="{Binding Index}" Margin="24,10,4,10" VerticalAlignment="Center" FontSize="16" Foreground="{DynamicResource Brush.TextLow}" />
+                            <!--
+                                Sprint UI-Playlist-Mais-Info (2026-11-19): StackPanel vertical no
+                                lugar do antigo Horizontal único — a linha de cima continua
+                                ícone+Nome (fonte maior, 22 em vez dos 17 de FontSize.ListName), a
+                                linha de baixo é nova: GcDescriptionPreview (PlaylistItemViewModel),
+                                só aparece quando a Lauda tem algum campo de GC com "description" no
+                                nome preenchido (ver HasGcDescriptionPreview). Indent de 62px pra
+                                alinhar embaixo do texto do Nome, não embaixo do ícone (ícone 50 +
+                                margem 12 = 62).
+                            -->
+                            <StackPanel Grid.Column="1" Margin="4,8">
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Width="50" Height="32" Background="{DynamicResource Brush.Bg0}" CornerRadius="4" Margin="0,0,12,0">
+                                        <Path Data="{StaticResource Icon.Film}" Stroke="{DynamicResource Brush.TextLow}" StrokeThickness="1.4"
+                                              Width="17" Height="17" Stretch="Uniform" />
+                                    </Border>
+                                    <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Brush.TextHi}"
+                                               FontSize="22" FontWeight="Bold" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding GcDescriptionPreview}" Margin="62,3,8,0" FontSize="15" Foreground="{DynamicResource Brush.TextLow}"
+                                           TextTrimming="CharacterEllipsis" Visibility="{Binding HasGcDescriptionPreview, Converter={StaticResource BoolToVis}}" />
                             </StackPanel>
-                            <TextBlock Grid.Column="2" Text="{Binding DurationDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
-                            <Border Grid.Column="3" Background="{DynamicResource Brush.Red}" CornerRadius="3" Padding="9,3" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            <TextBlock Grid.Column="2" Text="{Binding DurationDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="16" Foreground="{DynamicResource Brush.TextLow}" />
+                            <Border Grid.Column="3" Background="{DynamicResource Brush.Red}" CornerRadius="4" Padding="11,5" HorizontalAlignment="Left" VerticalAlignment="Center"
                                     Visibility="{Binding IsCurrent, Converter={StaticResource BoolToVis}}">
-                                <TextBlock Text="{Binding StatusLabel}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" />
+                                <TextBlock Text="{Binding StatusLabel}" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" />
                             </Border>
-                            <Border Grid.Column="3" Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="9,3" HorizontalAlignment="Left" VerticalAlignment="Center"
+                            <Border Grid.Column="3" Background="{DynamicResource Brush.Blue}" CornerRadius="4" Padding="11,5" HorizontalAlignment="Left" VerticalAlignment="Center"
                                     Visibility="{Binding IsNext, Converter={StaticResource BoolToVis}}">
-                                <TextBlock Text="{Binding StatusLabel}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" />
+                                <TextBlock Text="{Binding StatusLabel}" FontSize="12" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" />
                             </Border>
                         </Grid>
                     </DataTemplate>

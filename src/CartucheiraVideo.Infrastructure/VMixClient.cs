@@ -107,23 +107,31 @@ public static class VMixClient
     /// precisa de duas chamadas (ver <c>Presentation.ViewModels.GcViewModel.SendFieldsAsync</c>, que
     /// itera o dicionário).
     ///
-    /// Fix v1.0.109 (2026-11-19, bug real do usuário: Overlay ligava certinho mas o texto NUNCA
-    /// mudava — ficava sempre no texto de fábrica do template, "HEADLINE"/"DESCRIPTION"): confirmado
-    /// na Developer API oficial da vMix (vmix.com/help27/DeveloperAPI.html) — pra um Título GT (como
-    /// o <c>.gtzip</c> deste projeto), <c>SelectedName</c> precisa do sufixo <c>.Text</c> depois do
-    /// nome do campo (exemplo oficial da doc: <c>SelectedName=Headline.Text</c>, não só
-    /// <c>SelectedName=Headline</c>) — sem o sufixo, a chamada responde 200 OK (mesma falha silenciosa
-    /// de sempre da API HTTP do vMix) mas NÃO muda nada de verdade. <paramref name="fieldName"/>
-    /// continua sendo só o nome puro (igual ao configurado em Configurações → GC, igual ao mostrado no
-    /// Editor de Título do vMix) — o sufixo é detalhe de implementação desta função, nunca precisa
-    /// aparecer em nenhum outro lugar do sistema (Lauda, dashboard, etc.).
+    /// Fix v1.0.109 (2026-11-19, tentativa 1, REVERTIDA): a Developer API oficial da vMix
+    /// (vmix.com/help27/DeveloperAPI.html) documenta <c>SelectedName=Headline.Text</c> como exemplo
+    /// pra Título GT — tentei generalizar isso como "sempre acrescentar .Text no nome configurado",
+    /// só que o usuário confirmou pelo próprio XML da API do vMix dele (<c>GET /API/</c>, bloco do
+    /// Input do Título) que o nome REAL do campo já é <c>Headline.Text</c> por INTEIRO (atributo
+    /// <c>name</c> do elemento <c>&lt;text&gt;</c>) — ou seja, o objeto se chama só "Headline" (sem
+    /// "Text" no nome), e ".Text" é a propriedade dele. Acrescentar ".Text" por cima de um nome JÁ
+    /// configurado como "Headline Text" (como o usuário tinha em Configurações → GC, copiando o
+    /// rótulo mostrado no Editor de Título do vMix) virava "Headline Text.Text" — errado.
+    ///
+    /// Fix v1.0.110 (2026-11-19, correção de verdade): <paramref name="fieldName"/> agora é usado
+    /// LITERALMENTE como <c>SelectedName</c>, sem nenhuma transformação — a função não tenta mais
+    /// adivinhar sufixo nenhum. O valor configurado em Configurações → GC precisa ser EXATAMENTE a
+    /// string que aparece no atributo <c>name</c> do <c>&lt;text&gt;</c> daquele campo no XML da API
+    /// do vMix (<c>http://host:8088/API/</c>, dentro do bloco <c>&lt;input&gt;</c> do Título) — nunca
+    /// o rótulo mostrado no Editor de Título (que pode não bater 1:1 com o nome interno real). Decisão
+    /// deliberada: depois de errar a transformação uma vez, é mais seguro NÃO tentar adivinhar de
+    /// novo — cada template de Título pode nomear os campos de um jeito diferente, só o XML da própria
+    /// instância do vMix do usuário sabe a verdade.
     /// </summary>
     public static async Task<(bool Ok, string? Error)> SetTitleTextAsync(string host, string port, string input, string fieldName, string value)
     {
         try
         {
-            var selectedName = $"{fieldName}.Text";
-            var url = $"http://{host}:{port}/API/?Function=SetText&Input={Uri.EscapeDataString(input)}&SelectedName={Uri.EscapeDataString(selectedName)}&Value={Uri.EscapeDataString(value)}";
+            var url = $"http://{host}:{port}/API/?Function=SetText&Input={Uri.EscapeDataString(input)}&SelectedName={Uri.EscapeDataString(fieldName)}&Value={Uri.EscapeDataString(value)}";
             using var response = await Http.GetAsync(url).ConfigureAwait(false);
             return response.IsSuccessStatusCode ? (true, null) : (false, $"HTTP {(int)response.StatusCode}");
         }

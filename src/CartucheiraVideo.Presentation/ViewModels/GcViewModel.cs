@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Infrastructure;
@@ -38,6 +39,23 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 ///    de <see cref="TeleprompterViewModel"/> (nunca persistido; liga/desliga o disparo automático).
 ///    Desligar o manual volta pro GC padrão (decisão deliberada, mais simples e honesta que tentar
 ///    "adivinhar" qual Lauda deveria estar ativa — o próximo Play/Carregamento natural corrige sozinho).
+///
+/// **Correção Sprint GC-Disparo-Explicito (2026-11-19), relatada pelo usuário testando de verdade com
+/// o vMix configurado**: "Ele tem que ter algum comando, ou play no VT, ou disparar o TP, que aí
+/// aciona o GC" — <see cref="SetDefaultFields"/> estava mandando o GC padrão (decisão #4 acima) pro ar
+/// IMEDIATAMENTE ao abrir o dia/trocar de Programa, antes de qualquer Play ou TP (decisões #1/#2) — o
+/// usuário via isso como "disparou sozinho, com o texto errado". Agora <see cref="SetDefaultFields"/>
+/// SÓ guarda o padrão novo, nunca manda nada pro vMix sozinho; ele continua valendo como "pra onde
+/// volta" quando a Lauda ativa termina, só não é mais empurrado pro ar no instante em que é definido.
+/// Detalhe junto que piorava o sintoma: um dicionário com chaves mas todo mundo com valor vazio (ex.:
+/// salvo pela textarea livre antiga "Nome: Valor" com nada depois dos dois-pontos) passava pela
+/// checagem de "tem campo" (Count > 0) e mandava <c>SetText</c> com Value vazio pro vMix — que, pela
+/// mesma falha de sempre da API HTTP do vMix (ela responde 200 OK mesmo quando a Function não muda
+/// nada de verdade, já documentado em
+/// <see cref="CartucheiraVideo.Infrastructure.VMixClient.CutToInputAsync"/>), não limpa o campo —
+/// deixa o texto de FÁBRICA do template (o que o usuário via como "HEADLINE"/"DESCRIPTION", nunca
+/// escrito por nós) no ar, com o Overlay ligado por cima. <see cref="SendFieldsAsync"/> agora trata
+/// "só valores em branco" igual a "nenhum campo" (esconde em vez de mandar SetText vazio).
 ///
 /// Como o Teleprompter, mas SEM nenhuma janela WPF própria — todo o "destino" é uma chamada de rede
 /// pro vMix (<see cref="CartucheiraVideo.Infrastructure.VMixClient"/>), fire-and-forget, nunca trava
@@ -102,21 +120,17 @@ public sealed class GcViewModel
 
     /// <summary>
     /// Chamado pelo <c>MainViewModel.OnOpenPlaylistRequested</c> ("abrir o dia") com
-    /// <c>PlaylistProgramRecord.DefaultGcFields</c> do Programa escolhido — troca o GC PADRÃO. Se
-    /// nenhuma Lauda específica (nem o manual) estiver no ar agora, o novo padrão já vai pro vMix na
-    /// hora; senão só fica guardado pra quando a Lauda atual terminar (<see cref="NotifyDeckEnded"/>)
-    /// ou o manual for desligado (<see cref="SetManualOverride"/>).
+    /// <c>PlaylistProgramRecord.DefaultGcFields</c> do Programa escolhido — troca o GC PADRÃO.
+    ///
+    /// Sprint GC-Disparo-Explicito (2026-11-19, correção — ver comentário de classe): SÓ guarda o
+    /// valor novo, nunca manda nada pro vMix neste instante — antes, abrir o dia colocava o Título no
+    /// ar sozinho mesmo sem nenhum Play/TP ter acontecido ainda. O padrão continua sendo usado como
+    /// "pra onde volta" quando a Lauda ativa termina (<see cref="NotifyDeckEnded"/>) ou o manual for
+    /// desligado (<see cref="SetManualOverride"/>) — só não é mais empurrado pró-ativamente aqui.
     /// </summary>
     public void SetDefaultFields(IReadOnlyDictionary<string, string>? fields)
     {
         _defaultFields = fields is { Count: > 0 } ? fields : new Dictionary<string, string>();
-
-        if (_isManualOverride || _activeAutoSourceDeck is not null)
-        {
-            return;
-        }
-
-        ActivateInternal(_defaultFields, sourceDeck: null, isDefault: true);
     }
 
     /// <summary>
@@ -250,7 +264,14 @@ public sealed class GcViewModel
 
     private async Task SendFieldsAsync(string host, string port, string input, int overlayChannel, IReadOnlyDictionary<string, string> fields)
     {
-        if (fields.Count == 0)
+        // Sprint GC-Disparo-Explicito (2026-11-19) — ver comentário de classe: um dicionário com
+        // chaves mas TODO MUNDO com valor vazio (ex.: "Headline Text": "") não conta como "tem o que
+        // mostrar" — sem isto, mandávamos SetText com Value vazio pro vMix (que, pela mesma falha já
+        // documentada de a API HTTP responder 200 OK mesmo quando a Function não muda nada de
+        // verdade, deixa o texto de FÁBRICA do template no ar) e ainda assim ligávamos o Overlay por
+        // cima, mostrando texto nunca escrito por nós.
+        var hasRealContent = fields.Values.Any(value => !string.IsNullOrWhiteSpace(value));
+        if (fields.Count == 0 || !hasRealContent)
         {
             var (hideOk, hideError) = await CartucheiraVideo.Infrastructure.VMixClient.SetOverlayVisibleAsync(host, port, overlayChannel, input, visible: false).ConfigureAwait(false);
             if (hideOk)

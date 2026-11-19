@@ -77,16 +77,17 @@
     <div class="main-body">
       <section id="programs-view" class="view">
         <section id="programs-section">
+          <!-- Sprint GC-Campos-Globais (2026-11-19, pedido do usuário "isso não teria que vir só
+               setup que tá na cartucheira na config do gc"): tirado o campo "GC padrão" (texto livre
+               Nome: Valor) daqui — os NOMES de campo agora vêm sempre de Configurações → GC (um só
+               Título de vMix fixo pro sistema inteiro, nunca por Programa), então não faz sentido
+               pedir isso na hora de criar um Programa. Pra definir o GC padrão (valores) de um
+               Programa, usa o botão "✎ GC padrão deste Programa" depois de criado (ver abaixo). -->
           <form id="new-program-form" class="admin-only hidden">
             <input type="text" id="new-program-name" placeholder="Nome do Programa (ex.: Jornal da Tarde)" required />
             <select id="new-program-background-art">
               <option value="">Sem fundo padrão</option>
             </select>
-            <!-- Sprint GC (2026-11-17, pedido do usuário "tem que ter um campo no setup do programa
-                 para colocar o GC padrao, que aquele texto que ficara qd nada tiver para ser
-                 enviado"): mesmo formato "Nome: Valor" por linha já usado pelo GC de cada Lauda
-                 (#new-lauda-gc) — reaproveita parseGcFields/stringifyGcFields (ver app.js). -->
-            <textarea id="new-program-gc" rows="2" placeholder="GC padrão (opcional) — um campo por linha, formato Nome: Valor. Fica no ar sempre que nenhuma Lauda específica estiver mandando o seu próprio GC."></textarea>
             <button type="submit">Criar Programa</button>
           </form>
           <p id="not-admin-hint" class="hint hidden">Só Administradores criam Programas novos — peça pra um Admin criar e liberar o acesso pra você.</p>
@@ -96,12 +97,13 @@
         <section id="editions-section" class="hidden">
           <button id="back-button" type="button" class="link-button">&larr; Voltar pros Programas</button>
           <h2>Playlist de <span id="selected-program-name"></span></h2>
-          <!-- Sprint GC-Campos-Fixos (2026-11-17, pedido do usuário "o melhor será ter esses campos
-               na lauda do GC e aí o produtor só preenche as infos"): antes o "GC padrão" só dava pra
-               definir na hora de CRIAR o Programa (pendência "0l" — sem jeito de editar depois). Este
-               botão (só Admin) abre #program-gc-modal pra redefinir os NOMES dos campos a qualquer
-               momento — são esses nomes que viram as caixinhas fixas no formulário de Lauda abaixo. -->
-          <button id="program-gc-edit-button" type="button" class="secondary admin-only hidden">✎ Campos de GC deste Programa</button>
+          <!-- Sprint GC-Campos-Globais (2026-11-19, revisão do Sprint GC-Campos-Fixos de 2026-11-17):
+               os NOMES de campo NÃO são mais definidos por Programa — eles vêm sempre da lista global
+               de Configurações → GC (no app da Cartucheira), porque só existe UM Título de vMix pro
+               sistema inteiro. Este botão (só Admin) abre #program-gc-modal pra definir os VALORES
+               padrão deste Programa (o que fica no ar quando nenhuma Lauda específica estiver mandando
+               o seu próprio GC) — não os nomes. -->
+          <button id="program-gc-edit-button" type="button" class="secondary admin-only hidden">✎ GC padrão deste Programa</button>
           <form id="new-edition-form">
             <input type="date" id="new-edition-date" required />
             <button type="submit">Criar Playlist para esta Data</button>
@@ -132,15 +134,19 @@
             </div>
             <!-- Sprint GC-Campos-Fixos (2026-11-17, pedido do usuário "o melhor será ter esses campos
                  na lauda do GC e aí o produtor só preenche as infos"): troca a caixa de texto livre
-                 "Nome: Valor" por uma caixinha PRA CADA campo definido no "GC padrão" do Programa
-                 (ver renderLaudaGcFieldInputs/collectLaudaGcFieldsFromForm em app.js) — o produtor só
-                 digita o valor, nunca mais o nome do campo. Decisão confirmada com o usuário: trava
-                 só nos campos do Programa, sem campo avulso por Lauda (ver
-                 PlaylistDashboardCoordinator.FilterGcFieldsToProgramSchema do lado do servidor). -->
+                 "Nome: Valor" por uma caixinha PRA CADA campo de GC (ver
+                 renderLaudaGcFieldInputs/collectLaudaGcFieldsFromForm em app.js) — o produtor só
+                 digita o valor, nunca mais o nome do campo.
+                 Sprint GC-Campos-Globais (2026-11-19, revisão): os nomes das caixinhas agora vêm da
+                 lista global de Configurações → GC (app da Cartucheira) — ver gcFieldNamesCache /
+                 ensureGcFieldNames() em app.js e GET /api/gc/layout — e não mais do "GC padrão" do
+                 Programa (que hoje só guarda VALORES padrão). O travamento de quais nomes são aceitos
+                 continua no servidor, em
+                 PlaylistDashboardCoordinator.FilterGcFieldsToGlobalFieldLayout. -->
             <div class="field-row">
               <label>GC (gerador de caracteres)</label>
               <div id="new-lauda-gc-fields" class="gc-fields-dynamic"></div>
-              <p id="new-lauda-gc-hint" class="hint hidden">Este Programa ainda não tem campos de GC definidos — peça a um Administrador pra configurar em "✎ Campos de GC deste Programa" (na tela anterior, de Datas).</p>
+              <p id="new-lauda-gc-hint" class="hint hidden">Nenhum campo de GC configurado ainda — peça a um Administrador pra configurar em Configurações → GC, no app da Cartucheira (desktop).</p>
             </div>
             <div class="field-row">
               <label for="new-lauda-tp">TP (teleprompter)</label>
@@ -395,19 +401,24 @@
   </div>
 </div>
 
-<!-- Modal "Campos de GC do Programa" — Sprint GC-Campos-Fixos (2026-11-17). Continua no formato de
-     texto livre "Nome: Valor" por linha AQUI (é a hora de DEFINIR os nomes, decisão deliberada de
-     manter simples pra quem já configurou um Título no vMix e sabe os nomes exatos dos campos) — a
-     diferença é que agora dá pra reabrir e editar depois de criado o Programa (antes só na criação),
-     e é a partir DESTES nomes que a tela de Lauda (acima) monta as caixinhas fixas pro produtor. -->
+<!-- Modal "GC padrão do Programa" — Sprint GC-Campos-Fixos (2026-11-17), revisado no Sprint
+     GC-Campos-Globais (2026-11-19, pedido do usuário "isso não teria que vir só setup que tá na
+     cartucheira na config do gc"): os NOMES dos campos deixaram de ser definidos aqui — eles vêm
+     sempre da lista global de Configurações → GC (app da Cartucheira, GET /api/gc/layout), porque
+     só existe UM Título de vMix pro sistema inteiro, nunca um por Programa. Este modal agora só
+     define os VALORES padrão deste Programa (o que fica no ar quando nenhuma Lauda específica
+     estiver mandando o seu), numa caixinha por nome global — mesmo padrão de
+     renderLaudaGcFieldInputs/collectLaudaGcFieldsFromForm, ver renderProgramGcValueInputs/
+     collectProgramGcValuesFromForm em app.js. -->
 <div id="program-gc-modal" class="modal-overlay hidden">
   <div class="modal-card">
-    <h2 id="program-gc-modal-title">Campos de GC</h2>
+    <h2 id="program-gc-modal-title">GC padrão do Programa</h2>
     <form id="program-gc-form">
       <div class="field-row">
-        <label for="program-gc-input">Campos (um por linha, formato Nome: Valor)</label>
-        <textarea id="program-gc-input" rows="4" placeholder="Ex.:&#10;Titulo: RELATÓRIO FOCUS&#10;Linha1:&#10;Linha2:"></textarea>
-        <p class="hint">O VALOR aqui é só o "GC padrão" (o que fica no ar quando nenhuma Lauda específica estiver mandando o seu) — pode deixar em branco depois dos dois-pontos. O NOME de cada linha é o que vai virar uma caixinha de preenchimento em toda Lauda deste Programa a partir de agora.</p>
+        <label>Valores padrão (um por campo de GC)</label>
+        <div id="program-gc-fields-dynamic" class="gc-fields-dynamic"></div>
+        <p id="program-gc-hint" class="hint hidden">Nenhum campo de GC configurado ainda — configure os nomes em Configurações → GC, no app da Cartucheira (desktop).</p>
+        <p class="hint">Isto é só o "GC padrão" (o que fica no ar quando nenhuma Lauda específica estiver mandando o seu) — pode deixar em branco. Os NOMES dos campos vêm de Configurações → GC, no app da Cartucheira.</p>
       </div>
       <div class="field-row-buttons">
         <button type="submit">Salvar</button>

@@ -80,7 +80,6 @@ const gcMonitorFallback = document.getElementById("gc-monitor-fallback");
 const gcSendFieldsButton = document.getElementById("gc-send-fields-button");
 const gcClearFieldsButton = document.getElementById("gc-clear-fields-button");
 const gcError = document.getElementById("gc-error");
-const newProgramGcInput = document.getElementById("new-program-gc");
 
 // Sprint GC-Playlist (2026-11-18) — navegador Programa→Edição→Lauda do GC (mesmo princípio do
 // tp-playlist-picker) + caixinhas fixas de campo (substituem a antiga #gc-fields-input).
@@ -110,13 +109,16 @@ const userFormError = document.getElementById("user-form-error");
 const userFormCancel = document.getElementById("user-form-cancel");
 const userRemoveButton = document.getElementById("user-remove-button");
 
-// Sprint GC-Campos-Fixos (2026-11-17) — modal "Campos de GC do Programa" (ver comentário completo
+// Sprint GC-Campos-Fixos (2026-11-17) — modal "GC padrão do Programa" (ver comentário completo
 // no index.html) e os elementos novos do formulário de Lauda (caixinhas dinâmicas no lugar da
 // antiga textarea livre #new-lauda-gc).
+// Sprint GC-Campos-Globais (2026-11-19, revisão): #program-gc-input (textarea) trocado por
+// #program-gc-fields-dynamic + #program-gc-hint — mesmo padrão de newLaudaGcFieldsContainer.
 const programGcEditButton = document.getElementById("program-gc-edit-button");
 const programGcModal = document.getElementById("program-gc-modal");
 const programGcForm = document.getElementById("program-gc-form");
-const programGcInput = document.getElementById("program-gc-input");
+const programGcFieldsDynamicContainer = document.getElementById("program-gc-fields-dynamic");
+const programGcHint = document.getElementById("program-gc-hint");
 const programGcFormCancel = document.getElementById("program-gc-form-cancel");
 const programGcFormError = document.getElementById("program-gc-form-error");
 const newLaudaGcFieldsContainer = document.getElementById("new-lauda-gc-fields");
@@ -148,6 +150,29 @@ let draggedLaudaId = null;
 let currentPrograms = [];
 let editingUserId = null;
 
+// Sprint GC-Campos-Globais (2026-11-19, pedido do usuário "isso não teria que vir só setup que tá
+// na cartucheira na config do gc"): só existe UM Título de vMix fixo pro sistema inteiro (nunca um
+// por Programa, ver comentário de classe do Coordinator) — então os NOMES dos campos de GC também
+// são globais, e vêm sempre de Configurações → GC (mesma lista do "Campos do GC (mockup)" que já
+// alimenta o monitoramento, GET /api/gc/layout). gcFieldNamesCache evita rebuscar a cada abertura de
+// formulário na mesma sessão de página — se o Admin mudar Configurações → GC no meio da sessão,
+// precisa recarregar a página pra pegar os nomes novos aqui (mesmo critério de cache já usado em
+// tpPlaylistProgramsCache/currentPrograms nesta dashboard).
+let gcFieldNamesCache = null;
+
+async function ensureGcFieldNames() {
+  if (gcFieldNamesCache !== null) {
+    return gcFieldNamesCache;
+  }
+  try {
+    const layout = await apiGet("/api/gc/layout");
+    gcFieldNamesCache = layout.map((field) => field.name);
+  } catch (err) {
+    gcFieldNamesCache = []; // falha honesta — formulários caem pro aviso "nenhum campo cadastrado".
+  }
+  return gcFieldNamesCache;
+}
+
 // Sprint Playlist-TP (2026-11-17) — estado do navegador Programa→Edição→Laudas DENTRO da view
 // Teleprompter, deliberadamente SEPARADO de selectedProgramId/selectedEditionId/currentLaudas (que
 // pertencem à view "Programas" — navegar aqui nunca deve mexer no que está aberto lá, e vice-versa).
@@ -177,15 +202,12 @@ let gcFieldLayout = [];
 
 // Sprint GC-Playlist (2026-11-18) — mesmo princípio de isolamento de tpPlaylistProgramId/
 // tpPlaylistEditionId acima, só que pro navegador Programa→Edição→Lauda dentro da view "gc-view".
-// gcSelectedFieldNames é o ESQUEMA (só os NOMES) do Programa escolhido no picker — é ele que decide
-// quais caixinhas aparecem em "Campos (manual)" (ver renderGcManualFieldInputs). Diferente do
-// Teleprompter (um texto só), o GC pode ter vários campos nomeados, e o GC em si não pertence a
-// nenhum Programa fixo (ver comentário de classe do PlaylistDashboardCoordinator) — por isso esse
-// esquema só existe enquanto o operador escolhe um Programa aqui, não vem do servidor.
+// Sprint GC-Campos-Globais (2026-11-19): o ESQUEMA de campos (quais caixinhas aparecem) não depende
+// mais de qual Programa é escolhido aqui — vem sempre de gcFieldNamesCache (global). Este picker
+// serve só pra achar e carregar os VALORES de uma Lauda já escrita, igual o do Teleprompter.
 let gcPlaylistProgramsCache = null;
 let gcPlaylistProgramId = null;
 let gcPlaylistEditionId = null;
-let gcSelectedFieldNames = [];
 
 // Parte 3 (2026-11-17) — tpSpeedDragging evita a mesma "briga" que já existe pro #tp-text-input
 // (ver applyTeleprompterState): enquanto o usuário está arrastando o slider de velocidade, um
@@ -347,20 +369,6 @@ function laudaQuery() {
   return `programId=${encodeURIComponent(selectedProgramId)}&editionId=${encodeURIComponent(selectedEditionId)}`;
 }
 
-function parseGcFields(text) {
-  const fields = {};
-  text.split("\n").forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    const separatorIndex = trimmed.indexOf(":");
-    if (separatorIndex === -1) return;
-    const name = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1).trim();
-    if (name) fields[name] = value;
-  });
-  return fields;
-}
-
 function describeLauda(lauda) {
   const parts = [];
   if (lauda.fileName) parts.push("VT");
@@ -372,31 +380,13 @@ function describeLauda(lauda) {
   return parts.length > 0 ? parts.join(" · ") : "sem elementos ainda";
 }
 
-/// Inverso de parseGcFields — Sprint 3 (2026-11-16), usado ao abrir uma Lauda existente pra editar,
-/// pra voltar o dicionário gcFields pro mesmo formato "Nome: Valor" por linha que o campo espera.
-function stringifyGcFields(fields) {
-  if (!fields) return "";
-  return Object.entries(fields)
-    .map(([name, value]) => `${name}: ${value}`)
-    .join("\n");
-}
-
-/// Sprint GC-Campos-Fixos (2026-11-17, pedido do usuário "o melhor será ter esses campos na lauda
-/// do GC e aí o produtor só preenche as infos"): nomes de campo (as CHAVES, não os valores) do "GC
-/// padrão" do Programa atualmente aberto (#editions-section/#espelho-section) — é esse conjunto que
-/// define quais caixinhas aparecem no formulário de Lauda. Programa sem defaultGcFields nenhum =
-/// lista vazia (Lauda deste Programa sem nenhum campo de GC possível até um Admin configurar).
-function currentProgramGcFieldNames() {
-  const program = currentPrograms.find((p) => p.id === selectedProgramId);
-  return program && program.defaultGcFields ? Object.keys(program.defaultGcFields) : [];
-}
-
-/// Monta uma caixinha de texto PRA CADA nome de campo do Programa aberto, pré-preenchida com
+/// Sprint GC-Campos-Globais (2026-11-19, revisão do v1.0.104): monta uma caixinha de texto PRA CADA
+/// nome cadastrado GLOBALMENTE em Configurações → GC (gcFieldNamesCache) — pré-preenchida com
 /// `values[nome]` quando existir — chamada por openLaudaCreateForm (values vazio) e
-/// openLaudaForEdit (values = lauda.gcFields). Sempre limpa o container antes, então reflete o
-/// esquema ATUAL do Programa mesmo que ele tenha mudado desde a última vez que este formulário abriu.
+/// openLaudaForEdit (values = lauda.gcFields). Quem chama precisa garantir gcFieldNamesCache já
+/// carregado (await ensureGcFieldNames()) antes — esta função em si é síncrona, só lê o cache.
 function renderLaudaGcFieldInputs(values) {
-  const fieldNames = currentProgramGcFieldNames();
+  const fieldNames = gcFieldNamesCache || [];
   newLaudaGcFieldsContainer.innerHTML = "";
   newLaudaGcHint.classList.toggle("hidden", fieldNames.length > 0);
   fieldNames.forEach((name) => {
@@ -525,9 +515,10 @@ function resetLaudaForm() {
   newLaudaForm.reset();
 }
 
-function openLaudaCreateForm() {
+async function openLaudaCreateForm() {
   editingLaudaId = null;
   resetLaudaForm();
+  await ensureGcFieldNames();
   renderLaudaGcFieldInputs({});
   laudaFormTitle.textContent = "Nova Lauda";
   laudaFormSubmit.textContent = "Criar Lauda";
@@ -540,12 +531,13 @@ function openLaudaCreateForm() {
 /// campos de arquivo (navegador não permite preencher <input type="file"> por JS) — se o produtor
 /// escolher um arquivo novo aqui, ele substitui/adiciona normalmente ao salvar (mesmo upload de
 /// sempre); se não escolher nada, o VT/imagens já existentes da Lauda continuam intocados.
-function openLaudaForEdit(lauda) {
+async function openLaudaForEdit(lauda) {
   editingLaudaId = lauda.id;
   resetLaudaForm();
   document.getElementById("new-lauda-title").value = lauda.title === "(sem título)" ? "" : lauda.title;
   document.getElementById("new-lauda-type").value = lauda.type || "";
   document.getElementById("new-lauda-duration").value = lauda.durationPlanned || "";
+  await ensureGcFieldNames();
   renderLaudaGcFieldInputs(lauda.gcFields || {});
   document.getElementById("new-lauda-tp").value = lauda.tpText || "";
   document.getElementById("new-lauda-off").value = lauda.offText || "";
@@ -711,26 +703,58 @@ document.getElementById("new-program-form").addEventListener("submit", async (ev
     await apiPost("/api/playlist/programs", {
       name: nameInput.value,
       defaultBackgroundArtId: newProgramBackgroundArtSelect.value || null,
-      // Sprint GC (2026-11-17, pedido do usuário "tem que ter um campo no setup do programa para
-      // colocar o GC padrao") — mesmo formato "Nome: Valor" por linha do GC de cada Lauda.
-      defaultGcFields: newProgramGcInput.value ? parseGcFields(newProgramGcInput.value) : null,
+      // Sprint GC-Campos-Globais (2026-11-19): o GC padrão deixou de ser perguntado na criação do
+      // Programa — os valores padrão agora se definem depois, via "✎ GC padrão deste Programa"
+      // (openProgramGcModal, abaixo), já com as caixinhas certas vindas de Configurações → GC.
+      defaultGcFields: null,
     });
     nameInput.value = "";
     newProgramBackgroundArtSelect.value = "";
-    newProgramGcInput.value = "";
     await loadPrograms();
   } catch (err) {
     showError(err.message);
   }
 });
 
-// Sprint GC-Campos-Fixos (2026-11-17) — modal "Campos de GC do Programa" (Admin), aberto a partir
-// do botão em #editions-section (ver index.html). Continua reaproveitando parseGcFields/
-// stringifyGcFields (formato "Nome: Valor" por linha) — é só na CRIAÇÃO dos nomes que isso faz
-// sentido continuar como texto livre; a Lauda em si (abaixo, no Espelho) já usa as caixinhas fixas.
-function openProgramGcModal() {
+// Sprint GC-Campos-Fixos (2026-11-17) — modal "GC padrão do Programa" (Admin), aberto a partir
+// do botão em #editions-section (ver index.html).
+// Sprint GC-Campos-Globais (2026-11-19, revisão): trocado o textarea livre "Nome: Valor" por
+// caixinhas (uma por nome global de Configurações → GC, via gcFieldNamesCache) — mesmo padrão de
+// renderLaudaGcFieldInputs/collectLaudaGcFieldsFromForm, só que aqui é VALOR PADRÃO do Programa,
+// não valor de uma Lauda específica.
+function renderProgramGcValueInputs(values) {
+  const fieldNames = gcFieldNamesCache || [];
+  programGcFieldsDynamicContainer.innerHTML = "";
+  programGcHint.classList.toggle("hidden", fieldNames.length > 0);
+  fieldNames.forEach((name) => {
+    const row = document.createElement("div");
+    row.className = "gc-field-row";
+    const label = document.createElement("label");
+    label.textContent = name;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.dataset.gcFieldName = name;
+    input.value = (values && values[name]) || "";
+    row.appendChild(label);
+    row.appendChild(input);
+    programGcFieldsDynamicContainer.appendChild(row);
+  });
+}
+
+/// Inverso de renderProgramGcValueInputs — lê as caixinhas de volta pro dicionário nome→valor que
+/// PUT /api/playlist/programs/gc-fields espera.
+function collectProgramGcValuesFromForm() {
+  const fields = {};
+  programGcFieldsDynamicContainer.querySelectorAll("[data-gc-field-name]").forEach((input) => {
+    fields[input.dataset.gcFieldName] = input.value;
+  });
+  return fields;
+}
+
+async function openProgramGcModal() {
   const program = currentPrograms.find((p) => p.id === selectedProgramId);
-  programGcInput.value = stringifyGcFields(program ? program.defaultGcFields : null);
+  await ensureGcFieldNames();
+  renderProgramGcValueInputs(program ? program.defaultGcFields : null);
   programGcFormError.classList.add("hidden");
   programGcModal.classList.remove("hidden");
 }
@@ -749,11 +773,11 @@ programGcForm.addEventListener("submit", async (event) => {
   try {
     await apiPut("/api/playlist/programs/gc-fields", {
       programId: selectedProgramId,
-      defaultGcFields: programGcInput.value ? parseGcFields(programGcInput.value) : null,
+      defaultGcFields: collectProgramGcValuesFromForm(),
     });
     closeProgramGcModal();
-    // Recarrega o cache de Programas (currentPrograms) pra que as caixinhas de GC da próxima Lauda
-    // aberta (Nova ou Editar) já reflitam o esquema novo — ver renderLaudaGcFieldInputs.
+    // Recarrega o cache de Programas (currentPrograms) pra que o próximo "✎ GC padrão deste
+    // Programa" já abra com os valores salvos.
     await loadPrograms();
   } catch (err) {
     programGcFormError.textContent = err.message;
@@ -1252,6 +1276,10 @@ async function loadGcFieldLayout() {
   } catch (err) {
     gcFieldLayout = []; // falha honesta — cai pro fallback de lista simples.
   }
+  // Sprint GC-Campos-Globais (2026-11-19): aproveita esta mesma chamada (GET /api/gc/layout) pra
+  // manter gcFieldNamesCache atualizado também — evita um segundo fetch redundante toda vez que a
+  // view GC abre, já que os dois vêm da mesma lista (ver comentário de gcFieldNamesCache).
+  gcFieldNamesCache = gcFieldLayout.map((field) => field.name);
 }
 
 /// Desenha #gc-monitor (mockup, se gcFieldLayout tiver algo) ou #gc-monitor-fallback (lista simples
@@ -1303,15 +1331,15 @@ function renderGcMonitor(fields) {
   });
 }
 
-/// Sprint GC-Playlist (2026-11-18): monta uma caixinha de texto PRA CADA nome em
-/// gcSelectedFieldNames (o esquema do Programa escolhido no picker), pré-preenchida com
-/// `values[nome]` quando existir — mesmo princípio de renderLaudaGcFieldInputs (v1.0.104), só que
-/// aqui o esquema vem do picker em vez de selectedProgramId. Sem nenhum Programa escolhido ainda =
-/// lista vazia = só a dica (#gc-fields-hint) aparece, nenhuma caixinha.
+/// Sprint GC-Campos-Globais (2026-11-19, revisão do v1.0.105): monta uma caixinha de texto PRA CADA
+/// nome cadastrado GLOBALMENTE em Configurações → GC (gcFieldNamesCache, mantido atualizado por
+/// loadGcFieldLayout toda vez que a view GC abre) — mesmo princípio de renderLaudaGcFieldInputs.
+/// Nenhum campo cadastrado ainda em Configurações → GC = lista vazia = só a dica (#gc-fields-hint).
 function renderGcManualFieldInputs(values) {
+  const fieldNames = gcFieldNamesCache || [];
   gcFieldsDynamicContainer.innerHTML = "";
-  gcFieldsHint.classList.toggle("hidden", gcSelectedFieldNames.length > 0);
-  gcSelectedFieldNames.forEach((name) => {
+  gcFieldsHint.classList.toggle("hidden", fieldNames.length > 0);
+  fieldNames.forEach((name) => {
     const row = document.createElement("div");
     row.className = "gc-field-row";
     const label = document.createElement("label");
@@ -1440,7 +1468,6 @@ gcClearFieldsButton.addEventListener("click", async () => {
 function resetGcPlaylistPicker() {
   gcPlaylistProgramId = null;
   gcPlaylistEditionId = null;
-  gcSelectedFieldNames = [];
   gcPlaylistEditionSelect.innerHTML = '<option value="">Escolha uma Edição...</option>';
   gcPlaylistEditionSelect.disabled = true;
   gcPlaylistLaudasList.innerHTML = "";
@@ -1456,6 +1483,11 @@ gcPlaylistToggleButton.addEventListener("click", async () => {
   if (!opening) {
     return;
   }
+
+  // Sprint GC-Campos-Globais (2026-11-19): garante gcFieldNamesCache carregado antes de qualquer
+  // clique numa Lauda poder precisar dele — normalmente já veio de loadGcFieldLayout (startGcStream),
+  // isto só cobre a corrida rara de abrir o picker antes desse primeiro carregamento terminar.
+  await ensureGcFieldNames();
 
   if (gcPlaylistProgramsCache !== null) {
     return; // já carregado numa abertura anterior desta mesma sessão de página.
@@ -1478,17 +1510,16 @@ gcPlaylistToggleButton.addEventListener("click", async () => {
   }
 });
 
-/// Escolher um Programa já troca o ESQUEMA de campos (gcSelectedFieldNames) e redesenha as
-/// caixinhas vazias — não precisa clicar numa Lauda pra começar a digitar na mão.
+/// Sprint GC-Campos-Globais (2026-11-19): trocar de Programa não muda mais o ESQUEMA de campos
+/// (sempre global, ver gcFieldNamesCache) — só limpa os valores digitados/carregados até aqui, pra
+/// não ficar com valor de um show antigo esquecido numa caixinha enquanto o operador navega pra
+/// outro Programa.
 gcPlaylistProgramSelect.addEventListener("change", async () => {
   gcPlaylistProgramId = gcPlaylistProgramSelect.value || null;
   gcPlaylistEditionId = null;
   gcPlaylistEditionSelect.innerHTML = '<option value="">Escolha uma Edição...</option>';
   gcPlaylistLaudasList.innerHTML = "";
   gcPlaylistError.classList.add("hidden");
-
-  const program = gcPlaylistProgramsCache ? gcPlaylistProgramsCache.find((p) => p.id === gcPlaylistProgramId) : null;
-  gcSelectedFieldNames = program && program.defaultGcFields ? Object.keys(program.defaultGcFields) : [];
   renderGcManualFieldInputs({});
 
   if (!gcPlaylistProgramId) {

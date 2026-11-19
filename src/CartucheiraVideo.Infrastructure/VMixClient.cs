@@ -103,16 +103,27 @@ public static class VMixClient
     /// confirmada na Referência oficial (img.vmix.com/help/ShortcutFunctionReference.html, mesma
     /// fonte já citada em <see cref="CutToInputAsync"/>): <c>Function=SetText</c>, documentada como
     /// "Change Text in Title according to Value parameter" — <c>SelectedName</c> escolhe QUAL campo
-    /// de texto do Título muda (precisa casar com o nome real cadastrado no Título, dentro do vMix do
-    /// usuário; esta camada nunca valida isso, só manda a chamada). Chamada uma vez POR CAMPO — um
-    /// GC com "Nome"+"Cargo", por exemplo, precisa de duas chamadas (ver
-    /// <c>Presentation.ViewModels.GcViewModel.SendFieldsAsync</c>, que itera o dicionário).
+    /// de texto do Título muda. Chamada uma vez POR CAMPO — um GC com "Nome"+"Cargo", por exemplo,
+    /// precisa de duas chamadas (ver <c>Presentation.ViewModels.GcViewModel.SendFieldsAsync</c>, que
+    /// itera o dicionário).
+    ///
+    /// Fix v1.0.109 (2026-11-19, bug real do usuário: Overlay ligava certinho mas o texto NUNCA
+    /// mudava — ficava sempre no texto de fábrica do template, "HEADLINE"/"DESCRIPTION"): confirmado
+    /// na Developer API oficial da vMix (vmix.com/help27/DeveloperAPI.html) — pra um Título GT (como
+    /// o <c>.gtzip</c> deste projeto), <c>SelectedName</c> precisa do sufixo <c>.Text</c> depois do
+    /// nome do campo (exemplo oficial da doc: <c>SelectedName=Headline.Text</c>, não só
+    /// <c>SelectedName=Headline</c>) — sem o sufixo, a chamada responde 200 OK (mesma falha silenciosa
+    /// de sempre da API HTTP do vMix) mas NÃO muda nada de verdade. <paramref name="fieldName"/>
+    /// continua sendo só o nome puro (igual ao configurado em Configurações → GC, igual ao mostrado no
+    /// Editor de Título do vMix) — o sufixo é detalhe de implementação desta função, nunca precisa
+    /// aparecer em nenhum outro lugar do sistema (Lauda, dashboard, etc.).
     /// </summary>
     public static async Task<(bool Ok, string? Error)> SetTitleTextAsync(string host, string port, string input, string fieldName, string value)
     {
         try
         {
-            var url = $"http://{host}:{port}/API/?Function=SetText&Input={Uri.EscapeDataString(input)}&SelectedName={Uri.EscapeDataString(fieldName)}&Value={Uri.EscapeDataString(value)}";
+            var selectedName = $"{fieldName}.Text";
+            var url = $"http://{host}:{port}/API/?Function=SetText&Input={Uri.EscapeDataString(input)}&SelectedName={Uri.EscapeDataString(selectedName)}&Value={Uri.EscapeDataString(value)}";
             using var response = await Http.GetAsync(url).ConfigureAwait(false);
             return response.IsSuccessStatusCode ? (true, null) : (false, $"HTTP {(int)response.StatusCode}");
         }

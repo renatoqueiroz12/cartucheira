@@ -31,25 +31,32 @@
         Sprint Reformulação-Visual-Neon (2026-11-23): fundo principal trocado de cinza neutro
         (#FF111111) pro grafite-azulado exato pedido pelo usuário (#FF17191D, referência
         "Interface_Cartucheira_Vídeo_Neon.png" — decisão confirmada por pergunta direta,
-        "usar o hex exato"). Os outros 5 tons (Bg0/Bg2/Bg3/Bg4/Bg5) foram recalculados aplicando
-        exatamente os MESMOS deltas por canal que já existiam em relação ao Bg1 antigo (Bg0 = Bg1-7;
-        Bg2 = Bg1+9; Bg3 = Bg1+17; Bg4 = Bg1+26; Bg5 = Bg1+31) — preserva o contraste relativo entre
-        fundo/painel/card/hover/selecionado já validado em várias sprints anteriores, só desloca a
-        escala inteira pro tom grafite-azulado novo (mantém o leve viés de azul do Bg1 em toda a
-        escala, em vez de voltar a cinza neutro).
+        "usar o hex exato").
+
+        Correção pós-entrega, mesmo dia: o usuário testou de verdade no Windows e reportou
+        ("FICOU QUASE IGUAL JÁ ESTAVA, NÃO FICOU COMO O PNG QUE MANDEI") — comparação lado a lado
+        confirmou que a primeira versão desta escala (deltas +9/+17/+26/+31 a partir do Bg1,
+        copiados 1:1 do esquema cinza antigo) era sutil demais pra ler como a imagem: a diferença
+        entre janela/painel/card ficava praticamente imperceptível (ex.: Brush.Line em #3A3A3A
+        quase se confundia com o novo Bg3), bem menor que o salto visível de contraste entre as
+        camadas na imagem de referência. Os deltas foram ampliados (~2x: Bg0=-10, Bg2=+16, Bg3=+30,
+        Bg4=+44, Bg5=+54), mantendo Bg1 exatamente no hex pedido e o MESMO viés de azul em toda a
+        escala (delta igual nos 3 canais R/G/B, preservando a proporção de matiz) — agora a
+        profundidade entre fundo/painel/card/hover/selecionado fica claramente visível, muito mais
+        perto do que a imagem mostra.
     -->
     <!-- Bg0: mais fundo que "Background principal" — usado só em superfícies "afundadas" (área de preview do Deck, caixa de miniatura) que precisam ler como uma tela, não um painel. Extensão do usuário não nomeada explicitamente na paleta de 6 cores. -->
-    <Color x:Key="Color.Bg0">#FF101216</Color>
+    <Color x:Key="Color.Bg0">#FF0D0F13</Color>
     <!-- Bg1 = "Background principal" da especificação visual -->
     <Color x:Key="Color.Bg1">#FF17191D</Color>
     <!-- Bg2 = "Painéis" -->
-    <Color x:Key="Color.Bg2">#FF202226</Color>
+    <Color x:Key="Color.Bg2">#FF27292D</Color>
     <!-- Bg3 = "Cards" (também usado como superfície de inputs — TextBox/ComboBox/miniatura) -->
-    <Color x:Key="Color.Bg3">#FF282A2E</Color>
+    <Color x:Key="Color.Bg3">#FF35373B</Color>
     <!-- Bg4 = "Hover" -->
-    <Color x:Key="Color.Bg4">#FF313337</Color>
+    <Color x:Key="Color.Bg4">#FF434549</Color>
     <!-- Bg5 = "Selecionado" -->
-    <Color x:Key="Color.Bg5">#FF36383C</Color>
+    <Color x:Key="Color.Bg5">#FF4D4F53</Color>
 
     <SolidColorBrush x:Key="Brush.Bg0" Color="{StaticResource Color.Bg0}" />
     <SolidColorBrush x:Key="Brush.Bg1" Color="{StaticResource Color.Bg1}" />
@@ -59,9 +66,16 @@
     <SolidColorBrush x:Key="Brush.Bg5" Color="{StaticResource Color.Bg5}" />
 
     <!-- ===================== Linhas/bordas ===================== -->
-    <!-- "Bordas" da especificação visual — valor idêntico ao que já existia (nenhuma mudança necessária). -->
-    <SolidColorBrush x:Key="Brush.Line" Color="#FF3A3A3A" />
-    <SolidColorBrush x:Key="Brush.LineSoft" Color="#FF2A2A2A" />
+    <!--
+        Correção pós-entrega da Sprint Reformulação-Visual-Neon (2026-11-23): Brush.Line (#FF3A3A3A)
+        ficava quase idêntico ao novo Bg3/Bg4 (cards/hover) depois do ajuste de contraste acima —
+        a borda sutil reintroduzida nos cards de Deck/Botoneira/Explorer praticamente sumia de
+        novo. Clareado pra um tom visivelmente mais claro que Bg5 (o mais claro da escala de fundo),
+        mesmo viés de azul da paleta — fica discreto mas visível, sem repetir o problema da "linha
+        clara" da Sprint Mockup-v9 (aquele era bem mais claro/alto contraste que este tom).
+    -->
+    <SolidColorBrush x:Key="Brush.Line" Color="#FF565A62" />
+    <SolidColorBrush x:Key="Brush.LineSoft" Color="#FF3A3C41" />
 
     <!-- ===================== Texto ===================== -->
     <!-- TextHi = "Texto principal" e TextMid = "Texto secundário" da especificação visual (valores exatos). TextLow/TextFaint são uma extensão pra hierarquia mais fina (rótulos pequenos, textos quase invisíveis) — mesma família de cinza, não uma cor nova. -->

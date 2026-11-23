@@ -27,18 +27,29 @@
     -->
 
     <!-- ===================== Paleta base (fundo) — mapeamento 1:1 com a especificação visual ===================== -->
+    <!--
+        Sprint Reformulação-Visual-Neon (2026-11-23): fundo principal trocado de cinza neutro
+        (#FF111111) pro grafite-azulado exato pedido pelo usuário (#FF17191D, referência
+        "Interface_Cartucheira_Vídeo_Neon.png" — decisão confirmada por pergunta direta,
+        "usar o hex exato"). Os outros 5 tons (Bg0/Bg2/Bg3/Bg4/Bg5) foram recalculados aplicando
+        exatamente os MESMOS deltas por canal que já existiam em relação ao Bg1 antigo (Bg0 = Bg1-7;
+        Bg2 = Bg1+9; Bg3 = Bg1+17; Bg4 = Bg1+26; Bg5 = Bg1+31) — preserva o contraste relativo entre
+        fundo/painel/card/hover/selecionado já validado em várias sprints anteriores, só desloca a
+        escala inteira pro tom grafite-azulado novo (mantém o leve viés de azul do Bg1 em toda a
+        escala, em vez de voltar a cinza neutro).
+    -->
     <!-- Bg0: mais fundo que "Background principal" — usado só em superfícies "afundadas" (área de preview do Deck, caixa de miniatura) que precisam ler como uma tela, não um painel. Extensão do usuário não nomeada explicitamente na paleta de 6 cores. -->
-    <Color x:Key="Color.Bg0">#FF0A0A0A</Color>
+    <Color x:Key="Color.Bg0">#FF101216</Color>
     <!-- Bg1 = "Background principal" da especificação visual -->
-    <Color x:Key="Color.Bg1">#FF111111</Color>
+    <Color x:Key="Color.Bg1">#FF17191D</Color>
     <!-- Bg2 = "Painéis" -->
-    <Color x:Key="Color.Bg2">#FF1A1A1A</Color>
+    <Color x:Key="Color.Bg2">#FF202226</Color>
     <!-- Bg3 = "Cards" (também usado como superfície de inputs — TextBox/ComboBox/miniatura) -->
-    <Color x:Key="Color.Bg3">#FF222222</Color>
+    <Color x:Key="Color.Bg3">#FF282A2E</Color>
     <!-- Bg4 = "Hover" -->
-    <Color x:Key="Color.Bg4">#FF2B2B2B</Color>
+    <Color x:Key="Color.Bg4">#FF313337</Color>
     <!-- Bg5 = "Selecionado" -->
-    <Color x:Key="Color.Bg5">#FF303030</Color>
+    <Color x:Key="Color.Bg5">#FF36383C</Color>
 
     <SolidColorBrush x:Key="Brush.Bg0" Color="{StaticResource Color.Bg0}" />
     <SolidColorBrush x:Key="Brush.Bg1" Color="{StaticResource Color.Bg1}" />

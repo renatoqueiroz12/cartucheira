@@ -107,4 +107,16 @@
     <!-- Fill -->
     <Geometry x:Key="Icon.SkipForward">M5,4 L15,12 L5,20 Z M17,4 L19,4 L19,20 L17,20 Z</Geometry>
 
+    <!--
+        Adicionado na Sprint Reformulação-Visual-Neon (2026-11-23): ícone de onda sonora pros
+        cabeçalhos "Vinhetas"/"Trilhas" da Botoneira (MainWindow.xaml) — pedido explícito do usuário
+        comparando com a imagem de referência ("Interface_Cartucheira_Vídeo_Neon.png"), decisão
+        confirmada por pergunta direta ("adicionar o ícone"). Cinco barras verticais de alturas
+        alternadas (desenho clássico de "equalizador"/forma de onda) — consumidor aplica
+        StrokeLineCap="Round" pra arredondar as pontas (não dá pra fixar StrokeLineCap dentro da
+        própria Geometry, só no Path que a consome).
+    -->
+    <!-- Stroke -->
+    <Geometry x:Key="Icon.Waveform">M4,10 L4,14 M8,6 L8,18 M12,3 L12,21 M16,6 L16,18 M20,10 L20,14</Geometry>
+
 </ResourceDictionary>

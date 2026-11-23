@@ -1,4 +1,4 @@
-<Window x:Class="CartucheiraVideo.Presentation.Views.MainWindow"
+﻿<Window x:Class="CartucheiraVideo.Presentation.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -339,9 +339,16 @@
             cada metade alterna entre a lista de programas (raiz) e os cartuchos do programa aberto
             — ver comentário de topo do arquivo.
         -->
-        <!-- BorderBrush Transparent desde a Sprint Mockup-v9-Ajustes-Pós-Teste (2026-09-21) — mesmo motivo do Border do Deck acima: linha clara visível reportada pelo usuário, separação agora só por contraste de fundo. -->
+        <!--
+            Sprint Reformulação-Visual-Neon (2026-11-23): borda sutil reintroduzida (decisão
+            confirmada por pergunta direta, "reintroduzir borda sutil") — usa Brush.Line, já usado
+            sem problema em TextBox/ComboBox/etc. desde a Sprint 7, bem mais discreto que a borda
+            removida na Sprint Mockup-v9 (que tinha causado uma linha clara indesejada). Mesmo
+            mecanismo de Border simples sem Style/Trigger nenhum por trás (diferente do card do Deck
+            abaixo), então nenhum risco de regressão em estado nenhum.
+        -->
         <Border DockPanel.Dock="Bottom" Margin="16,0,16,16" Background="{DynamicResource Brush.Bg3}"
-                BorderBrush="Transparent" BorderThickness="1" CornerRadius="8" Padding="16,12,16,14">
+                BorderBrush="{DynamicResource Brush.Line}" BorderThickness="1" CornerRadius="8" Padding="16,12,16,14">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -360,7 +367,20 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding HeaderTitle}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <!--
+                            Sprint Reformulação-Visual-Neon (2026-11-23): ícone de onda sonora
+                            (Icon.Waveform, Icons.xaml) ao lado do título — pedido explícito do
+                            usuário comparando com a imagem de referência, decisão confirmada por
+                            pergunta direta ("adicionar o ícone"). TextBlock de título movido pra
+                            dentro do StackPanel (era direto no Grid.Column="0"); Margin de
+                            separação pro próximo elemento (CountLabel) saiu do TextBlock e foi pro
+                            StackPanel, mesmo valor de antes (10px).
+                        -->
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <Path Data="{StaticResource Icon.Waveform}" Stroke="{DynamicResource Brush.Blue}" StrokeThickness="1.6"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="15" Height="15" Stretch="Uniform" Margin="0,0,6,0" />
+                            <TextBlock Text="{Binding HeaderTitle}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" />
+                        </StackPanel>
                         <TextBlock Grid.Column="1" Text="{Binding CountLabel}" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" />
                         <Button Grid.Column="3" Content="Voltar" Command="{Binding BackCommand}" Margin="0,0,6,0"
                                 Visibility="{Binding IsInsideProgram, Converter={StaticResource BoolToVis}}" />
@@ -547,7 +567,15 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="{Binding HeaderTitle}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <!--
+                            Sprint Reformulação-Visual-Neon (2026-11-23): mesmo ícone de onda
+                            sonora da metade Vinhetas, ver comentário lá.
+                        -->
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                            <Path Data="{StaticResource Icon.Waveform}" Stroke="{DynamicResource Brush.Blue}" StrokeThickness="1.6"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="15" Height="15" Stretch="Uniform" Margin="0,0,6,0" />
+                            <TextBlock Text="{Binding HeaderTitle}" FontSize="{StaticResource FontSize.Label}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}" VerticalAlignment="Center" />
+                        </StackPanel>
                         <TextBlock Grid.Column="1" Text="{Binding CountLabel}" FontSize="{StaticResource FontSize.Small}" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" />
                         <Button Grid.Column="3" Content="Voltar" Command="{Binding BackCommand}" Margin="0,0,6,0"
                                 Visibility="{Binding IsInsideProgram, Converter={StaticResource BoolToVis}}" />
@@ -742,8 +770,17 @@
                             que são compartilhados com outras telas) — ver também o preview (coluna
                             220→260) e a barra de seek (22→26) mais abaixo.
                         -->
+                        <!--
+                            Sprint Reformulação-Visual-Neon (2026-11-23): borda idle trocada de
+                            Transparent pra Brush.Line (decisão confirmada, "reintroduzir borda
+                            sutil") — mesmo atributo local, mesma posição; os DataTriggers abaixo
+                            (OnAir/LocalOnly/Paused/Error/DragOver) já sobrescrevem esse valor hoje
+                            (comportamento comprovado em produção em várias sprints), então continuam
+                            funcionando exatamente igual, só a cor "neutra" (nenhum estado especial
+                            ativo) deixou de ser invisível.
+                        -->
                         <Border Margin="0,0,0,10" Background="{DynamicResource Brush.Bg3}" CornerRadius="8" Padding="20,16"
-                                BorderThickness="2" BorderBrush="Transparent"
+                                BorderThickness="2" BorderBrush="{DynamicResource Brush.Line}"
                                 AllowDrop="True"
                                 DragEnter="DeckBorder_DragEnter"
                                 DragLeave="DeckBorder_DragLeave"
@@ -1080,7 +1117,9 @@
             </ItemsControl>
 
             <!-- Explorer / Playlist -->
-            <Border Grid.Column="1" Margin="8,16,16,8" Background="{DynamicResource Brush.Bg2}" CornerRadius="6" ClipToBounds="True">
+            <!-- Sprint Reformulação-Visual-Neon (2026-11-23): borda sutil adicionada (decisão confirmada) — mesmo Brush.Line usado no card do Deck e no container da Botoneira. -->
+            <Border Grid.Column="1" Margin="8,16,16,8" Background="{DynamicResource Brush.Bg2}" CornerRadius="6" ClipToBounds="True"
+                    BorderBrush="{DynamicResource Brush.Line}" BorderThickness="1">
                 <views:FileExplorerPanel DataContext="{Binding FileExplorer}" />
             </Border>
         </Grid>

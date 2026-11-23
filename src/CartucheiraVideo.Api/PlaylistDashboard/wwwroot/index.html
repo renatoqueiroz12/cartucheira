@@ -52,6 +52,19 @@
       <button type="button" class="nav-item" data-view="gc-view">
         <span class="nav-item-icon">◈</span> GC
       </button>
+      <!-- Sprint Cartucheira-Dashboard (2026-11-23, pedido do usuário "o menu vinhetas, trilhas,
+           parece estar meio incompleto. Vamos colocar eles no dashboard? Tem dois módulos lá,
+           vinhetas e trilhas"): dois nav-items novos, um por banco — cada um abre a mesma estrutura
+           (Programas → cartuchos do Programa aberto), mas em pastas raiz separadas (Configurações →
+           Cartucheira, no app desktop). Sem admin-only: qualquer usuário logado opera cartuchos
+           (upload/renomear/cor/reordenar/apagar) — só CRIAR Programa novo é Admin, mesmo critério de
+           "Programas" (Playlist de vídeo), ver cartShowCreateProgramForm em app.js. -->
+      <button type="button" class="nav-item" data-view="vinhetas-view">
+        <span class="nav-item-icon">♪</span> Vinhetas
+      </button>
+      <button type="button" class="nav-item" data-view="trilhas-view">
+        <span class="nav-item-icon">♫</span> Trilhas
+      </button>
       <button type="button" class="nav-item admin-only hidden" data-view="users-view">
         <span class="nav-item-icon">◉</span> Usuários
       </button>
@@ -356,6 +369,66 @@
           <p id="gc-error" class="error hidden"></p>
           <p class="hint">Os campos acima (e o monitoramento) são atualizados em tempo real pra qualquer tela aberta nesta view, igual a view Teleprompter.</p>
         </div>
+      </section>
+
+      <!-- Sprint Cartucheira-Dashboard (2026-11-23, pedido do usuário "o menu vinhetas, trilhas,
+           parece estar meio incompleto. Vamos colocar eles no dashboard? [...] a gente cria os
+           programas e cada programa a gente coloca lá uma pasta raiz de áudios e cada programa
+           mesmo formato de upload de vídeo [...] aí lá do dashboard eu posso organizar o
+           posicionamento das teclinhas [...] e renomear, colocar cor"): duas views praticamente
+           idênticas (Vinhetas/Trilhas), cada uma com a mesma estrutura de duas seções da view
+           "Programas" (lista de Programas → cartuchos do Programa aberto), só sem a camada
+           Edição/Data (um cartucho é permanente, não por dia — ver CartucheiraFileStore). Reaproveita
+           .laudas-list/.drag-handle (mesmo drag-and-drop nativo HTML5 de renderLaudas) pro reordenar
+           dos cartuchos — ver cartRenderCartridges em app.js. -->
+      <section id="vinhetas-view" class="view hidden">
+        <section id="vinhetas-programs-section">
+          <form id="vinhetas-new-program-form" class="admin-only hidden">
+            <input type="text" id="vinhetas-new-program-name" placeholder="Nome do Programa (ex.: Metro News)" required />
+            <button type="submit">Criar Programa</button>
+          </form>
+          <p id="vinhetas-not-admin-hint" class="hint hidden">Só Administradores criam Programas novos — peça pra um Admin criar e liberar o acesso pra você.</p>
+          <p id="vinhetas-no-root-hint" class="hint hidden">Nenhuma pasta raiz configurada pra Vinhetas ainda — configure em Configurações → Cartucheira, no app da Cartucheira (desktop).</p>
+          <ul id="vinhetas-programs-list" class="list"></ul>
+        </section>
+
+        <section id="vinhetas-cartridges-section" class="hidden">
+          <button type="button" class="link-button" id="vinhetas-back-button">&larr; Voltar pros Programas</button>
+          <h2>Cartuchos de <span id="vinhetas-selected-program-name"></span></h2>
+          <div class="field-row">
+            <label for="vinhetas-upload-input">Enviar áudio(s)</label>
+            <input type="file" id="vinhetas-upload-input" accept="audio/*" multiple />
+          </div>
+          <p id="vinhetas-upload-status" class="hint hidden"></p>
+          <ul id="vinhetas-cartridges-list" class="list laudas-list"></ul>
+          <p class="hint">Arraste pelas setas (⠿) pra reordenar. Clique no nome pra renomear. A cor escolhida aqui é a mesma que aparece no app desktop (e vice-versa, se alguém mudar a cor por lá).</p>
+        </section>
+        <p id="vinhetas-cartridges-error" class="error hidden"></p>
+      </section>
+
+      <section id="trilhas-view" class="view hidden">
+        <section id="trilhas-programs-section">
+          <form id="trilhas-new-program-form" class="admin-only hidden">
+            <input type="text" id="trilhas-new-program-name" placeholder="Nome do Programa (ex.: Metro News)" required />
+            <button type="submit">Criar Programa</button>
+          </form>
+          <p id="trilhas-not-admin-hint" class="hint hidden">Só Administradores criam Programas novos — peça pra um Admin criar e liberar o acesso pra você.</p>
+          <p id="trilhas-no-root-hint" class="hint hidden">Nenhuma pasta raiz configurada pra Trilhas ainda — configure em Configurações → Cartucheira, no app da Cartucheira (desktop).</p>
+          <ul id="trilhas-programs-list" class="list"></ul>
+        </section>
+
+        <section id="trilhas-cartridges-section" class="hidden">
+          <button type="button" class="link-button" id="trilhas-back-button">&larr; Voltar pros Programas</button>
+          <h2>Cartuchos de <span id="trilhas-selected-program-name"></span></h2>
+          <div class="field-row">
+            <label for="trilhas-upload-input">Enviar áudio(s)</label>
+            <input type="file" id="trilhas-upload-input" accept="audio/*" multiple />
+          </div>
+          <p id="trilhas-upload-status" class="hint hidden"></p>
+          <ul id="trilhas-cartridges-list" class="list laudas-list"></ul>
+          <p class="hint">Arraste pelas setas (⠿) pra reordenar. Clique no nome pra renomear. A cor escolhida aqui é a mesma que aparece no app desktop (e vice-versa, se alguém mudar a cor por lá).</p>
+        </section>
+        <p id="trilhas-cartridges-error" class="error hidden"></p>
       </section>
 
       <section id="users-view" class="view hidden">

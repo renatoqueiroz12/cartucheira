@@ -29,4 +29,14 @@ public sealed class AudioPad
     /// <c>Video</c> existe na modelagem mas não tem destino de saída implementado ainda (§14.6).
     /// </summary>
     public CartridgeOutputType OutputType { get; set; } = CartridgeOutputType.Audio;
+
+    /// <summary>
+    /// Sprint Cartucheira-Dashboard (2026-11-23): Id do cartucho no <c>cartuchos.json</c> da
+    /// dashboard web (<c>Infrastructure.Cartucheira.CartucheiraFileStore</c>) — nulo pra cartuchos
+    /// lidos do jeito antigo (pasta manual sem dashboard, ou cartuchos de exemplo do mockup). Usado
+    /// pelo <c>AudioBankViewModel</c> pra saber, na hora de uma mudança de cor (Ctrl+clique direito),
+    /// se grava no <c>cartuchos.json</c> da dashboard (não-nulo) ou no <c>CartridgeOverride</c>
+    /// legado (nulo) — nunca os dois, pra não ter duas fontes de verdade pra cor do mesmo cartucho.
+    /// </summary>
+    public string? DashboardCartridgeId { get; set; }
 }

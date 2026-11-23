@@ -15,13 +15,21 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// Voltar), diferente da árvore genérica e recursiva do Explorer (<see cref="FolderNodeViewModel"/>)
 /// — a Cartucheira não precisa de subpasta dentro de subpasta (arquitetura §14 nunca descreveu
 /// isso), então não há necessidade de reaproveitar aquele lazy-loading recursivo aqui.
+///
+/// Sprint Cartucheira-Dashboard (2026-11-23): <see cref="Id"/> é novo — não-nulo quando este
+/// Programa foi criado pela dashboard web (<c>Infrastructure.Cartucheira.CartucheiraFileStore</c>),
+/// nulo pra Programas lidos do jeito antigo (subpasta criada manualmente no Explorer, sem
+/// <c>programs.json</c>) ou de exemplo (mockup). É esse campo que o <see cref="AudioBankViewModel"/>
+/// usa em <c>OpenProgram</c> pra decidir entre ler os cartuchos via <c>CartucheiraFileStore</c>
+/// (dashboard-managed) ou escanear a pasta crua do jeito antigo.
 /// </summary>
 public sealed class CartucheiraProgramViewModel : ViewModelBase
 {
-    public CartucheiraProgramViewModel(string name, string? path, Action<CartucheiraProgramViewModel> onOpen)
+    public CartucheiraProgramViewModel(string name, string? path, string? id, Action<CartucheiraProgramViewModel> onOpen)
     {
         Name = name;
         Path = path;
+        Id = id;
 
         ArgumentNullException.ThrowIfNull(onOpen);
         OpenCommand = new RelayCommand(_ => onOpen(this));
@@ -31,6 +39,9 @@ public sealed class CartucheiraProgramViewModel : ViewModelBase
 
     /// <summary>Caminho completo da subpasta no disco — nulo pros programas de exemplo do mockup (sem pasta raiz configurada ainda).</summary>
     public string? Path { get; }
+
+    /// <summary>Id deste Programa no <c>programs.json</c> da dashboard — ver comentário de classe.</summary>
+    public string? Id { get; }
 
     public ICommand OpenCommand { get; }
 }

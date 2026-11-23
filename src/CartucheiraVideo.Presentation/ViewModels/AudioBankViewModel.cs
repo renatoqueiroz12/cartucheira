@@ -8,6 +8,7 @@ using System.Windows.Input;
 using CartucheiraVideo.Configuration;
 using CartucheiraVideo.Core;
 using CartucheiraVideo.Engine;
+using CartucheiraVideo.Infrastructure.Cartucheira;
 using CartucheiraVideo.Infrastructure.Livewire;
 using CartucheiraVideo.Presentation.Mvvm;
 using CartucheiraVideo.Presentation.Views;
@@ -95,6 +96,23 @@ namespace CartucheiraVideo.Presentation.ViewModels;
 /// <see cref="SetCrossfadeDuration"/>. <see cref="TriggerExternalCommand"/> também ganha de volta a
 /// correção pós-entrega da v1 (F2/teclado passa pelo mesmo caminho de crossfade que o clique manual,
 /// em vez de cortar seco direto).
+///
+/// Sprint Cartucheira-Dashboard (2026-11-23, pedido do usuário "vamos colocar eles no dashboard?
+/// [...] cada programa a gente coloca lá uma pasta raiz de áudios [...] organizar o posicionamento
+/// das teclinhas [...] e renomear, colocar cor"): <see cref="LoadPrograms"/> agora checa
+/// <see cref="CartucheiraFileStore.HasDashboardIndex"/> na pasta raiz — se a dashboard web já
+/// gerenciou aquela raiz (tem <c>programs.json</c>), os Programas/cartuchos vêm de lá (ordem/título/
+/// cor escolhidos na dashboard, ver <see cref="LoadCartridgesFromDashboard"/>); senão, continua
+/// escaneando subpasta/arquivo crus do jeito antigo (<see cref="LoadCartridgesFromRealFolder"/>) —
+/// as duas raízes (Vinhetas/Trilhas) migram pra dashboard-managed de forma independente, no momento
+/// em que alguém cria o primeiro Programa pela dashboard naquela raiz especificamente. Decisão
+/// confirmada com o usuário (AskUserQuestion: "Mantém os dois funcionando juntos") de NÃO remover o
+/// Ctrl+clique direito → Cor do app desktop: pra um Programa dashboard-managed,
+/// <see cref="OnCartridgeOverrideChanged"/> grava a cor escolhida ali DIRETO no <c>cartuchos.json</c>
+/// (via <see cref="CartucheiraFileStore.SetCartridgeColor"/>, mesmo arquivo que a dashboard edita),
+/// nunca no <c>CartridgeOverride</c> legado — evita duas fontes de verdade pra cor do mesmo
+/// cartucho. Loop continua sempre só no <c>CartridgeOverride</c> legado (a dashboard não gerencia
+/// loop nesta sprint), dashboard-managed ou não.
 /// </summary>
 public sealed class AudioBankViewModel : ViewModelBase, IDisposable
 {
@@ -110,6 +128,7 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
     private string _name;
     private string? _rootFolderPath;
     private string? _currentProgramPath;
+    private string? _currentProgramId;
     private string _currentProgramName = string.Empty;
     private VtButtonViewModel? _nowPlaying;
     private bool _isInsideProgram;
@@ -426,6 +445,17 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Sprint Cartucheira-Dashboard (2026-11-23): cartucho dashboard-managed — a cor vai direto
+        // pro cartuchos.json (mesmo arquivo que a dashboard web edita), nunca pro CartridgeOverride
+        // legado (ver comentário de classe: duas fontes de verdade pra cor divergiriam). O Loop
+        // continua sempre no legado (null no parâmetro de cor = "não gravar/sobrescrever cor ali").
+        if (button.DashboardCartridgeId is not null && _currentProgramId is not null && !string.IsNullOrWhiteSpace(_rootFolderPath))
+        {
+            CartucheiraFileStore.SetCartridgeColor(_rootFolderPath, _currentProgramId, button.DashboardCartridgeId, button.ColorOverride);
+            _persistOverride(button.FilePath, null, button.IsLoopEnabled);
+            return;
+        }
+
         _persistOverride(button.FilePath, button.ColorOverride, button.IsLoopEnabled);
     }
 
@@ -480,6 +510,7 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
     {
         Stop();
         _currentProgramPath = null;
+        _currentProgramId = null;
         CurrentProgramName = string.Empty;
         IsInsideProgram = false;
         Buttons.Clear();
@@ -526,9 +557,27 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // Sprint Cartucheira-Dashboard (2026-11-23): raiz já gerenciada pela dashboard web (tem
+        // programs.json) — Programas/ordem/cor vêm de lá, nunca mais de um scan cru de subpastas.
+        if (CartucheiraFileStore.HasDashboardIndex(_rootFolderPath))
+        {
+            var (ok, _, dashboardPrograms) = CartucheiraFileStore.ListPrograms(_rootFolderPath);
+            if (ok)
+            {
+                foreach (var program in dashboardPrograms.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    var folderPath = Path.Combine(_rootFolderPath, program.FolderName);
+                    Programs.Add(new CartucheiraProgramViewModel(program.Name, folderPath, program.Id, OpenProgram));
+                }
+            }
+
+            HasPrograms = Programs.Count > 0;
+            return;
+        }
+
         foreach (var dir in Directory.EnumerateDirectories(_rootFolderPath).OrderBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase))
         {
-            Programs.Add(new CartucheiraProgramViewModel(Path.GetFileName(dir), dir, OpenProgram));
+            Programs.Add(new CartucheiraProgramViewModel(Path.GetFileName(dir), dir, id: null, OpenProgram));
         }
 
         HasPrograms = Programs.Count > 0;
@@ -538,12 +587,17 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
     {
         Stop();
         _currentProgramPath = program.Path;
+        _currentProgramId = program.Id;
         CurrentProgramName = program.Name;
         IsInsideProgram = true;
 
         if (program.Path is null)
         {
             LoadSampleCartridges(program.Name);
+        }
+        else if (program.Id is not null)
+        {
+            LoadCartridgesFromDashboard(program.Id, program.Path);
         }
         else
         {
@@ -598,6 +652,70 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// Sprint Cartucheira-Dashboard (2026-11-23) — mesmo papel de
+    /// <see cref="LoadCartridgesFromRealFolder"/>, mas pra um Programa gerenciado pela dashboard web:
+    /// ordem/título/cor vêm do <c>cartuchos.json</c> (<see cref="CartucheiraFileStore.ListCartridges"/>,
+    /// já ordenado), nunca de ordem alfabética de arquivo. A cor de cada cartucho é a do próprio
+    /// registro (<c>cartridge.Color</c>, ou a cor padrão do banco se nenhuma foi escolhida ainda na
+    /// dashboard) — <see cref="ApplyOverrideIfAny"/> NUNCA é chamado aqui de propósito (ele aplicaria
+    /// o <c>CartridgeOverride</c> legado por cima, que pra um Programa dashboard-managed não é mais a
+    /// fonte de verdade da cor — ver comentário de classe). O Loop, esse sim, continua vindo do
+    /// <c>CartridgeOverride</c> legado (chave: caminho do arquivo) — a dashboard não mexe em loop.
+    /// </summary>
+    private void LoadCartridgesFromDashboard(string programId, string programFolderPath)
+    {
+        Buttons.Clear();
+        _selectedPads.Clear();
+
+        if (string.IsNullOrWhiteSpace(_rootFolderPath))
+        {
+            HasButtons = false;
+            return;
+        }
+
+        var (ok, _, cartridges) = CartucheiraFileStore.ListCartridges(_rootFolderPath, programId);
+        if (!ok)
+        {
+            HasButtons = false;
+            return;
+        }
+
+        var number = 1;
+        foreach (var cartridge in cartridges)
+        {
+            var filePath = Path.Combine(programFolderPath, cartridge.FileName);
+            var mediaItem = new MediaItem
+            {
+                Name = cartridge.Title,
+                Path = filePath,
+                MediaType = MediaType.Audio,
+                FileSize = SafeFileSize(filePath)
+            };
+
+            var pad = new AudioPad
+            {
+                Name = cartridge.Title,
+                Media = mediaItem,
+                Color = string.IsNullOrWhiteSpace(cartridge.Color) ? PadColorFor(Name) : cartridge.Color,
+                Category = CurrentProgramName,
+                DashboardCartridgeId = cartridge.Id
+            };
+
+            var padViewModel = new VtButtonViewModel(number, pad, PlayPad, OnCartridgeOverrideChanged, ToggleSelection);
+
+            var loopEnabled = _overridesByPath.TryGetValue(filePath, out var legacyOverride) && legacyOverride.LoopEnabled;
+            padViewModel.ApplyOverride(colorOverride: null, loopEnabled);
+
+            Buttons.Add(padViewModel);
+            number++;
+
+            _ = LoadDurationAsync(padViewModel, filePath);
+        }
+
+        HasButtons = Buttons.Count > 0;
+    }
+
+    /// <summary>
     /// Lê a duração real do arquivo em segundo plano (ver Engine.AudioEngine.GetDurationAsync) e
     /// aplica no cartucho quando terminar — cada cartucho é independente, então um arquivo
     /// corrompido/lento não atrasa a duração dos outros. Captura qualquer exceção de propósito: o
@@ -643,7 +761,7 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
     {
         foreach (var (programName, _) in SampleProgramsFor(Name))
         {
-            Programs.Add(new CartucheiraProgramViewModel(programName, path: null, OpenProgram));
+            Programs.Add(new CartucheiraProgramViewModel(programName, path: null, id: null, OpenProgram));
         }
     }
 

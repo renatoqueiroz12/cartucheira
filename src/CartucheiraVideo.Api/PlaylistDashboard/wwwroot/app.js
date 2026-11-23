@@ -22,6 +22,8 @@ const VIEW_META = {
   "programs-view": { title: "Programas", subtitle: "Organização de materiais por Programa e Data." },
   "teleprompter-view": { title: "Teleprompter", subtitle: "Controle remoto do texto do teleprompter — de qualquer PC na rede local." },
   "gc-view": { title: "GC", subtitle: "Monitoramento e controle remoto do GC (gerador de caracteres) enviado pro vMix." },
+  "vinhetas-view": { title: "Vinhetas", subtitle: "Programas e cartuchos de Vinhetas — upload, posição, nome e cor das teclinhas." },
+  "trilhas-view": { title: "Trilhas", subtitle: "Programas e cartuchos de Trilhas — upload, posição, nome e cor das teclinhas." },
   "users-view": { title: "Usuários", subtitle: "Quem acessa a dashboard e quais Programas cada um vê/edita." },
 };
 
@@ -568,6 +570,295 @@ async function uploadFile(path, file) {
   return response.json();
 }
 
+// Sprint Cartucheira-Dashboard (2026-11-23, pedido do usuário "o menu vinhetas, trilhas, parece
+// estar meio incompleto. Vamos colocar eles no dashboard? Tem dois módulos lá, vinhetas e trilhas
+// [...] a gente cria os programas e cada programa a gente coloca lá uma pasta raiz de áudios e
+// cada programa mesmo formato de upload de vídeo [...] aí lá do dashboard eu posso organizar o
+// posicionamento das teclinhas [...] e renomear, colocar cor"): os dois módulos (Vinhetas/Trilhas)
+// são estruturalmente idênticos — só muda o prefixo dos ids no HTML e o segmento "{bank}" da rota
+// (/api/cartucheira/{bank}/...) — por isso uma função fábrica só, chamada uma vez por banco, em vez
+// de duplicar toda essa lógica duas vezes. Mesmo princípio de reorder por drag-and-drop nativo
+// HTML5 de renderLaudas/reorderLaudas (ver lá), reaproveitando até as mesmas classes CSS
+// (.laudas-list/.lauda-title/.lauda-body/.drag-handle/.dragging/.drag-over) — a estrutura visual de
+// uma linha é a mesma (alça + título + detalhe), só o conteúdo que muda.
+const CART_DEFAULT_COLOR = { vinhetas: "#2D7DFF", trilhas: "#2DBE60" };
+
+/// Cor pode vir nula (nenhuma escolhida ainda) ou em formato ARGB8 ("#FF2D7DFF", como o app desktop
+/// grava via ColorDialog) — <input type="color"> só aceita "#RRGGBB" (6 dígitos), então aqui tira o
+/// par de dígitos de alfa quando existir. Nunca manda ARGB de volta pro servidor (ver
+/// cartSetCartridgeColor abaixo) — o valor que volta do próprio <input type="color"> já é RGB puro,
+/// e o conversor do lado do app desktop (HexColorToBrushConverter) aceita os dois formatos.
+function cartNormalizeColorForInput(bank, hex) {
+  if (!hex) return CART_DEFAULT_COLOR[bank];
+  const clean = hex.replace("#", "");
+  if (clean.length === 8) return `#${clean.slice(2)}`;
+  if (clean.length === 6) return `#${clean}`;
+  return CART_DEFAULT_COLOR[bank];
+}
+
+function createCartucheiraModule(bank) {
+  const programsSection = document.getElementById(`${bank}-programs-section`);
+  const cartridgesSection = document.getElementById(`${bank}-cartridges-section`);
+  const programsList = document.getElementById(`${bank}-programs-list`);
+  const newProgramForm = document.getElementById(`${bank}-new-program-form`);
+  const newProgramNameInput = document.getElementById(`${bank}-new-program-name`);
+  const notAdminHint = document.getElementById(`${bank}-not-admin-hint`);
+  const noRootHint = document.getElementById(`${bank}-no-root-hint`);
+  const backButton = document.getElementById(`${bank}-back-button`);
+  const selectedProgramNameEl = document.getElementById(`${bank}-selected-program-name`);
+  const uploadInput = document.getElementById(`${bank}-upload-input`);
+  const uploadStatus = document.getElementById(`${bank}-upload-status`);
+  const cartridgesList = document.getElementById(`${bank}-cartridges-list`);
+  const cartridgesError = document.getElementById(`${bank}-cartridges-error`);
+
+  let selectedProgramId = null;
+  let currentCartridges = [];
+  let draggedCartridgeId = null;
+
+  function showModuleError(message) {
+    cartridgesError.textContent = message;
+    cartridgesError.classList.remove("hidden");
+  }
+
+  function clearModuleError() {
+    cartridgesError.classList.add("hidden");
+    cartridgesError.textContent = "";
+  }
+
+  async function loadPrograms() {
+    clearModuleError();
+    try {
+      const programs = await apiGet(`/api/cartucheira/${bank}/programs`);
+      programsList.innerHTML = "";
+      noRootHint.classList.toggle("hidden", programs.length > 0);
+      programs.forEach((program) => {
+        const item = document.createElement("li");
+        item.textContent = program.name;
+        item.className = "clickable";
+        item.addEventListener("click", () => openProgram(program));
+        programsList.appendChild(item);
+      });
+    } catch (err) {
+      showModuleError(err.message);
+    }
+  }
+
+  async function openProgram(program) {
+    selectedProgramId = program.id;
+    selectedProgramNameEl.textContent = program.name;
+    programsSection.classList.add("hidden");
+    cartridgesSection.classList.remove("hidden");
+    await loadCartridges();
+  }
+
+  function backToPrograms() {
+    selectedProgramId = null;
+    cartridgesSection.classList.add("hidden");
+    programsSection.classList.remove("hidden");
+  }
+
+  async function loadCartridges() {
+    clearModuleError();
+    try {
+      currentCartridges = await apiGet(`/api/cartucheira/${bank}/cartridges?programId=${encodeURIComponent(selectedProgramId)}`);
+      renderCartridges();
+    } catch (err) {
+      showModuleError(err.message);
+    }
+  }
+
+  /// Mesmo princípio de drag-and-drop nativo HTML5 de renderLaudas (ver lá pro comentário completo)
+  /// — soltar sobre outro cartucho insere ANTES dele na nova ordem.
+  function renderCartridges() {
+    cartridgesList.innerHTML = "";
+    currentCartridges.forEach((cartridge) => {
+      const item = document.createElement("li");
+      item.draggable = true;
+      item.dataset.cartridgeId = cartridge.id;
+
+      const handle = document.createElement("span");
+      handle.className = "drag-handle";
+      handle.textContent = "⠿";
+      handle.title = "Arraste pra reordenar";
+
+      const body = document.createElement("div");
+      body.className = "lauda-body";
+      const title = document.createElement("div");
+      title.className = "lauda-title clickable";
+      title.textContent = `${cartridge.order}. ${cartridge.title}`;
+      title.title = "Clique pra renomear";
+      title.addEventListener("click", (event) => {
+        event.stopPropagation();
+        renameCartridge(cartridge);
+      });
+      const details = document.createElement("div");
+      details.className = "lauda-details";
+      details.textContent = cartridge.fileName;
+      body.appendChild(title);
+      body.appendChild(details);
+
+      const colorInput = document.createElement("input");
+      colorInput.type = "color";
+      colorInput.className = "cart-color-input";
+      colorInput.value = cartNormalizeColorForInput(bank, cartridge.color);
+      colorInput.title = "Cor do cartucho";
+      colorInput.addEventListener("click", (event) => event.stopPropagation());
+      colorInput.addEventListener("change", () => setCartridgeColor(cartridge, colorInput.value));
+
+      const deleteButton = document.createElement("button");
+      deleteButton.type = "button";
+      deleteButton.className = "danger";
+      deleteButton.textContent = "Apagar";
+      deleteButton.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        if (!window.confirm(`Apagar o cartucho "${cartridge.title}"? Esta ação não pode ser desfeita.`)) {
+          return;
+        }
+        await deleteCartridge(cartridge);
+      });
+
+      const actions = document.createElement("div");
+      actions.className = "cart-row-actions";
+      actions.appendChild(colorInput);
+      actions.appendChild(deleteButton);
+
+      item.appendChild(handle);
+      item.appendChild(body);
+      item.appendChild(actions);
+
+      item.addEventListener("dragstart", (event) => {
+        draggedCartridgeId = cartridge.id;
+        item.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+      });
+      item.addEventListener("dragend", () => {
+        item.classList.remove("dragging");
+        draggedCartridgeId = null;
+      });
+      item.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        item.classList.add("drag-over");
+      });
+      item.addEventListener("dragleave", () => item.classList.remove("drag-over"));
+      item.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        item.classList.remove("drag-over");
+        if (!draggedCartridgeId || draggedCartridgeId === cartridge.id) {
+          return;
+        }
+        await reorderCartridges(draggedCartridgeId, cartridge.id);
+      });
+
+      cartridgesList.appendChild(item);
+    });
+  }
+
+  async function reorderCartridges(draggedId, targetId) {
+    clearModuleError();
+    const ids = currentCartridges.map((c) => c.id);
+    const fromIndex = ids.indexOf(draggedId);
+    const toIndex = ids.indexOf(targetId);
+    if (fromIndex === -1 || toIndex === -1) {
+      return;
+    }
+
+    ids.splice(fromIndex, 1);
+    ids.splice(ids.indexOf(targetId), 0, draggedId);
+
+    try {
+      currentCartridges = await apiPut(`/api/cartucheira/${bank}/cartridges/reorder`, { programId: selectedProgramId, orderedIds: ids });
+      renderCartridges();
+    } catch (err) {
+      showModuleError(err.message);
+      await loadCartridges();
+    }
+  }
+
+  async function renameCartridge(cartridge) {
+    const newTitle = window.prompt("Novo nome do cartucho:", cartridge.title);
+    if (newTitle === null || newTitle.trim() === "" || newTitle === cartridge.title) {
+      return;
+    }
+
+    try {
+      await apiPost(`/api/cartucheira/${bank}/cartridges/rename`, { programId: selectedProgramId, cartridgeId: cartridge.id, title: newTitle });
+      await loadCartridges();
+    } catch (err) {
+      showModuleError(err.message);
+    }
+  }
+
+  async function setCartridgeColor(cartridge, colorHex) {
+    try {
+      await apiPost(`/api/cartucheira/${bank}/cartridges/color`, { programId: selectedProgramId, cartridgeId: cartridge.id, color: colorHex });
+      await loadCartridges();
+    } catch (err) {
+      showModuleError(err.message);
+    }
+  }
+
+  async function deleteCartridge(cartridge) {
+    try {
+      await apiDelete(`/api/cartucheira/${bank}/cartridges?programId=${encodeURIComponent(selectedProgramId)}&cartridgeId=${encodeURIComponent(cartridge.id)}`);
+      await loadCartridges();
+    } catch (err) {
+      showModuleError(err.message);
+    }
+  }
+
+  async function uploadFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) {
+      return;
+    }
+
+    uploadStatus.classList.remove("hidden");
+    for (const file of files) {
+      uploadStatus.textContent = `Enviando "${file.name}"...`;
+      try {
+        await uploadFile(`/api/cartucheira/${bank}/cartridges/upload?programId=${encodeURIComponent(selectedProgramId)}&filename=${encodeURIComponent(file.name)}`, file);
+      } catch (err) {
+        showModuleError(`Falha ao enviar "${file.name}": ${err.message}`);
+      }
+    }
+
+    uploadStatus.textContent = "";
+    uploadStatus.classList.add("hidden");
+    uploadInput.value = "";
+    await loadCartridges();
+  }
+
+  newProgramForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    clearModuleError();
+    try {
+      await apiPost(`/api/cartucheira/${bank}/programs`, { name: newProgramNameInput.value });
+      newProgramNameInput.value = "";
+      await loadPrograms();
+    } catch (err) {
+      showModuleError(err.message);
+    }
+  });
+
+  backButton.addEventListener("click", backToPrograms);
+  uploadInput.addEventListener("change", () => uploadFiles(uploadInput.files));
+
+  return {
+    setAdminUi(isAdmin) {
+      newProgramForm.classList.toggle("hidden", !isAdmin);
+      notAdminHint.classList.toggle("hidden", isAdmin);
+    },
+    async activate() {
+      clearModuleError();
+      backToPrograms();
+      await loadPrograms();
+    },
+  };
+}
+
+const vinhetasModule = createCartucheiraModule("vinhetas");
+const trilhasModule = createCartucheiraModule("trilhas");
+
 // Sprint 5 (2026-11-16) — login/sessão. showLoginSection/showAppContent controlam qual tela
 // aparece; checkAuthAndInit roda uma vez ao carregar a página E de novo depois de um login
 // bem-sucedido (ver login-form abaixo).
@@ -606,6 +897,13 @@ function showAppContent() {
   // Sprint GC-Campos-Fixos (2026-11-17) — só Admin edita os campos do GC padrão de um Programa já
   // criado, mesmo critério de "Criar Programa" acima.
   programGcEditButton.classList.toggle("hidden", !currentUser.isAdmin);
+
+  // Sprint Cartucheira-Dashboard (2026-11-23) — mesmo critério "só Admin cria Programa novo" das
+  // Vinhetas/Trilhas (upload/renomear/cor/reordenar/apagar cartucho continuam liberados pra
+  // qualquer usuário logado, sem checklist de Programas liberados — ver comentário de classe do
+  // Coordinator).
+  vinhetasModule.setAdminUi(currentUser.isAdmin);
+  trilhasModule.setAdminUi(currentUser.isAdmin);
 
   // Sprint 6 (2026-11-16) — menu "Usuários" só existe pra Admin (decisão confirmada: só Admin
   // gerencia usuários/permissões).
@@ -650,6 +948,10 @@ navItems.forEach((item) => {
       startTeleprompterStream();
     } else if (viewId === "gc-view") {
       startGcStream();
+    } else if (viewId === "vinhetas-view") {
+      await vinhetasModule.activate();
+    } else if (viewId === "trilhas-view") {
+      await trilhasModule.activate();
     }
   });
 });

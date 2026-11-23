@@ -109,6 +109,9 @@ public sealed class VtButtonViewModel : ViewModelBase
     /// <summary>Caminho completo do arquivo de áudio real por trás deste cartucho — usado pelo AudioBankViewModel pra carregar no Engine e como chave de persistência dos overrides. Vazio nos cartuchos de exemplo (mockup).</summary>
     public string FilePath => _pad.Media.Path;
 
+    /// <summary>Sprint Cartucheira-Dashboard (2026-11-23) — passthrough de <see cref="Core.AudioPad.DashboardCartridgeId"/>: não-nulo quando este cartucho vem de um Programa gerenciado pela dashboard web (ver comentário completo lá).</summary>
+    public string? DashboardCartridgeId => _pad.DashboardCartridgeId;
+
     /// <summary>
     /// Verdadeiro quando este é o cartucho tocando agora no banco (só um por vez dentro do mesmo
     /// banco — controlado externamente pelo <see cref="AudioBankViewModel"/>, nunca por si mesmo).

@@ -291,7 +291,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         // passado direto, mesmo princípio de _teleprompter. getGcFieldLayout segue o mesmo padrão de
         // getBackgroundArtPresets (lido de novo a cada requisição, reflete qualquer edição salva em
         // Configurações → GC sem precisar reiniciar a dashboard).
-        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(SetStatus, () => _persistedSettings.BackgroundArtPresets, _teleprompter, _gc, () => _persistedSettings.Gc.FieldLayout);
+        // Sprint Cartucheira-Dashboard (2026-11-23): getVinhetasRootFolder/getTrilhasRootFolder mesmo
+        // padrão — lidas de novo a cada requisição de /api/cartucheira/*, refletem a pasta raiz salva
+        // em Configurações → Cartucheira sem precisar reiniciar a dashboard (ver comentário completo
+        // no campo _getVinhetasRootFolder do Coordinator).
+        _playlistDashboardCoordinator = new PlaylistDashboardCoordinator(
+            SetStatus,
+            () => _persistedSettings.BackgroundArtPresets,
+            _teleprompter,
+            _gc,
+            () => _persistedSettings.Gc.FieldLayout,
+            () => _persistedSettings.Cartridges.VinhetasFolderPath,
+            () => _persistedSettings.Cartridges.TrilhasFolderPath);
         ReapplyPlaylistDashboardSettings();
 
         ApplyExternalTriggerSettings();
@@ -368,7 +379,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// arquitetura/versao-atual.md (doc do projeto) pro numero mais recente entregue, fonte de
     /// verdade entre sessoes.
     /// </summary>
-    public string VersionLabel => "v1.0.112";
+    public string VersionLabel => "v1.0.113";
 
     public DeckViewModel DeckA { get; }
 

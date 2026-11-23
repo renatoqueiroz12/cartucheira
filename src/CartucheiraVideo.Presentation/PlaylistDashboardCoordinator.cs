@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using CartucheiraVideo.Api.PlaylistDashboard;
 using CartucheiraVideo.Configuration;
+using CartucheiraVideo.Infrastructure.Cartucheira;
 using CartucheiraVideo.Infrastructure.Playlist;
 
 namespace CartucheiraVideo.Presentation;
@@ -84,6 +85,25 @@ namespace CartucheiraVideo.Presentation;
 /// nome→valor submetido por Lauda ou Programa passa por
 /// <see cref="FilterGcFieldsToGlobalFieldLayout"/>, que descarta qualquer chave que não exista na
 /// lista global — ela é que virou o schema único, não mais um por Programa.
+///
+/// **Módulo Cartucheira (Vinhetas/Trilhas) — Sprint Cartucheira-Dashboard (2026-11-23, pedido do
+/// usuário "o menu vinhetas, trilhas, parece estar meio incompleto. Vamos colocar eles no
+/// dashboard? [...] cada programa a gente coloca lá uma pasta raiz de áudios e cada programa mesmo
+/// formato de upload de vídeo [...] organizar o posicionamento das teclinhas [...] e renomear,
+/// colocar cor")**: dois módulos novos, estrutural e visualmente iguais ao Playlist de vídeo mas
+/// SEM a camada Edição/Data (um cartucho de Vinhetas/Trilhas é permanente, não por dia) — ver
+/// <c>Infrastructure.Cartucheira.CartucheiraFileStore</c> pro formato em disco. Reaproveita a MESMA
+/// pasta raiz já configurada em Configurações → Cartucheira (<c>CartridgeSettingsSnapshot.
+/// VinhetasFolderPath</c>/<c>TrilhasFolderPath</c>) — a dashboard passa a gerenciar Programa
+/// (subpasta) e cartucho (arquivo + ordem/título/cor) DENTRO dessa raiz, no lugar de o operador
+/// criar subpasta/arrastar arquivo manualmente no Explorer; uma raiz nunca tocada pela dashboard
+/// continua funcionando do jeito antigo no app desktop (ver <c>CartucheiraFileStore.
+/// HasDashboardIndex</c> e <c>ViewModels.AudioBankViewModel</c>) — decisão confirmada com o usuário
+/// (AskUserQuestion: "Mantém os dois funcionando juntos") de NÃO descontinuar o Ctrl+clique direito
+/// de Cor no app desktop; quando o Programa aberto é dashboard-managed, o app desktop grava a cor
+/// escolhida ali DIRETO no <c>cartuchos.json</c> (mesmo arquivo que a dashboard lê/escreve), em vez
+/// do antigo <c>CartridgeOverride</c> — as duas pontas ficam sempre consistentes porque escrevem no
+/// mesmo lugar, nunca em dois arquivos que podem divergir.
 /// </summary>
 public sealed class PlaylistDashboardCoordinator : IDisposable
 {
@@ -102,6 +122,22 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
 
     /// <summary>Sprint GC (2026-11-17) — lista de campos do mockup configurável (Configurações → GC), mesmo padrão de <see cref="_getBackgroundArtPresets"/> (lido de novo a cada requisição, nunca cacheado).</summary>
     private readonly Func<IReadOnlyList<GcFieldLayout>> _getGcFieldLayout;
+
+    /// <summary>
+    /// Sprint Cartucheira-Dashboard (2026-11-23, pedido do usuário "vamos colocar eles no
+    /// dashboard? [...] cada programa a gente coloca lá uma pasta raiz de áudios"): pasta raiz de
+    /// cada banco (Configurações → Cartucheira, <c>Configuration.CartridgeSettingsSnapshot.
+    /// VinhetasFolderPath</c>/<c>TrilhasFolderPath</c>) — mesmo princípio de
+    /// <see cref="_getGcFieldLayout"/>, lida de novo a CADA requisição (nunca cacheada): assim a
+    /// dashboard de Vinhetas/Trilhas passa a funcionar na hora que o Admin salva a pasta raiz em
+    /// Configurações, sem precisar reiniciar o servidor HTTP (diferente da pasta raiz da Playlist de
+    /// vídeo, que precisa de <see cref="ApplySettings"/> de novo — aqui não vale a pena forçar o
+    /// mesmo reinício só por causa de uma Configuração que não tem nada a ver com login/porta).
+    /// </summary>
+    private readonly Func<string?> _getVinhetasRootFolder;
+
+    /// <summary>Mesma ideia de <see cref="_getVinhetasRootFolder"/>, pro banco Trilhas.</summary>
+    private readonly Func<string?> _getTrilhasRootFolder;
 
     private PlaylistDashboardHost? _host;
 
@@ -143,13 +179,17 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         Func<IReadOnlyList<BackgroundArtPreset>> getBackgroundArtPresets,
         ViewModels.TeleprompterViewModel teleprompter,
         ViewModels.GcViewModel gc,
-        Func<IReadOnlyList<GcFieldLayout>> getGcFieldLayout)
+        Func<IReadOnlyList<GcFieldLayout>> getGcFieldLayout,
+        Func<string?> getVinhetasRootFolder,
+        Func<string?> getTrilhasRootFolder)
     {
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
         _getBackgroundArtPresets = getBackgroundArtPresets ?? throw new ArgumentNullException(nameof(getBackgroundArtPresets));
         _teleprompter = teleprompter ?? throw new ArgumentNullException(nameof(teleprompter));
         _gc = gc ?? throw new ArgumentNullException(nameof(gc));
         _getGcFieldLayout = getGcFieldLayout ?? throw new ArgumentNullException(nameof(getGcFieldLayout));
+        _getVinhetasRootFolder = getVinhetasRootFolder ?? throw new ArgumentNullException(nameof(getVinhetasRootFolder));
+        _getTrilhasRootFolder = getTrilhasRootFolder ?? throw new ArgumentNullException(nameof(getTrilhasRootFolder));
 
         // Sprint Controle-Remoto-TP, parte 2 (2026-11-17): assinado uma única vez aqui (a instância
         // de _teleprompter nunca troca durante a vida do programa — ver comentário do parâmetro
@@ -247,6 +287,34 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         host.RegisterApiRoute("POST", "/api/gc/manual", (_, body, _) => HandleSetGcManual(body));
         host.RegisterApiRoute("POST", "/api/gc/fields", (_, body, _) => HandleSetGcFields(body));
         var gcSseChannel = host.RegisterSseRoute("GET", "/api/gc/stream");
+
+        // Sprint Cartucheira-Dashboard (2026-11-23, pedido do usuário "o menu vinhetas, trilhas,
+        // parece estar meio incompleto. Vamos colocar eles no dashboard? Tem dois módulos lá,
+        // vinhetas e trilhas [...] cria lá o programa [...] e nele eu vou colocando os áudios [...]
+        // organizar o posicionamento das teclinhas [...] e renomear, colocar cor"): dois módulos
+        // idênticos na forma (mesmo CartucheiraFileStore, só a pasta raiz muda), registrados num
+        // laço só — cada rota existe duas vezes (uma com "vinhetas" no caminho, outra com "trilhas"),
+        // sempre resolvendo a pasta raiz do banco certo NA HORA da requisição (ver comentário de
+        // _getVinhetasRootFolder: nunca cacheada, diferente de "rootFolder" acima que é da Playlist
+        // de vídeo). Sem checagem de IsAdmin/HasAccessToProgram pra cartuchos (upload/renomear/cor/
+        // reordenar/apagar) — mesmo critério do Teleprompter/GC (por estúdio, não por Programa
+        // individual); só CRIAR um Programa novo é Admin-only, mesmo critério do Playlist de vídeo
+        // (ver HandleCreateCartucheiraProgram).
+        foreach (var (bankKey, getRootFolder) in new (string BankKey, Func<string?> GetRootFolder)[]
+                 {
+                     ("vinhetas", _getVinhetasRootFolder),
+                     ("trilhas", _getTrilhasRootFolder),
+                 })
+        {
+            host.RegisterApiRoute("GET", $"/api/cartucheira/{bankKey}/programs", (_, _, user) => HandleListCartucheiraPrograms(getRootFolder(), user));
+            host.RegisterApiRoute("POST", $"/api/cartucheira/{bankKey}/programs", (_, body, user) => HandleCreateCartucheiraProgram(getRootFolder(), body, user));
+            host.RegisterApiRoute("GET", $"/api/cartucheira/{bankKey}/cartridges", (query, _, user) => HandleListCartridges(getRootFolder(), query, user));
+            host.RegisterApiRoute("POST", $"/api/cartucheira/{bankKey}/cartridges/rename", (_, body, user) => HandleRenameCartridge(getRootFolder(), body, user));
+            host.RegisterApiRoute("POST", $"/api/cartucheira/{bankKey}/cartridges/color", (_, body, user) => HandleSetCartridgeColor(getRootFolder(), body, user));
+            host.RegisterApiRoute("PUT", $"/api/cartucheira/{bankKey}/cartridges/reorder", (_, body, user) => HandleReorderCartridges(getRootFolder(), body, user));
+            host.RegisterApiRoute("DELETE", $"/api/cartucheira/{bankKey}/cartridges", (query, _, user) => HandleDeleteCartridge(getRootFolder(), query, user));
+            host.RegisterUploadRoute("PUT", $"/api/cartucheira/{bankKey}/cartridges/upload", (query, stream, user) => HandleUploadCartridge(getRootFolder(), query, stream, user));
+        }
 
         var result = host.Start();
         if (result.Succeeded)
@@ -848,6 +916,206 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new UploadResultDto(savedFileName), JsonOptions));
     }
 
+    // ------------------------------------------------------------------------------------------
+    // Cartucheira (Vinhetas/Trilhas) — Sprint Cartucheira-Dashboard (2026-11-23). Ver comentário
+    // completo no laço de registro de rotas (ApplySettings) e na classe CartucheiraFileStore.
+    // Todo handler abaixo recebe a pasta raiz do BANCO já resolvida (vinhetas ou trilhas; a função
+    // em si não sabe qual dos dois é) — "rootFolder" nulo/vazio é um caso honesto (Admin ainda não
+    // configurou aquele banco em Configurações → Cartucheira), tratado como erro 400 comum, não uma
+    // exceção.
+    // ------------------------------------------------------------------------------------------
+
+    private static PlaylistDashboardResponse HandleListCartucheiraPrograms(string? rootFolder, AuthenticatedDashboardUser user)
+    {
+        if (string.IsNullOrWhiteSpace(rootFolder))
+        {
+            return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(Array.Empty<CartucheiraProgramDto>(), JsonOptions));
+        }
+
+        var (ok, error, programs) = CartucheiraFileStore.ListPrograms(rootFolder);
+        if (!ok)
+        {
+            return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
+        }
+
+        var dtos = programs.Select(p => new CartucheiraProgramDto(p.Id, p.Name)).ToList();
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(dtos, JsonOptions));
+    }
+
+    /// <summary>Só Admin cria Programa novo — mesmo critério de <see cref="HandleCreateProgram"/> (Playlist de vídeo): evita qualquer usuário comum criando pastas à toa na raiz configurada.</summary>
+    private static PlaylistDashboardResponse HandleCreateCartucheiraProgram(string? rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        if (!user.IsAdmin)
+        {
+            return PlaylistDashboardResponse.PlainTextError(403, "só Administradores podem criar Programas novos — peça pra um Admin criar e liberar o acesso pra você.");
+        }
+
+        if (string.IsNullOrWhiteSpace(rootFolder))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "pasta raiz deste banco ainda não foi configurada em Configurações → Cartucheira, no app da Cartucheira (desktop).");
+        }
+
+        CreateCartucheiraProgramRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<CreateCartucheiraProgramRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (esperado JSON com \"name\").");
+        }
+
+        if (request is null || string.IsNullOrWhiteSpace(request.Name))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "nome do Programa não pode ser vazio.");
+        }
+
+        var (ok, error, program) = CartucheiraFileStore.CreateProgram(rootFolder, request.Name);
+        if (!ok || program is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(500, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(new CartucheiraProgramDto(program.Id, program.Name), JsonOptions), 201);
+    }
+
+    private static PlaylistDashboardResponse HandleListCartridges(string? rootFolder, string? queryString, AuthenticatedDashboardUser user)
+    {
+        var programId = ParseQueryValue(queryString, "programId");
+        if (string.IsNullOrWhiteSpace(rootFolder) || string.IsNullOrWhiteSpace(programId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" é obrigatório.");
+        }
+
+        var (ok, error, cartridges) = CartucheiraFileStore.ListCartridges(rootFolder, programId);
+        if (!ok)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(cartridges.Select(ToCartridgeDto).ToList(), JsonOptions));
+    }
+
+    private static PlaylistDashboardResponse HandleRenameCartridge(string? rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        RenameCartridgeRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<RenameCartridgeRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (string.IsNullOrWhiteSpace(rootFolder) || request is null || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.CartridgeId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"cartridgeId\" são obrigatórios.");
+        }
+
+        var (ok, error, cartridge) = CartucheiraFileStore.RenameCartridge(rootFolder, request.ProgramId, request.CartridgeId, request.Title ?? string.Empty);
+        if (!ok || cartridge is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToCartridgeDto(cartridge), JsonOptions));
+    }
+
+    /// <summary>"color" vazio/nulo no corpo volta o cartucho pra cor padrão do banco (remove o override) — mesmo princípio do seletor de cor nativo (ColorMenuItem_Click) no app desktop, que também não força nenhuma cor.</summary>
+    private static PlaylistDashboardResponse HandleSetCartridgeColor(string? rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        SetCartridgeColorRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<SetCartridgeColorRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (string.IsNullOrWhiteSpace(rootFolder) || request is null || string.IsNullOrWhiteSpace(request.ProgramId) || string.IsNullOrWhiteSpace(request.CartridgeId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"cartridgeId\" são obrigatórios.");
+        }
+
+        var (ok, error, cartridge) = CartucheiraFileStore.SetCartridgeColor(rootFolder, request.ProgramId, request.CartridgeId, request.Color);
+        if (!ok || cartridge is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToCartridgeDto(cartridge), JsonOptions));
+    }
+
+    private static PlaylistDashboardResponse HandleReorderCartridges(string? rootFolder, string? body, AuthenticatedDashboardUser user)
+    {
+        ReorderCartridgesRequest? request;
+        try
+        {
+            request = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<ReorderCartridgesRequest>(body, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "corpo da requisição inválido (JSON malformado).");
+        }
+
+        if (string.IsNullOrWhiteSpace(rootFolder) || request is null || string.IsNullOrWhiteSpace(request.ProgramId) || request.OrderedIds is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"orderedIds\" são obrigatórios.");
+        }
+
+        var (ok, error, cartridges) = CartucheiraFileStore.ReorderCartridges(rootFolder, request.ProgramId, request.OrderedIds);
+        if (!ok)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(cartridges.Select(ToCartridgeDto).ToList(), JsonOptions));
+    }
+
+    private static PlaylistDashboardResponse HandleDeleteCartridge(string? rootFolder, string? queryString, AuthenticatedDashboardUser user)
+    {
+        var programId = ParseQueryValue(queryString, "programId");
+        var cartridgeId = ParseQueryValue(queryString, "cartridgeId");
+        if (string.IsNullOrWhiteSpace(rootFolder) || string.IsNullOrWhiteSpace(programId) || string.IsNullOrWhiteSpace(cartridgeId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" e \"cartridgeId\" são obrigatórios.");
+        }
+
+        var (ok, error) = CartucheiraFileStore.DeleteCartridge(rootFolder, programId, cartridgeId);
+        if (!ok)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json("{}");
+    }
+
+    /// <summary>Query esperada: <c>programId</c> e <c>filename</c> (nome original, só pra preservar a extensão — ver <see cref="HandleUploadFile"/> pro mesmo princípio do lado do Playlist de vídeo).</summary>
+    private static PlaylistDashboardResponse HandleUploadCartridge(string? rootFolder, string? queryString, Stream requestBodyStream, AuthenticatedDashboardUser user)
+    {
+        var programId = ParseQueryValue(queryString, "programId");
+        var fileName = ParseQueryValue(queryString, "filename") ?? "audio";
+
+        if (string.IsNullOrWhiteSpace(rootFolder) || string.IsNullOrWhiteSpace(programId))
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, "\"programId\" é obrigatório (e a pasta raiz deste banco precisa estar configurada).");
+        }
+
+        var (ok, error, cartridge) = CartucheiraFileStore.UploadCartridge(rootFolder, programId, fileName, requestBodyStream);
+        if (!ok || cartridge is null)
+        {
+            return PlaylistDashboardResponse.PlainTextError(400, error ?? "erro desconhecido.");
+        }
+
+        return PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToCartridgeDto(cartridge), JsonOptions));
+    }
+
+    private static CartucheiraCartridgeDto ToCartridgeDto(CartucheiraCartridgeRecord cartridge) =>
+        new(cartridge.Id, cartridge.Order, cartridge.Title, cartridge.FileName, cartridge.Color);
+
     /// <summary>Sprint Controle-Remoto-TP (2026-11-17) — GET /api/teleprompter/state: pra tela remota saber se o manual está ligado e o que está exibido agora (automático ou manual), tanto ao abrir a página quanto no polling periódico (ver app.js).</summary>
     private PlaylistDashboardResponse HandleGetTeleprompterState() =>
         PlaylistDashboardResponse.Json(JsonSerializer.Serialize(ToTeleprompterStateDto(), JsonOptions));
@@ -1211,6 +1479,19 @@ public sealed class PlaylistDashboardCoordinator : IDisposable
         string? Notes);
 
     private sealed record UploadResultDto(string FileName);
+
+    // Cartucheira (Vinhetas/Trilhas) — Sprint Cartucheira-Dashboard (2026-11-23).
+    private sealed record CartucheiraProgramDto(string Id, string Name);
+
+    private sealed record CreateCartucheiraProgramRequest(string? Name);
+
+    private sealed record CartucheiraCartridgeDto(string Id, int Order, string Title, string FileName, string? Color);
+
+    private sealed record RenameCartridgeRequest(string? ProgramId, string? CartridgeId, string? Title);
+
+    private sealed record SetCartridgeColorRequest(string? ProgramId, string? CartridgeId, string? Color);
+
+    private sealed record ReorderCartridgesRequest(string? ProgramId, List<string>? OrderedIds);
 
     private sealed record LoginRequest(string? Username, string? Password);
 

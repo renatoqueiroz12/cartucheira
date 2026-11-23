@@ -543,6 +543,29 @@ input[type="file"] {
 .laudas-list li.dragging { opacity: 0.4; }
 .laudas-list li.drag-over { border-color: var(--blue); border-style: dashed; }
 
+/* Sprint Cartucheira-Dashboard (2026-11-23) — linha de cartucho (Vinhetas/Trilhas) reaproveita toda
+   a estrutura visual de .laudas-list/.lauda-title/.lauda-body (ver comentário de classe em app.js,
+   createCartucheiraModule), só acrescenta a coluna de ações (cor + apagar) à direita. */
+.lauda-title.clickable { cursor: pointer; }
+.lauda-title.clickable:hover { color: var(--blue); }
+
+.cart-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.cart-color-input {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
 .drag-handle {
   cursor: grab;
   color: var(--text-low);

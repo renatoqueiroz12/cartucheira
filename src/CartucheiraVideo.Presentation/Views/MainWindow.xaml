@@ -130,14 +130,16 @@
                             <!--
                                 Correção pós-entrega #7 (2026-11-24): sombra preta direcional trocada por um brilho
                                 (glow, ShadowDepth="0" — mesmo truque do Effect.CardShadow em Theme.xaml) na MESMA cor
-                                do próprio cartucho (HexColorToColorConverter, novo), em vez de uma cor fixa — pedido
-                                do usuário ("ainda precisa ter mais destaque nas cores"). Cada pad agora "acende" na
-                                sua própria cor, reforçando a vivacidade sem precisar saturar ainda mais o preenchimento.
+                                do próprio cartucho (HexColorToColorConverter), em vez de uma cor fixa — pedido do
+                                usuário ("ainda precisa ter mais destaque nas cores"). REMOVIDO na correção pós-entrega
+                                #10 (2026-11-24): usuário testou de verdade e reportou "alguma coisa você colocou de
+                                sombra nos botões que ficou horrível... tá com sombra em volta de cada botão... tira a
+                                sombra dos botões e das letras dele" — o Effect, aplicado no Border que também contém
+                                o texto do pad, borra/"ensombra" o próprio texto junto (Effect afeta todo o conteúdo
+                                visual do elemento, não só a borda). `HexColorToColorConverter` ficou sem nenhum uso
+                                nesta tela depois dessa remoção (mantido no projeto, sem remover, por segurança —
+                                outra tela pode vir a usar).
                             -->
-                            <Border.Effect>
-                                <DropShadowEffect BlurRadius="16" ShadowDepth="0" Opacity="0.8"
-                                                   Color="{Binding Color, Converter={StaticResource HexColorToColor}}" />
-                            </Border.Effect>
                             <!--
                                 Correção pós-entrega #5, Sprint Reformulação-Visual-Neon (2026-11-24) — o usuário finalmente
                                 conseguiu anexar a imagem de referência de verdade nesta rodada (antes eu só tinha a
@@ -832,8 +834,21 @@
                 <ColumnDefinition Width="1*" MinWidth="440" />
             </Grid.ColumnDefinitions>
 
-            <!-- Deck 1 / Deck 2 — dividem toda a altura da coluna (mockup v8, nota #14: sem mais a Fila Rapida competindo por espaco). -->
-            <ItemsControl Grid.Column="0" Margin="16,16,8,8" ItemsSource="{Binding Decks}">
+            <!-- Deck 1 / Deck 2 — dividem toda a altura da coluna (mockup v8, nota #14: sem mais a Fila Rapida competindo por espaco).
+
+                 Correção pós-entrega #10, Sprint Reformulação-Visual-Neon (2026-11-24): usuário mandou um print de
+                 UMA ÚNICA janela (print anterior comparava duas janelas separadas do SO, mas este é só o app de
+                 verdade) mostrando "a janela do Explorer desalinhada com a janela do Deck... bem no meio do
+                 programa". Medido pixel a pixel: a borda de baixo do Deck 2 ficava ~10px mais acima do que a borda
+                 de baixo do Explorer, antes do banco Vinhetas/Trilhas começar. Causa: o Border de CADA card de Deck
+                 (mais abaixo neste arquivo) tinha Margin="0,0,0,10" só pra abrir espaço ENTRE Deck 1 e Deck 2 — mas
+                 esse mesmo bottom margin também se aplica ao ÚLTIMO card (Deck 2), somando com o Margin bottom="8"
+                 deste ItemsControl (18px de vão total), enquanto o Explorer (Border única, sem esse "espaçamento
+                 entre itens") só tem os 8px do seu próprio Margin bottom. Corrigido dividindo o espaçamento
+                 entre-cards em metade-top/metade-bottom (0,5,0,5 em vez de 0,0,0,10) e compensando aqui
+                 (16,11,8,3 em vez de 16,16,8,8) — o vão total no topo continua 16 (11+5) e embaixo volta a bater
+                 com o Explorer, 8 (5+3); o vão ENTRE Deck 1 e Deck 2 continua o mesmo de sempre, 10 (5+5). -->
+            <ItemsControl Grid.Column="0" Margin="16,11,8,3" ItemsSource="{Binding Decks}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <UniformGrid Rows="2" />
@@ -871,7 +886,7 @@
                             funcionando exatamente igual, só a cor "neutra" (nenhum estado especial
                             ativo) deixou de ser invisível.
                         -->
-                        <Border Margin="0,0,0,10" Background="{DynamicResource Brush.Bg3}" CornerRadius="8" Padding="20,16"
+                        <Border Margin="0,5,0,5" Background="{DynamicResource Brush.Bg3}" CornerRadius="8" Padding="20,16"
                                 BorderThickness="2" BorderBrush="{DynamicResource Brush.Line}"
                                 Effect="{DynamicResource Effect.CardShadow}"
                                 AllowDrop="True"
@@ -1213,24 +1228,33 @@
                                             PreviewMouseLeftButtonDown="SeekSlider_PreviewMouseLeftButtonDown"
                                             PreviewMouseLeftButtonUp="SeekSlider_PreviewMouseLeftButtonUp"
                                             LostMouseCapture="SeekSlider_LostMouseCapture" />
+                                    <!--
+                                        Correção pós-entrega #10, Sprint Reformulação-Visual-Neon (2026-11-24): usuário
+                                        pediu "colocar o tempo do vídeo... um reloginho com regressiva, igual o mockup
+                                        tem". O countdown (RemainingTime) já existia e já era atualizado ao vivo pelo
+                                        Engine (ver DeckViewModel.UpdatePositionDisplay) — só estava pequeno (15px) e
+                                        cinza-apagado (Brush.TextLow), fácil de confundir com "não existe" numa tela
+                                        escura. Virou um "cronômetro" de verdade: badge escuro (igual ao relógio de
+                                        NowPlaying dos bancos Vinhetas/Trilhas, mesmo Brush.Bg0 + CornerRadius),
+                                        Consolas Black, branco (Brush.TextHi), bem maior — essa é a contagem regressiva
+                                        pedida. CurrentTime (decorrido) e a duração total continuam visíveis, só não
+                                        competem mais pelo destaque com o countdown.
+                                    -->
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
-                                        <!-- Sprint Deck-Seek-Bar-Fix (2026-09-15): FontSize.Small (11px) -> FontSize.Meta
-                                             (13px, mesmo tamanho já usado pra duração/resolução/codec no FileExplorerPanel)
-                                             — pedido do usuário ("o tempo tb esta muito pequeno"). -->
-                                        <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
-                                        <!-- Sprint Deck-Seek-Bar (2026-09-12): duração TOTAL do arquivo, junto do tempo
-                                             restante — pedido explícito do usuário ("mostre tb o time frame"). Antes desta
-                                             sprint só existiam tempo decorrido (esquerda) e tempo restante (aqui), nunca a
-                                             duração total do arquivo carregado.
-                                             Fix v1.0.112: 13 -> 15 junto com o resto dos ajustes de espaço do Deck. -->
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
-                                            <TextBlock Text="{Binding RemainingTime}" FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
-                                            <TextBlock Text=" / " FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
-                                            <TextBlock Text="{Binding DurationDisplay}" FontSize="15" Foreground="{DynamicResource Brush.TextLow}" />
+                                        <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontFamily="Consolas"
+                                                   FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}"
+                                                   VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Border Background="{DynamicResource Brush.Bg0}" CornerRadius="4" Padding="8,3">
+                                                <TextBlock Text="{Binding RemainingTime}" FontFamily="Consolas" FontWeight="Black"
+                                                           FontSize="20" Foreground="{DynamicResource Brush.TextHi}" />
+                                            </Border>
+                                            <TextBlock Text=" / " FontFamily="Consolas" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding DurationDisplay}" FontFamily="Consolas" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
                                 </StackPanel>

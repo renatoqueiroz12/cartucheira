@@ -917,24 +917,30 @@
                             </Border.Style>
 
                             <!--
-                                Correção pós-entrega #12, Sprint Reformulação-Visual-Neon (2026-11-24):
-                                usuário reportou, mesmo com um vídeo carregado e tocando, "não tem a
-                                barra de execução, não tem o contador de tempos" — nenhuma das duas
-                                existia faltando no XAML (slider e cronômetro já implementados desde
-                                as correções #10/#11), então a hipótese mais provável é layout: este
-                                card fica dentro de um UniformGrid Rows="2" (cada Deck recebe EXATAMENTE
-                                metade da altura disponível) e a Row 1 (preview) tem MinHeight="120"
-                                fixo — numa janela/monitor menor, isso pode deixar pouco ou nenhum
-                                espaço de sobra pra Row 2 (Auto: nome do arquivo + barra + tempos),
-                                que o Grid comprime/corta silenciosamente em vez de simplesmente
-                                encolher o preview. MinHeight="92" adicionado na Row 2 garante que ela
-                                nunca fique sem espaço nenhum, não importa o tamanho da janela.
+                                Correção pós-entrega #13, Sprint Reformulação-Visual-Neon (2026-11-24):
+                                a hipótese de layout da correção #12 (MinHeight="92" numa Row Auto) NÃO
+                                resolveu — print real confirmou: na janela do usuário a barra aparecia
+                                só como uma linha azul de 1-2px colada na borda de baixo do card, e o
+                                cronômetro nem esse tanto, os dois sendo cortados pelo limite do card.
+                                Causa confirmada: Auto+MinHeight NÃO é prioridade garantida no algoritmo
+                                de Grid do WPF — quando o card (dentro do UniformGrid Rows="2", que força
+                                cada Deck a EXATAMENTE metade da altura disponível) não tem espaço pra
+                                tudo, a Row 1 (preview, MinHeight="120") consome o espaço primeiro e a
+                                Row 2 (Auto) fica com as sobras, por menores que sejam — MinHeight numa
+                                Row Auto não é um piso de verdade nesse cenário de disputa.
+                                Troca definitiva: Row 2 virou Height FIXO em pixels ("132", não Auto nem
+                                MinHeight) — no algoritmo de Grid do WPF, uma Row com tamanho FIXO em
+                                pixels tem prioridade garantida sobre Auto e Star, recebendo sempre
+                                exatamente o valor declarado, não importa o espaço disponível. Row 1
+                                (preview) reduzida de MinHeight="120" pra "88" pra sobrar mais espaço de
+                                verdade pra Row 2 ceder menos — a prioridade do usuário, repetida 3
+                                rodadas seguidas, é ver a barra/cronômetro, não maximizar o preview.
                             -->
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" MinHeight="120" />
-                                    <RowDefinition Height="Auto" MinHeight="92" />
+                                    <RowDefinition Height="*" MinHeight="88" />
+                                    <RowDefinition Height="140" />
                                 </Grid.RowDefinitions>
 
                                 <!--

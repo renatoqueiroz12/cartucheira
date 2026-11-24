@@ -39,7 +39,7 @@
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextMid}" />
             <Setter Property="HorizontalContentAlignment" Value="Left" />
             <Setter Property="Padding" Value="16,6" />
-            <Setter Property="FontSize" Value="{StaticResource FontSize.Small}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.SmallMain}" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
@@ -59,7 +59,7 @@
         </Style>
 
         <Style x:Key="Theme.RailSectionTitle" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="{StaticResource FontSize.Micro}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.MicroMain}" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
             <Setter Property="Margin" Value="16,0,16,6" />
@@ -77,7 +77,7 @@
         <Style x:Key="Theme.TabButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
-            <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSize.BodyMain}" />
             <Setter Property="FontWeight" Value="Bold" />
             <Setter Property="Padding" Value="16,8" />
             <Setter Property="Cursor" Value="Hand" />
@@ -145,7 +145,7 @@
                               Width="14" Height="14" Margin="0,0,10,0" HorizontalAlignment="Right" VerticalAlignment="Center" IsHitTestVisible="False" />
                     </Grid>
                 </Grid>
-                <TextBlock Margin="0,0,0,10" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}"
+                <TextBlock Margin="0,0,0,10" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.MicroMain}"
                            TextTrimming="CharacterEllipsis" Visibility="{Binding IsExplorerTabSelected, Converter={StaticResource BoolToVis}}">
                     <Run Text="Pasta atual: " /><Run Text="{Binding FolderPath, Mode=OneWay}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" />
                 </TextBlock>
@@ -172,7 +172,7 @@
                         </Button.Style>
                     </Button>
                 </Grid>
-                <TextBlock Margin="0,0,0,10" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Micro}"
+                <TextBlock Margin="0,0,0,10" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.MicroMain}"
                            TextTrimming="CharacterEllipsis" Visibility="{Binding IsPlaylistTabSelected, Converter={StaticResource BoolToVis}}">
                     <Run Text="Playlist atual: " /><Run Text="{Binding Playlist.Name, Mode=OneWay}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" />
                     <Run Text=" · gerada por sistema externo · " /><Run Text="{Binding Playlist.Items.Count, Mode=OneWay}" /><Run Text=" itens" />
@@ -181,7 +181,7 @@
         </Border>
 
         <Border DockPanel.Dock="Bottom" Padding="16,8" Background="{DynamicResource Brush.Bg3}">
-            <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.SmallMain}" TextWrapping="Wrap" />
         </Border>
 
         <!--
@@ -207,7 +207,7 @@
                 <StackPanel>
                     <StackPanel Margin="0,0,0,16">
                         <TextBlock Text="FAVORITOS" Style="{StaticResource Theme.RailSectionTitle}" />
-                        <TextBlock Text="Nenhum favorito ainda" Margin="16,2,16,0" FontSize="{StaticResource FontSize.Small}"
+                        <TextBlock Text="Nenhum favorito ainda" Margin="16,2,16,0" FontSize="{StaticResource FontSize.SmallMain}"
                                    Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="Wrap"
                                    Visibility="{Binding HasFavorites, Converter={StaticResource InverseBoolToVis}}" />
                         <ItemsControl ItemsSource="{Binding FavoriteFolders}">
@@ -230,7 +230,7 @@
                                         <Path Data="{StaticResource Icon.Folder}" Stroke="{DynamicResource Brush.TextLow}"
                                               StrokeThickness="1.4" Width="13" Height="13" Stretch="Uniform" Margin="0,0,6,0" />
                                         <TextBlock Text="{Binding Name}" Foreground="{DynamicResource Brush.TextMid}"
-                                                   FontSize="{StaticResource FontSize.Small}" TextTrimming="CharacterEllipsis" />
+                                                   FontSize="{StaticResource FontSize.SmallMain}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                 </HierarchicalDataTemplate>
                             </TreeView.Resources>
@@ -245,7 +245,7 @@
 
                     <StackPanel>
                         <TextBlock Text="RECENTES" Style="{StaticResource Theme.RailSectionTitle}" />
-                        <TextBlock Text="Nenhum arquivo recente ainda" Margin="16,2,16,0" FontSize="{StaticResource FontSize.Small}"
+                        <TextBlock Text="Nenhum arquivo recente ainda" Margin="16,2,16,0" FontSize="{StaticResource FontSize.SmallMain}"
                                    Foreground="{DynamicResource Brush.TextFaint}" TextWrapping="Wrap"
                                    Visibility="{Binding HasRecentFiles, Converter={StaticResource InverseBoolToVis}}" />
                         <ItemsControl ItemsSource="{Binding RecentFiles}">
@@ -279,12 +279,12 @@
                         <ColumnDefinition Width="78" />
                         <ColumnDefinition Width="60" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="NOME" Margin="18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                    <TextBlock Grid.Column="1" Text="DURAÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                    <TextBlock Grid.Column="2" Text="RESOLUÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                    <TextBlock Grid.Column="3" Text="CODEC" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                    <TextBlock Grid.Column="4" Text="TAMANHO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                    <TextBlock Grid.Column="5" Text="TIPO" Margin="4,9,18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="0" Text="NOME" Margin="18,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="1" Text="DURAÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="2" Text="RESOLUÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="3" Text="CODEC" Margin="4,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="4" Text="TAMANHO" Margin="4,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                    <TextBlock Grid.Column="5" Text="TIPO" Margin="4,9,18,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
                 </Grid>
 
                 <ListBox Grid.Row="1" x:Name="FilesListBox"
@@ -351,10 +351,10 @@
                     <ColumnDefinition Width="100" />
                     <ColumnDefinition Width="130" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="#" Margin="18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                <TextBlock Grid.Column="1" Text="NOME" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                <TextBlock Grid.Column="2" Text="DURAÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
-                <TextBlock Grid.Column="3" Text="STATUS" Margin="4,9,18,9" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                <TextBlock Grid.Column="0" Text="#" Margin="18,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                <TextBlock Grid.Column="1" Text="NOME" Margin="4,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                <TextBlock Grid.Column="2" Text="DURAÇÃO" Margin="4,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
+                <TextBlock Grid.Column="3" Text="STATUS" Margin="4,9,18,9" FontSize="{StaticResource FontSize.MicroMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextFaint}" />
             </Grid>
 
             <ListBox Grid.Row="1" x:Name="PlaylistListBox"

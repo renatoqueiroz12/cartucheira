@@ -233,6 +233,19 @@
     <sys:Double x:Key="FontSize.Micro">10</sys:Double>
     <sys:Double x:Key="FontSize.Small">11</sys:Double>
     <sys:Double x:Key="FontSize.Body">12</sys:Double>
+    <!--
+        Correção pós-entrega #9, Sprint Reformulação-Visual-Neon (2026-11-24): pedido do usuário
+        ("as fontes ainda estão muito pequenas, a maioria, os textinhos pequenos. Revisa tudo aí").
+        FontSize.Micro/Small/Body (acima) são compartilhados com 9 telas de Configurações fora do
+        escopo desta sprint — não dá pra aumentar esses três direto. Os 3 recursos NOVOS abaixo são
+        só pra isso: usados SÓ nos textos pequenos de MainWindow.xaml e FileExplorerPanel.xaml (os
+        dois arquivos da tela principal/Explorer/Playlist), substituindo Micro/Small/Body SÓ nesses
+        dois arquivos — CPU/RAM, ON AIR, Auto/Manual, vMix/Resolume, cabeçalhos de coluna do
+        Explorer/Playlist (NOME/DURAÇÃO/...), favoritos/recentes, selo de seleção e LOOP/duração do
+        pad, etc. Nenhuma tela de Configurações é afetada. -->
+    <sys:Double x:Key="FontSize.MicroMain">14</sys:Double>
+    <sys:Double x:Key="FontSize.SmallMain">15</sys:Double>
+    <sys:Double x:Key="FontSize.BodyMain">16</sys:Double>
     <!-- Meta (segunda linha do Explorer): 12 -> 13 na Sprint 8, pedido explícito de legibilidade a
          maior distância ("nome dos arquivos deve ser facilmente legível"). 13 -> 15 na correção
          pós-entrega #2 da Sprint Reformulação-Visual-Neon (2026-11-23), pedido do usuário "mais
@@ -256,11 +269,16 @@
         vez de aumentar FontSize.Label direto porque esse recurso é compartilhado com várias telas
         de Configurações fora do escopo desta sprint (ver comentário acima) — side risco de inflar
         telas que o usuário não pediu pra mudar.
+        Correção pós-entrega #8 (2026-11-24): 18 -> 22. O primeiro aumento (14 -> 18) foi reportado
+        pelo usuário como imperceptível ("mudou nada, mesmo tamanho") — dessa vez o salto é bem
+        maior, não só mais um ajuste fino.
     -->
-    <sys:Double x:Key="FontSize.MainSectionLabel">18</sys:Double>
+    <sys:Double x:Key="FontSize.MainSectionLabel">22</sys:Double>
     <!-- Correção pós-entrega #7 (2026-11-24): 18 -> 22. Usado só pelo título "Cartucheira Vídeo" no
-         cabeçalho (único uso no projeto inteiro) — seguro de aumentar sem efeito colateral. -->
-    <sys:Double x:Key="FontSize.Title">22</sys:Double>
+         cabeçalho (único uso no projeto inteiro) — seguro de aumentar sem efeito colateral.
+         Correção pós-entrega #8 (2026-11-24): 22 -> 28 — rodada 7 foi reportada como "mesmo
+         tamanho", salto bem maior dessa vez. -->
+    <sys:Double x:Key="FontSize.Title">28</sys:Double>
     <sys:Double x:Key="FontSize.DeckFileName">20</sys:Double>
     <!-- FontSize.PadDuration: nome de 18 em diante não é mais usado por nenhum TextBlock (a duração
          virou secundária na correção #4, FontSize.Micro) — mantido só porque outro recurso (nenhum
@@ -271,12 +289,21 @@
          do que 10.5px — também usado por Theme.ProgramCard (nome da pasta/programa), ganha o mesmo
          aumento de propósito, pra manter os dois consistentes entre si.
          Correção pós-entrega #7 (2026-11-24): 14 -> 16, mesmo pedido de "fontes sempre maiores,
-         usando o máximo tamanho possível de onde estão". -->
-    <sys:Double x:Key="FontSize.PadLabel">16</sys:Double>
+         usando o máximo tamanho possível de onde estão".
+         Correção pós-entrega #8 (2026-11-24): 16 -> 20 — rodada 7 reportada como imperceptível,
+         salto bem maior dessa vez (também usado por Theme.ProgramCard, mesmo aumento). -->
+    <sys:Double x:Key="FontSize.PadLabel">20</sys:Double>
     <!-- Número do pad: 14 -> 20 na correção pós-entrega #5 (2026-11-24) — na imagem de referência
          real o número é GRANDE, claramente o maior texto do pad (maior até que o nome), não um
-         badge discreto de canto como a Sprint 8 original previa. -->
-    <sys:Double x:Key="FontSize.PadNumber">20</sys:Double>
+         badge discreto de canto como a Sprint 8 original previa.
+         Correção pós-entrega #8 (2026-11-24): 20 -> 26, mesmo motivo do PadLabel acima. -->
+    <sys:Double x:Key="FontSize.PadNumber">26</sys:Double>
+    <!-- Correção pós-entrega #8, Sprint Reformulação-Visual-Neon (2026-11-24): NOVA. O selo
+         LOOP, a duração e o número do selo de seleção dentro de CADA pad usavam FontSize.Micro (10)
+         — recurso compartilhado com cabeçalhos de coluna do Explorer/Playlist E com várias telas de
+         Configurações, então não dava pra aumentar direto. Criado recurso próprio, só pros 3 usos
+         dentro do template do pad em MainWindow.xaml, bem maior que o Micro original. -->
+    <sys:Double x:Key="FontSize.PadMeta">14</sys:Double>
 
     <!-- ===================== Tamanhos de controle ===================== -->
     <!-- 34 -> 30 na Sprint 8: Decks cedem um pouco de altura pro preview de vídeo crescer (prioridade

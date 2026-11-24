@@ -372,6 +372,72 @@ public sealed class PlaybackEngine : IDisposable
     private bool _disposed;
 
     /// <summary>
+    /// Fix v1.0.68 (2026-11-12): incidente real — usuario confirmou que a v1.0.67 (Pause antes/Play
+    /// depois no Seek, estendendo a mesma correcao ja aplicada ao Stop nas v1.0.65/v1.0.66) NAO
+    /// resolveu nada ("continua igual... clica no stop, da um tempinho, ele fecha"). O detalhe novo e
+    /// decisivo desta vez: o crash agora acontece ALGUNS SEGUNDOS depois do clique, nunca na hora —
+    /// diferente de TODOS os crashes anteriores desta investigacao, que sempre morriam instantaneamente
+    /// dentro da propria chamada nativa que os logs de rastro (<see cref="LogNativeCallTrace"/>) sempre
+    /// capturaram sem ambiguidade. Um atraso consistente de alguns segundos nao combina com "a chamada
+    /// que EU acabei de fazer travou" — combina com "uma chamada agendada por OUTRA coisa, de ANTES, so
+    /// chega la na frente".
+    ///
+    /// Revendo a classe inteira (nao mais so os pontos ja mexidos) atras de QUALQUER chamada nativa
+    /// feita por uma THREAD DIFERENTE da que chama Play/Pause/Stop/Seek/Clear/Load (a UI), encontrados
+    /// CINCO mecanismos de fundo, nenhum deles tocado por nenhuma das tres correcoes anteriores,
+    /// NENHUM protegido por nenhum tipo de trava contra rodar ao mesmo tempo que Stop()/Seek()/Pause():
+    ///   1. <see cref="ReapplyAudioOutputDeviceAsync"/> — roda em background por ate 6 SEGUNDOS depois
+    ///      de cada Play de verdade (inclusive o Play que o proprio Seek corrigido da v1.0.67 dispara
+    ///      de novo ao retomar!), chamando <c>_mediaPlayer.SetOutputDevice(...)</c> varias vezes
+    ///      (alvos: 100/300/700/1500/2500/4000/6000ms) — a janela de tempo bate exatamente com "alguns
+    ///      segundos depois".
+    ///   2. <c>OnEndReached</c> — com Loop ligado, despacha um <c>Task.Run</c> que reatribui
+    ///      <c>_mediaPlayer.Media</c> e chama <c>.Play()</c>, numa thread separada, toda vez que o
+    ///      arquivo termina.
+    ///   3/4. <c>RestartSlotByReopening</c> — o mesmo, em <c>Task.Run</c> separados, pros players de
+    ///      captura (<see cref="_framePlayer"/>/<see cref="_framePlayerB"/>), toda vez que QUALQUER um
+    ///      deles termina um arquivo com Loop ligado.
+    ///   5. <see cref="PollFramePlayerPosition"/> (timer do ThreadPool, a cada 50ms) — le
+    ///      <c>.Time</c> nativamente (ver comentario de <see cref="OnFrameDisplay"/>: a propria classe
+    ///      ja documenta que isto "disputa um lock interno do player com outras operacoes de controle,
+    ///      entre elas Pause()" — ou seja, o proprio libvlc confirma que estas chamadas NAO sao
+    ///      seguras de rodar em paralelo sem coordenacao) e, quando o modo sem-corte esta armado,
+    ///      chama <c>ArmStandbySlotA/B</c> — reatribuindo Media e chamando Play() direto nesta mesma
+    ///      thread do timer.
+    ///
+    /// Cada um destes e uma chamada nativa de controle (Play/Time/SetOutputDevice/Media=) no MESMO
+    /// objeto <c>MediaPlayer</c> que Stop()/Seek()/Pause()/Clear()/Load() tambem chamam, vindos de uma
+    /// thread completamente diferente, SEM NENHUMA sincronizacao entre elas em nenhum momento desta
+    /// investigacao. Isto e consistente com o sintoma relatado: o operador clica Stop ou arrasta a
+    /// barra, e alguns segundos depois — nao por causa do clique em si, mas por pura coincidencia de
+    /// tempo — um destes mecanismos de fundo (sobrando de um Play anterior, inclusive um que o proprio
+    /// Seek corrigido relanca) dispara sua propria chamada nativa bem na hora em que o player esta num
+    /// estado que o operador acabou de mudar por outro caminho, ao mesmo tempo, em outra thread.
+    ///
+    /// CORRIGIDO aqui com uma unica trava (<c>lock</c>) compartilhada por TODA chamada de controle
+    /// nativo identificada (lista acima + todos os metodos publicos de transporte) — nunca em volta de
+    /// um <c>await</c> (ReapplyAudioOutputDeviceAsync so trava o trecho sincrono de cada tentativa, o
+    /// <c>Task.Delay</c> entre elas fica de fora), e deliberadamente SEM tocar em
+    /// <see cref="OnFrameLock"/>/<see cref="OnFrameDisplay"/> (callback de video da thread do proprio
+    /// LibVLC — ja existe um incidente documentado de DEADLOCK real causado por chamar <c>.Time</c> de
+    /// dentro desses callbacks enquanto a UI espera um <c>Pause()</c>; esta trava e so entre threads
+    /// gerenciadas por este Engine, nunca dentro do callback nativo em si, pra nao reabrir aquele
+    /// risco). Efeito colateral esperado: nenhum, pra uso normal — cada secao protegida ja era rapida
+    /// (chamadas de controle simples), e threads diferentes so vao esperar umas pelas outras por uma
+    /// fracao de milissegundo nas raras vezes em que colidem de verdade, exatamente o cenario que antes
+    /// podia corromper memoria nativa em vez de so esperar a vez.
+    ///
+    /// SENDO HONESTO: nenhum log/dump ainda PROVOU que e exatamente este o mecanismo (o usuario ainda
+    /// nao mandou o <c>audio-dispositivo-diagnostico.log</c> nem o <c>.dmp</c> do Visualizador de
+    /// Erros pedidos) — mas e a PRIMEIRA causa encontrada nesta investigacao inteira que explica o
+    /// atraso de alguns segundos (todas as tentativas anteriores assumiam, erradamente, um crash
+    /// instantaneo) e que aponta pra varias chamadas nativas concorrentes SEM sincronizacao nenhuma,
+    /// um defeito real e comprovavel por leitura de codigo, independente de ser ou nao a causa exata
+    /// deste crash especifico.
+    /// </summary>
+    private readonly object _nativeCallLock = new();
+
+    /// <summary>
     /// Sprint Áudio-Dispositivo-Fix-2 (2026-09-13): ver <see cref="SetAudioOutputDevice"/> e o
     /// handler de <see cref="MediaPlayer.Playing"/> no construtor pro mecanismo completo. Guarda o
     /// ultimo dispositivo pedido pra poder reaplicar toda vez que a reproducao realmente comeca —
@@ -652,6 +718,27 @@ public sealed class PlaybackEngine : IDisposable
     public (int Num, int Den) VideoFrameRate => (_videoFrameRateNum, _videoFrameRateDen);
 
     /// <summary>
+    /// Correção pós-entrega #17, Sprint Reformulação-Visual-Neon (2026-11-24): duração total do
+    /// arquivo atualmente carregado, conhecida no exato instante do último <see cref="Load"/> — ANTES
+    /// de qualquer Play. Pedido explícito do usuário: "na hora que carrega o deck, ele precisava
+    /// aparecer já o tempo. Ele só está aparecendo no tempo depois que dá o play" (até aqui,
+    /// <c>DeckViewModel.DurationDisplay</c> só era preenchido dentro de <see cref="PositionChanged"/>,
+    /// que só dispara de verdade com o player tocando).
+    ///
+    /// Implementado SEM nenhuma chamada nativa nova: <see cref="ComputeLetterboxSize"/> já faz, desde
+    /// a Sprint NDI-video-uyvy, um <c>Media.Parse(MediaParseOptions.ParseLocal, ...)</c> SÍNCRONO
+    /// sobre <c>_currentFrameMedia</c> dentro de todo <see cref="Load"/> (motivo original: ler
+    /// resolução/orientação/frame rate pro letterbox do NDI) — esse parse já deixa
+    /// <c>Media.Duration</c> populado como efeito colateral honesto, então aqui só LEMOS um valor que
+    /// o parse já calculou de qualquer forma, em vez de disparar mais uma fronteira nativa própria
+    /// (risco zero adicional: nenhuma chamada ao LibVLC a mais do que já acontecia antes desta
+    /// correção). Populado em <see cref="ConfigureFrameFormat"/>, logo após a chamada a
+    /// <see cref="ComputeLetterboxSize"/>. Nulo se o parse falhou/expirou ou a duração reportada for
+    /// inválida (≤0) — falha honesta, mesmo padrão do resto desta classe, nunca um valor inventado.
+    /// </summary>
+    public TimeSpan? LastLoadedDuration { get; private set; }
+
+    /// <summary>
     /// Quando verdadeiro, o fim do arquivo reinicia a reproducao em vez de disparar
     /// <see cref="MediaEnded"/>. Pode ser alterado a qualquer momento, inclusive durante a
     /// reproducao — passa a valer a partir do proximo fim de arquivo.
@@ -739,7 +826,11 @@ public sealed class PlaybackEngine : IDisposable
             }
         }
 
-        _mediaPlayer.Media = _currentMedia;
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
+        {
+            _mediaPlayer.Media = _currentMedia;
+        }
         previousMedia?.Dispose();
 
         // Media PROPRIO pro player de captura de VIDEO (nao o mesmo objeto do player principal — ver
@@ -775,14 +866,21 @@ public sealed class PlaybackEngine : IDisposable
         // atinge o mesmo objetivo (interromper OnFrameLock/OnFrameDisplay ANTES de qualquer campo
         // novo ser escrito, prevenindo a corrida de dados original desta correcao) sem acionar a
         // destruicao do vout que esta travando.
-        if (_framePlayer.IsPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
         {
-            _framePlayer.Pause();
+            if (_framePlayer.IsPlaying)
+            {
+                _framePlayer.Pause();
+            }
         }
 
         var previousFrameMedia = _currentFrameMedia;
         _currentFrameMedia = new Media(_libVlc, filePath, FromType.FromPath, ":no-audio");
-        _framePlayer.Media = _currentFrameMedia;
+        lock (_nativeCallLock)
+        {
+            _framePlayer.Media = _currentFrameMedia;
+        }
         previousFrameMedia?.Dispose();
 
         ConfigureFrameFormat(_currentFrameMedia);
@@ -804,11 +902,15 @@ public sealed class PlaybackEngine : IDisposable
         _currentFilePath = filePath;
         // Fix v1.0.66 (2026-11-12): mesmo motivo do _framePlayer logo acima — Stop() nativo trocado
         // por Pause() (se tocando) antes de descartar a Media de B.
-        if (_framePlayerB.IsPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
         {
-            _framePlayerB.Pause();
+            if (_framePlayerB.IsPlaying)
+            {
+                _framePlayerB.Pause();
+            }
+            _framePlayerB.Media = null;
         }
-        _framePlayerB.Media = null;
         _currentFrameMediaB?.Dispose();
         _currentFrameMediaB = null;
         _seamlessSlotAIsActive = true;
@@ -992,6 +1094,19 @@ public sealed class PlaybackEngine : IDisposable
     private void ConfigureFrameFormat(Media frameMedia)
     {
         var (innerWidth, innerHeight) = ComputeLetterboxSize(frameMedia);
+
+        // Correção pós-entrega #17 (2026-11-24): ver comentário completo de LastLoadedDuration —
+        // reaproveita o parse que ComputeLetterboxSize ACIMA já fez neste mesmo frameMedia (nenhuma
+        // chamada nativa nova). Fronteira com o LibVLC nativo, mesmo racional de honestidade de
+        // ComputeLetterboxSize: qualquer falha/valor inválido vira null, nunca um valor inventado.
+        try
+        {
+            LastLoadedDuration = frameMedia.Duration > 0 ? TimeSpan.FromMilliseconds(frameMedia.Duration) : null;
+        }
+        catch (Exception)
+        {
+            LastLoadedDuration = null;
+        }
 
         _frameInnerWidth = innerWidth;
         _frameInnerHeight = innerHeight;
@@ -1182,27 +1297,31 @@ public sealed class PlaybackEngine : IDisposable
         // confirmou o crash no botao Stop, nunca no Clear/"Limpar" — mas e exatamente a mesma chamada
         // nativa, o mesmo padrao exato, entao corrigido de qualquer forma em vez de deixar uma bomba
         // identica armada sabendo o que ja se sabe.
-        if (_mediaPlayer.IsPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
         {
-            _mediaPlayer.Pause();
-        }
+            if (_mediaPlayer.IsPlaying)
+            {
+                _mediaPlayer.Pause();
+            }
 
-        // Fix v1.0.66 (2026-11-12): mesmo motivo acima — `_framePlayer.Stop()` nativo foi confirmado
-        // 100% fatal (ver comentario completo em Stop()), e esta era a MESMA chamada exata, so que
-        // aqui no Clear(). Pausar antes (se tocando) evita o mesmo caminho de destruicao de vout.
-        if (_framePlayer.IsPlaying)
-        {
-            _framePlayer.Pause();
-        }
-        if (_framePlayerB.IsPlaying)
-        {
-            _framePlayerB.Pause();
+            // Fix v1.0.66 (2026-11-12): mesmo motivo acima — `_framePlayer.Stop()` nativo foi confirmado
+            // 100% fatal (ver comentario completo em Stop()), e esta era a MESMA chamada exata, so que
+            // aqui no Clear(). Pausar antes (se tocando) evita o mesmo caminho de destruicao de vout.
+            if (_framePlayer.IsPlaying)
+            {
+                _framePlayer.Pause();
+            }
+            if (_framePlayerB.IsPlaying)
+            {
+                _framePlayerB.Pause();
+            }
+
+            _mediaPlayer.Media = null;
+            _framePlayer.Media = null;
+            _framePlayerB.Media = null;
         }
         _audioCapture.Clear();
-
-        _mediaPlayer.Media = null;
-        _framePlayer.Media = null;
-        _framePlayerB.Media = null;
 
         _currentMedia?.Dispose();
         _currentMedia = null;
@@ -1231,7 +1350,13 @@ public sealed class PlaybackEngine : IDisposable
 
         var playSequence = ++_playSequence;
 
-        _mediaPlayer.Play();
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — serializa esta
+        // chamada nativa contra os mecanismos de fundo (ReapplyAudioOutputDeviceAsync, OnEndReached,
+        // PollFramePlayerPosition) que tambem chamam Play()/Time=/SetOutputDevice no mesmo objeto.
+        lock (_nativeCallLock)
+        {
+            _mediaPlayer.Play();
+        }
 
         // Sprint NDI-Loop-Seamless (2026-09-17): um Play "de verdade" (comando do operador) sempre
         // comeca do slot A, do jeito de sempre — reseta o estado do mecanismo antes de tocar, pra
@@ -1258,9 +1383,13 @@ public sealed class PlaybackEngine : IDisposable
     /// <summary>Inicia o par NDI (video + audio, sempre os dois juntos) imediatamente — o mesmo par de chamadas que <see cref="Play"/> sempre fez, agora isolado num metodo pra poder ser chamado tanto na hora quanto depois do atraso de <see cref="_ndiSyncDelayMs"/> (ver <see cref="StartNdiPairAfterSyncDelayAsync"/>).</summary>
     private void StartNdiPairNow()
     {
-        if (_framePlayer.Media is not null)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
         {
-            _framePlayer.Play();
+            if (_framePlayer.Media is not null)
+            {
+                _framePlayer.Play();
+            }
         }
 
         _audioCapture.Play();
@@ -1319,7 +1448,11 @@ public sealed class PlaybackEngine : IDisposable
         // depois, isso quebraria a garantia ja documentada desta funcao (nada sai pro NDI).
         _ = ++_playSequence;
 
-        _mediaPlayer.Play();
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
+        {
+            _mediaPlayer.Play();
+        }
     }
 
     /// <summary>
@@ -1356,10 +1489,14 @@ public sealed class PlaybackEngine : IDisposable
         // nativo num destes players (headless, "vmem") foi confirmado 100% fatal enquanto tocando.
         // O standby em preparo pode estar tocando de verdade neste momento (e exatamente o ponto
         // desta funcao) — Pause() em vez de Stop() evita o mesmo risco.
-        var idleFramePlayer = IdleFramePlayer;
-        if (idleFramePlayer.IsPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
         {
-            idleFramePlayer.Pause();
+            var idleFramePlayer = IdleFramePlayer;
+            if (idleFramePlayer.IsPlaying)
+            {
+                idleFramePlayer.Pause();
+            }
         }
         _seamlessStandbyArmedThisCycle = false;
         _standbyHasFrame = false;
@@ -1415,19 +1552,26 @@ public sealed class PlaybackEngine : IDisposable
     {
         LogNativeCallTrace("Pause() — inicio");
 
-        if (_mediaPlayer.IsPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — serializa as duas
+        // chamadas nativas abaixo contra os mecanismos de fundo (ReapplyAudioOutputDeviceAsync,
+        // OnEndReached, RestartSlotByReopening, PollFramePlayerPosition/ArmStandbySlot*) que tambem
+        // chamam Play()/Time=/Pause()/SetOutputDevice nos mesmos objetos, de outras threads.
+        lock (_nativeCallLock)
         {
-            LogNativeCallTrace("Pause() — antes de _mediaPlayer.Pause()");
-            _mediaPlayer.Pause();
-            LogNativeCallTrace("Pause() — depois de _mediaPlayer.Pause()");
-        }
+            if (_mediaPlayer.IsPlaying)
+            {
+                LogNativeCallTrace("Pause() — antes de _mediaPlayer.Pause()");
+                _mediaPlayer.Pause();
+                LogNativeCallTrace("Pause() — depois de _mediaPlayer.Pause()");
+            }
 
-        var activeFramePlayer = ActiveFramePlayer;
-        if (activeFramePlayer.IsPlaying)
-        {
-            LogNativeCallTrace("Pause() — antes de activeFramePlayer.Pause()");
-            activeFramePlayer.Pause();
-            LogNativeCallTrace("Pause() — depois de activeFramePlayer.Pause()");
+            var activeFramePlayer = ActiveFramePlayer;
+            if (activeFramePlayer.IsPlaying)
+            {
+                LogNativeCallTrace("Pause() — antes de activeFramePlayer.Pause()");
+                activeFramePlayer.Pause();
+                LogNativeCallTrace("Pause() — depois de activeFramePlayer.Pause()");
+            }
         }
 
         CancelSeamlessStandby();
@@ -1506,57 +1650,64 @@ public sealed class PlaybackEngine : IDisposable
         // no meio da espera do atraso nao pode deixar o par NDI comecar sozinho depois.
         _ = ++_playSequence;
 
-        // Fix v1.0.65 (2026-11-12): ver comentario completo da classe/metodo acima — NUNCA MAIS
-        // chama _mediaPlayer.Stop() nativo (comprovado 100% fatal, 3 builds seguidas). Pause() (se
-        // estiver tocando) + rebobinar pra 0 reproduz o mesmo resultado visual/funcional (Deck parado
-        // no inicio, pronto pro proximo Play) sem acionar a destruicao do vout.
-        if (_mediaPlayer.IsPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — todas as chamadas
+        // nativas abaixo (Pause/Time=) agora serializadas contra os mecanismos de fundo que tambem
+        // mexem nestes mesmos players de outras threads.
+        lock (_nativeCallLock)
         {
-            LogNativeCallTrace("Stop() — antes de _mediaPlayer.Pause() (fix v1.0.65: substitui _mediaPlayer.Stop())");
-            _mediaPlayer.Pause();
-            LogNativeCallTrace("Stop() — depois de _mediaPlayer.Pause()");
+            // Fix v1.0.65 (2026-11-12): ver comentario completo da classe/metodo acima — NUNCA MAIS
+            // chama _mediaPlayer.Stop() nativo (comprovado 100% fatal, 3 builds seguidas). Pause() (se
+            // estiver tocando) + rebobinar pra 0 reproduz o mesmo resultado visual/funcional (Deck parado
+            // no inicio, pronto pro proximo Play) sem acionar a destruicao do vout.
+            if (_mediaPlayer.IsPlaying)
+            {
+                LogNativeCallTrace("Stop() — antes de _mediaPlayer.Pause() (fix v1.0.65: substitui _mediaPlayer.Stop())");
+                _mediaPlayer.Pause();
+                LogNativeCallTrace("Stop() — depois de _mediaPlayer.Pause()");
+            }
+
+            if (_mediaPlayer.Media is not null)
+            {
+                LogNativeCallTrace("Stop() — antes de _mediaPlayer.Time = 0");
+                _mediaPlayer.Time = 0;
+                LogNativeCallTrace("Stop() — depois de _mediaPlayer.Time = 0");
+            }
+
+            // Fix v1.0.66 (2026-11-12): ver comentario completo da classe/metodo acima — NUNCA MAIS
+            // chama _framePlayer.Stop() nativo (comprovado 100% fatal pelo quarto native-call-trace.log,
+            // mesma classe de bug do _mediaPlayer.Stop() corrigido na v1.0.65). Mesmo padrao: Pause() (se
+            // tocando, ja comprovado seguro — o proprio rastro mostra "activeFramePlayer.Pause()"
+            // funcionando repetidas vezes) + rebobinar pra 0.
+            if (_framePlayer.IsPlaying)
+            {
+                LogNativeCallTrace("Stop() — antes de _framePlayer.Pause() (fix v1.0.66: substitui _framePlayer.Stop())");
+                _framePlayer.Pause();
+                LogNativeCallTrace("Stop() — depois de _framePlayer.Pause()");
+            }
+
+            if (_framePlayer.Media is not null)
+            {
+                LogNativeCallTrace("Stop() — antes de _framePlayer.Time = 0");
+                _framePlayer.Time = 0;
+                LogNativeCallTrace("Stop() — depois de _framePlayer.Time = 0");
+            }
+
+            // Fix v1.0.66 (2026-11-12): mesmo motivo do slot A acima — nunca mais Stop() nativo aqui.
+            // Como B ja vai ser descartado (Media = null) na sequencia, so precisa de Pause() antes,
+            // nunca de rebobinar.
+            if (_framePlayerB.IsPlaying)
+            {
+                LogNativeCallTrace("Stop() — antes de _framePlayerB.Pause() (fix v1.0.66: substitui _framePlayerB.Stop())");
+                _framePlayerB.Pause();
+                LogNativeCallTrace("Stop() — depois de _framePlayerB.Pause()");
+            }
+
+            // Sprint NDI-Loop-Seamless (2026-09-17): descarta qualquer standby (B) que estivesse
+            // armado/tocando — o proximo Play() sempre recomeca do slot A do zero (ver comentario de
+            // Play()), entao nao ha motivo pra manter a Media de B viva entre um Stop e o Play seguinte.
+            _framePlayerB.Media = null;
         }
 
-        if (_mediaPlayer.Media is not null)
-        {
-            LogNativeCallTrace("Stop() — antes de _mediaPlayer.Time = 0");
-            _mediaPlayer.Time = 0;
-            LogNativeCallTrace("Stop() — depois de _mediaPlayer.Time = 0");
-        }
-
-        // Fix v1.0.66 (2026-11-12): ver comentario completo da classe/metodo acima — NUNCA MAIS
-        // chama _framePlayer.Stop() nativo (comprovado 100% fatal pelo quarto native-call-trace.log,
-        // mesma classe de bug do _mediaPlayer.Stop() corrigido na v1.0.65). Mesmo padrao: Pause() (se
-        // tocando, ja comprovado seguro — o proprio rastro mostra "activeFramePlayer.Pause()"
-        // funcionando repetidas vezes) + rebobinar pra 0.
-        if (_framePlayer.IsPlaying)
-        {
-            LogNativeCallTrace("Stop() — antes de _framePlayer.Pause() (fix v1.0.66: substitui _framePlayer.Stop())");
-            _framePlayer.Pause();
-            LogNativeCallTrace("Stop() — depois de _framePlayer.Pause()");
-        }
-
-        if (_framePlayer.Media is not null)
-        {
-            LogNativeCallTrace("Stop() — antes de _framePlayer.Time = 0");
-            _framePlayer.Time = 0;
-            LogNativeCallTrace("Stop() — depois de _framePlayer.Time = 0");
-        }
-
-        // Sprint NDI-Loop-Seamless (2026-09-17): descarta qualquer standby (B) que estivesse
-        // armado/tocando — o proximo Play() sempre recomeca do slot A do zero (ver comentario de
-        // Play()), entao nao ha motivo pra manter a Media de B viva entre um Stop e o Play seguinte.
-        //
-        // Fix v1.0.66 (2026-11-12): mesmo motivo do slot A acima — nunca mais Stop() nativo aqui.
-        // Como B ja vai ser descartado (Media = null) na sequencia, so precisa de Pause() antes,
-        // nunca de rebobinar.
-        if (_framePlayerB.IsPlaying)
-        {
-            LogNativeCallTrace("Stop() — antes de _framePlayerB.Pause() (fix v1.0.66: substitui _framePlayerB.Stop())");
-            _framePlayerB.Pause();
-            LogNativeCallTrace("Stop() — depois de _framePlayerB.Pause()");
-        }
-        _framePlayerB.Media = null;
         _currentFrameMediaB?.Dispose();
         _currentFrameMediaB = null;
         _seamlessSlotAIsActive = true;
@@ -1601,45 +1752,52 @@ public sealed class PlaybackEngine : IDisposable
             return;
         }
 
-        var wasMediaPlayerPlaying = _mediaPlayer.IsPlaying;
-        if (wasMediaPlayerPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — a propria v1.0.67
+        // (Play() de novo ao final do Seek) reabre a janela de ~6s do ReapplyAudioOutputDeviceAsync a
+        // CADA arraste de barra; sem esta trava, um arraste seguido de outro (ou de um Stop) logo
+        // depois podia colidir com uma tentativa de SetOutputDevice sobrando do arraste anterior.
+        lock (_nativeCallLock)
         {
-            LogNativeCallTrace("Seek() — antes de _mediaPlayer.Pause() (fix v1.0.67: pausa antes de mexer em Time)");
-            _mediaPlayer.Pause();
-            LogNativeCallTrace("Seek() — depois de _mediaPlayer.Pause()");
-        }
-
-        LogNativeCallTrace("Seek() — antes de _mediaPlayer.Time =");
-        _mediaPlayer.Time = (long)position.TotalMilliseconds;
-        LogNativeCallTrace("Seek() — depois de _mediaPlayer.Time =");
-
-        if (wasMediaPlayerPlaying)
-        {
-            LogNativeCallTrace("Seek() — antes de _mediaPlayer.Play() (fix v1.0.67: retoma apos o seek)");
-            _mediaPlayer.Play();
-            LogNativeCallTrace("Seek() — depois de _mediaPlayer.Play()");
-        }
-
-        var activeFramePlayer = ActiveFramePlayer;
-        if (activeFramePlayer.Media is not null)
-        {
-            var wasActiveFramePlayerPlaying = activeFramePlayer.IsPlaying;
-            if (wasActiveFramePlayerPlaying)
+            var wasMediaPlayerPlaying = _mediaPlayer.IsPlaying;
+            if (wasMediaPlayerPlaying)
             {
-                LogNativeCallTrace("Seek() — antes de activeFramePlayer.Pause() (fix v1.0.67)");
-                activeFramePlayer.Pause();
-                LogNativeCallTrace("Seek() — depois de activeFramePlayer.Pause()");
+                LogNativeCallTrace("Seek() — antes de _mediaPlayer.Pause() (fix v1.0.67: pausa antes de mexer em Time)");
+                _mediaPlayer.Pause();
+                LogNativeCallTrace("Seek() — depois de _mediaPlayer.Pause()");
             }
 
-            LogNativeCallTrace("Seek() — antes de activeFramePlayer.Time =");
-            activeFramePlayer.Time = (long)position.TotalMilliseconds;
-            LogNativeCallTrace("Seek() — depois de activeFramePlayer.Time =");
+            LogNativeCallTrace("Seek() — antes de _mediaPlayer.Time =");
+            _mediaPlayer.Time = (long)position.TotalMilliseconds;
+            LogNativeCallTrace("Seek() — depois de _mediaPlayer.Time =");
 
-            if (wasActiveFramePlayerPlaying)
+            if (wasMediaPlayerPlaying)
             {
-                LogNativeCallTrace("Seek() — antes de activeFramePlayer.Play() (fix v1.0.67)");
-                activeFramePlayer.Play();
-                LogNativeCallTrace("Seek() — depois de activeFramePlayer.Play()");
+                LogNativeCallTrace("Seek() — antes de _mediaPlayer.Play() (fix v1.0.67: retoma apos o seek)");
+                _mediaPlayer.Play();
+                LogNativeCallTrace("Seek() — depois de _mediaPlayer.Play()");
+            }
+
+            var activeFramePlayer = ActiveFramePlayer;
+            if (activeFramePlayer.Media is not null)
+            {
+                var wasActiveFramePlayerPlaying = activeFramePlayer.IsPlaying;
+                if (wasActiveFramePlayerPlaying)
+                {
+                    LogNativeCallTrace("Seek() — antes de activeFramePlayer.Pause() (fix v1.0.67)");
+                    activeFramePlayer.Pause();
+                    LogNativeCallTrace("Seek() — depois de activeFramePlayer.Pause()");
+                }
+
+                LogNativeCallTrace("Seek() — antes de activeFramePlayer.Time =");
+                activeFramePlayer.Time = (long)position.TotalMilliseconds;
+                LogNativeCallTrace("Seek() — depois de activeFramePlayer.Time =");
+
+                if (wasActiveFramePlayerPlaying)
+                {
+                    LogNativeCallTrace("Seek() — antes de activeFramePlayer.Play() (fix v1.0.67)");
+                    activeFramePlayer.Play();
+                    LogNativeCallTrace("Seek() — depois de activeFramePlayer.Play()");
+                }
             }
         }
 
@@ -1709,14 +1867,18 @@ public sealed class PlaybackEngine : IDisposable
 
         _pendingAudioDeviceId = deviceId;
 
-        if (_mediaPlayer.IsPlaying)
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
         {
-            LogAudioDeviceDiagnostic($"SET-IMEDIATO device={deviceId} (ja estava tocando)");
-            _mediaPlayer.SetOutputDevice(deviceId);
-        }
-        else
-        {
-            LogAudioDeviceDiagnostic($"SET-PENDENTE device={deviceId} (ainda nao tocando, aplica no evento Playing)");
+            if (_mediaPlayer.IsPlaying)
+            {
+                LogAudioDeviceDiagnostic($"SET-IMEDIATO device={deviceId} (ja estava tocando)");
+                _mediaPlayer.SetOutputDevice(deviceId);
+            }
+            else
+            {
+                LogAudioDeviceDiagnostic($"SET-PENDENTE device={deviceId} (ainda nao tocando, aplica no evento Playing)");
+            }
         }
     }
 
@@ -1822,7 +1984,11 @@ public sealed class PlaybackEngine : IDisposable
     /// </summary>
     public void SetLocalAudioMuted(bool muted)
     {
-        _mediaPlayer.Mute = muted;
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+        lock (_nativeCallLock)
+        {
+            _mediaPlayer.Mute = muted;
+        }
     }
 
     /// <summary>
@@ -1920,23 +2086,31 @@ public sealed class PlaybackEngine : IDisposable
 
             var elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds;
 
-            if (_disposed || _pendingAudioDeviceId != deviceId || !_mediaPlayer.IsPlaying)
+            // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — esta e a
+            // chamada nativa de fundo que motivou a trava (SetOutputDevice, de uma Task em background,
+            // sem nenhuma sincronizacao ate aqui contra Stop()/Seek()/Pause() na thread da UI). A trava
+            // cobre so o trecho sincrono (checagem + chamada); o Task.Delay acima fica de fora dela de
+            // proposito, nunca se trava um await.
+            lock (_nativeCallLock)
             {
-                LogAudioDeviceDiagnostic($"REAPPLY-CANCELADO device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs} disposed={_disposed} pendingMudou={_pendingAudioDeviceId != deviceId} isPlaying={_mediaPlayer.IsPlaying}");
-                return;
-            }
+                if (_disposed || _pendingAudioDeviceId != deviceId || !_mediaPlayer.IsPlaying)
+                {
+                    LogAudioDeviceDiagnostic($"REAPPLY-CANCELADO device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs} disposed={_disposed} pendingMudou={_pendingAudioDeviceId != deviceId} isPlaying={_mediaPlayer.IsPlaying}");
+                    return;
+                }
 
-            try
-            {
-                LogAudioDeviceDiagnostic($"REAPPLY-TENTATIVA device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs}");
-                _mediaPlayer.SetOutputDevice(deviceId);
-                LogAudioDeviceDiagnostic($"REAPPLY-OK device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs}");
-            }
-            catch (Exception ex)
-            {
-                LogAudioDeviceDiagnostic($"REAPPLY-ERRO device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs} ex={ex.Message}");
-                // Ignorado de proposito — isto e so uma tentativa de reforco; nunca deve derrubar a
-                // reproducao real por causa de uma falha aqui.
+                try
+                {
+                    LogAudioDeviceDiagnostic($"REAPPLY-TENTATIVA device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs}");
+                    _mediaPlayer.SetOutputDevice(deviceId);
+                    LogAudioDeviceDiagnostic($"REAPPLY-OK device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs}");
+                }
+                catch (Exception ex)
+                {
+                    LogAudioDeviceDiagnostic($"REAPPLY-ERRO device={deviceId} alvoMs={targetOffsetMs} decorridoMs={elapsedMs} ex={ex.Message}");
+                    // Ignorado de proposito — isto e so uma tentativa de reforco; nunca deve derrubar a
+                    // reproducao real por causa de uma falha aqui.
+                }
             }
         }
 
@@ -1945,6 +2119,16 @@ public sealed class PlaybackEngine : IDisposable
 
     private void OnTimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e)
     {
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — deliberadamente SEM
+        // trava aqui. Este handler roda no evento TimeChanged do proprio LibVLC (possivelmente numa
+        // thread interna dele, mais acoplada ao player do que um Task.Run/Timer comum do .NET) — o
+        // comentario de OnFrameDisplay desta classe documenta um DEADLOCK REAL ja causado por chamar
+        // uma API nativa de dentro de um callback do LibVLC enquanto a UI espera dentro de Pause().
+        // Sem conseguir confirmar nesta sessao (sem SDK pra testar) que o despacho deste evento
+        // especifico e seguro pra travar do mesmo jeito que os outros pontos desta correcao, a escolha
+        // mais honesta e deixar esta leitura de fora da trava — o risco de reabrir aquele deadlock
+        // documentado supera o beneficio aqui, e nenhum log desta investigacao jamais apontou pra
+        // OnTimeChanged/.Length como causa de nada.
         var lengthMs = _mediaPlayer.Length;
         var duration = lengthMs > 0 ? TimeSpan.FromMilliseconds(lengthMs) : (TimeSpan?)null;
         PositionChanged?.Invoke(this, new EnginePositionChangedEventArgs(TimeSpan.FromMilliseconds(e.Time), duration));
@@ -1977,10 +2161,18 @@ public sealed class PlaybackEngine : IDisposable
     {
         if (_loopEnabled && _currentMedia is not null)
         {
+            // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — este Task.Run
+            // reatribui Media e chama Play() numa thread de fundo, SEM nenhuma sincronizacao ate
+            // aqui contra Stop()/Seek()/Pause() (thread da UI) nem contra ReapplyAudioOutputDeviceAsync
+            // (outra thread de fundo). Com Loop ligado, isto dispara toda vez que o arquivo termina —
+            // exatamente o tipo de colisao "atrasada" que o usuario relatou.
             Task.Run(() =>
             {
-                _mediaPlayer.Media = _currentMedia;
-                _mediaPlayer.Play();
+                lock (_nativeCallLock)
+                {
+                    _mediaPlayer.Media = _currentMedia;
+                    _mediaPlayer.Play();
+                }
             });
             return;
         }
@@ -2092,10 +2284,14 @@ public sealed class PlaybackEngine : IDisposable
                 return;
             }
 
+            // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
             Task.Run(() =>
             {
-                _framePlayer.Media = _currentFrameMedia;
-                _framePlayer.Play();
+                lock (_nativeCallLock)
+                {
+                    _framePlayer.Media = _currentFrameMedia;
+                    _framePlayer.Play();
+                }
             });
         }
         else
@@ -2105,10 +2301,14 @@ public sealed class PlaybackEngine : IDisposable
                 return;
             }
 
+            // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
             Task.Run(() =>
             {
-                _framePlayerB.Media = _currentFrameMediaB;
-                _framePlayerB.Play();
+                lock (_nativeCallLock)
+                {
+                    _framePlayerB.Media = _currentFrameMediaB;
+                    _framePlayerB.Play();
+                }
             });
         }
     }
@@ -2163,8 +2363,14 @@ public sealed class PlaybackEngine : IDisposable
         {
             var previous = _currentFrameMedia;
             _currentFrameMedia = new Media(_libVlc, _currentFilePath, FromType.FromPath, ":no-audio");
-            _framePlayer.Media = _currentFrameMedia;
-            _framePlayer.Play();
+            // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — chamado direto
+            // na thread do timer de PollFramePlayerPosition (ver comentario de classe acima), sem
+            // nenhuma sincronizacao ate aqui contra Stop()/Seek()/Pause()/Load() na thread da UI.
+            lock (_nativeCallLock)
+            {
+                _framePlayer.Media = _currentFrameMedia;
+                _framePlayer.Play();
+            }
             previous?.Dispose();
         }
         catch (Exception)
@@ -2189,8 +2395,12 @@ public sealed class PlaybackEngine : IDisposable
         {
             var previous = _currentFrameMediaB;
             _currentFrameMediaB = new Media(_libVlc, _currentFilePath, FromType.FromPath, ":no-audio");
-            _framePlayerB.Media = _currentFrameMediaB;
-            _framePlayerB.Play();
+            // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock.
+            lock (_nativeCallLock)
+            {
+                _framePlayerB.Media = _currentFrameMediaB;
+                _framePlayerB.Play();
+            }
             previous?.Dispose();
         }
         catch (Exception)
@@ -2350,10 +2560,19 @@ public sealed class PlaybackEngine : IDisposable
         // linha fazia antes desta sprint.
         var activeFramePlayer = ActiveFramePlayer;
 
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — esta e a leitura
+        // nativa que o proprio comentario de OnFrameDisplay ja documentava como "disputa um lock
+        // interno do player com outras operacoes de controle, entre elas Pause()". Diferente daquele
+        // callback (thread do proprio LibVLC, onde travar e arriscado — ver comentario la), esta
+        // funcao roda numa thread comum do ThreadPool (o motivo exato da mudanca na Sprint
+        // NDI-audio-video-clock-lock-hotfix), entao travar aqui e seguro.
         long framePlayerTimeMs;
         try
         {
-            framePlayerTimeMs = activeFramePlayer.Time;
+            lock (_nativeCallLock)
+            {
+                framePlayerTimeMs = activeFramePlayer.Time;
+            }
         }
         catch (Exception)
         {
@@ -2418,13 +2637,25 @@ public sealed class PlaybackEngine : IDisposable
         // proprio Dispose() nunca vai travar ao fechar o programa com algo tocando (caminho nativo
         // diferente, nunca testado isoladamente) — mas e estritamente melhor que antes, que travava
         // SEMPRE nesse caso.
-        _mediaPlayer.Dispose();
+        // Fix v1.0.68 (2026-11-12): ver comentario completo de _nativeCallLock — _disposed ja foi
+        // marcado true ACIMA (fora da trava, de proposito), entao qualquer chamada de fundo que
+        // consiga pegar a trava primeiro ve _disposed==true e desiste sozinha (ver os checks de
+        // _disposed em ReapplyAudioOutputDeviceAsync/PollFramePlayerPosition); se este Dispose() pegar a trava
+        // primeiro, espera qualquer chamada de fundo JA em andamento terminar antes de descartar os
+        // players — nunca mais um SetOutputDevice/Play() de fundo tentando usar um player ja descartado.
+        lock (_nativeCallLock)
+        {
+            _mediaPlayer.Dispose();
+        }
         _currentMedia?.Dispose();
 
         // Fix v1.0.66 (2026-11-12): mesmo motivo da v1.0.65 acima, aplicado aqui tambem —
         // `_framePlayer.Stop()` foi confirmado 100% fatal enquanto tocando (ver Stop()). Removido
         // pelo mesmo raciocinio: Dispose() libera os recursos de qualquer forma.
-        _framePlayer.Dispose();
+        lock (_nativeCallLock)
+        {
+            _framePlayer.Dispose();
+        }
         _currentFrameMedia?.Dispose();
         Marshal.FreeHGlobal(_frameBuffers[0]);
         Marshal.FreeHGlobal(_frameBuffers[1]);
@@ -2433,7 +2664,10 @@ public sealed class PlaybackEngine : IDisposable
         // seguro mesmo se o modo sem-corte nunca chegou a ligar (B nunca recebeu Media, Dispose
         // num player parado nao tem efeito nenhum, Marshal.FreeHGlobal libera memoria alocada no
         // construtor de qualquer forma, usada ou nao).
-        _framePlayerB.Dispose();
+        lock (_nativeCallLock)
+        {
+            _framePlayerB.Dispose();
+        }
         _currentFrameMediaB?.Dispose();
         Marshal.FreeHGlobal(_frameBuffersB[0]);
         Marshal.FreeHGlobal(_frameBuffersB[1]);

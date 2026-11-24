@@ -857,6 +857,24 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         // indisponivel nesta maquina, ver construtor).
         var (frameRateNum, frameRateDen) = _engine.VideoFrameRate;
         _ndiSender?.SetFrameRate(frameRateNum, frameRateDen);
+
+        // Correção pós-entrega #17 (2026-11-24): "na hora que carrega o deck, ele precisava aparecer
+        // já o tempo. Ele só está aparecendo no tempo depois que dá o play" — até aqui,
+        // RemainingTime/DurationDisplay só eram preenchidos dentro de OnEnginePositionChanged, que só
+        // dispara de verdade com o player tocando (ResetToCue, chamado no início deste método, já
+        // tinha deixado os dois em "--:--"/_duration null). _engine.LastLoadedDuration agora entrega a
+        // duração já conhecida no próprio instante do Load — ver comentário completo dessa
+        // propriedade em PlaybackEngine.cs (reaproveita um parse que ConfigureFrameFormat já fazia,
+        // nenhuma chamada nativa nova). UpdatePositionDisplay com posição zero reproduz exatamente o
+        // mesmo cálculo/formatação usado depois por OnEnginePositionChanged (RemainingTime = duração
+        // inteira, Progress = 0) — sem duplicar lógica. Falha honesta se o parse não souber a duração
+        // (arquivo raro/corrompido-mas-ainda-tocável, ou timeout do parse): fica em "--:--", mesmo
+        // estado de antes desta correção, nunca um valor inventado.
+        _duration = _engine.LastLoadedDuration;
+        if (_duration is { } loadedDuration && loadedDuration > TimeSpan.Zero)
+        {
+            UpdatePositionDisplay(TimeSpan.Zero, loadedDuration);
+        }
     }
 
     /// <summary>

@@ -969,12 +969,39 @@
                                 num Grid de 2 colunas) — voltando a exatamente 2 linhas de conteúdo no
                                 total, o mesmo tanto que já estava comprovadamente cabendo. Row baixada
                                 de "130" pra "80", compatível com esse conteúdo bem mais enxuto.
+
+                                Correção pós-entrega #17 (2026-11-24): print seguinte mostrou que a
+                                barra CONTINUAVA cortada mesmo depois da correção #16 — e aqui veio o
+                                diagnóstico que faltava: Height fixo numa Row NÃO é garantia de espaço
+                                visível quando a ALTURA TOTAL desta Grid (header Auto + botões
+                                MinHeight="120" + esta Row) excede a altura real que o UniformGrid
+                                Rows="2" da tela do usuário está dando pra cada card. Quando isso
+                                acontece, o WPF não encolhe a Row fixa nem a Star — ele deixa a Grid
+                                INTEIRA ficar maior que a área disponível e o que sobra (sempre o fim,
+                                nunca o começo, porque o Arrange empilha de cima pra baixo) é cortado
+                                pelo limite físico do card. Ou seja, nas últimas 3 correções eu estava
+                                mexendo no número ERRADO — aumentar/diminuir esta Row sozinha nunca
+                                ia resolver, porque o problema real é a ALTURA TOTAL da Grid inteira
+                                sobrando espaço demais em relação ao que a janela do usuário consegue
+                                dar. A Row dos botões (MinHeight="120") é uma linha vermelha explícita
+                                do usuário (correção #14) e não pode encolher mais. Então a única forma
+                                de reduzir a altura TOTAL sem mexer nos botões é cortar gordura de
+                                onde ainda sobrava: a margem do cabeçalho (Grid Grid.Row="0" abaixo,
+                                12px -> 4px) e as margens do bloco nome+barra (ver StackPanel abaixo).
+                                Esta Row também baixou de "80" pra "62" — o conteúdo real dela (linha
+                                do nome ~26px + barra com margem reduzida ~31px) cabe em ~57px, 62
+                                deixa uma folga pequena mas honesta, em vez de reservar 80px dos quais
+                                quase 20 nunca eram usados (desperdiçados, só aumentando a altura TOTAL
+                                da Grid à toa). Economia total desta correção: ~33px a menos de altura
+                                desejada pela Grid inteira, sem tocar no Height/BorderThickness da
+                                barra (28px, pedido explícito do usuário na correção #11) nem no
+                                MinHeight dos botões.
                             -->
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" MinHeight="120" />
-                                    <RowDefinition Height="80" />
+                                    <RowDefinition Height="62" />
                                 </Grid.RowDefinitions>
 
                                 <!--
@@ -985,7 +1012,7 @@
                                     "Configurações" da barra superior (janela única, protegida por
                                     senha de admin), não mais um atalho por card.
                                 -->
-                                <Grid Grid.Row="0" Margin="0,0,0,12">
+                                <Grid Grid.Row="0" Margin="0,0,0,4">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="Auto" />
@@ -1324,11 +1351,29 @@
                                          transporte pra abrir espaço aqui, o que o usuário rejeitou de forma explícita
                                          ("não pode fazer uma modificação que estrague o que já tá bom"). Height
                                          34 -> 28 (o trilho do Theme.xaml continua grande/fácil de arrastar, só a altura
-                                         reservada no layout encolheu um pouco) e margem mais apertada. -->
+                                         reservada no layout encolheu um pouco) e margem mais apertada.
+                                         Correção pós-entrega #17 (2026-11-24): a barra CONTINUAVA cortada mesmo depois
+                                         da correção #16 — ver comentário completo no Grid pai (logo acima, antes das
+                                         RowDefinitions) pro diagnóstico real (não era o Height=80 da Row, era a altura
+                                         TOTAL da Grid inteira sobrando em relação ao espaço real da janela). Margem
+                                         "0,6,0,4" -> "0,3,0,0": economiza mais 7px de altura total sem tocar no
+                                         Height="28" da barra em si (vedado — pedido explícito do usuário na correção
+                                         #11) nem no PreviewMouseLeftButtonDown/Up/LostMouseCapture abaixo (arraste).
+                                         PreviewMouseMove novo: o usuário relatou "só está clique" ao tentar arrastar
+                                         com o botão pressionado — o Track/Thumb nativo do WPF (Theme.xaml) deveria
+                                         continuar o arraste sozinho depois do clique inicial (via IsMoveToPointEnabled),
+                                         mas pra garantir o comportamento pedido de forma robusta (clicar e "ficar
+                                         andando com a barra", mesmo que o mouse saia um pouco da área exata do trilho),
+                                         este handler recalcula Value direto a partir da posição X do mouse enquanto o
+                                         botão esquerdo estiver pressionado — reforço redundante e seguro: não substitui
+                                         o mecanismo nativo, só garante que o arraste sempre acompanhe o mouse de forma
+                                         contínua, frame a frame, exatamente como clique-e-arraste de qualquer player de
+                                         vídeo. -->
                                     <Slider Value="{Binding Progress, Mode=OneWay}" Minimum="0" Maximum="100"
                                             IsMoveToPointEnabled="True" IsEnabled="{Binding HasVideo}"
-                                            Height="28" Margin="0,6,0,4"
+                                            Height="28" Margin="0,3,0,0"
                                             PreviewMouseLeftButtonDown="SeekSlider_PreviewMouseLeftButtonDown"
+                                            PreviewMouseMove="SeekSlider_PreviewMouseMove"
                                             PreviewMouseLeftButtonUp="SeekSlider_PreviewMouseLeftButtonUp"
                                             LostMouseCapture="SeekSlider_LostMouseCapture" />
                                 </StackPanel>

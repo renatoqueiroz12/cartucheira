@@ -133,6 +133,34 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// Correção pós-entrega #17 (2026-11-24): usuário reportou "seria legal de eu poder clicar no
+    /// mouse e poder ficar andando com a barra. Isso não está acontecendo, tipo, só está clique" —
+    /// ou seja, o arraste contínuo (clicar e manter o botão pressionado enquanto move o mouse) não
+    /// estava acompanhando o cursor, só o clique inicial surtia efeito. O Track/Thumb nativo do WPF
+    /// (<c>IsMoveToPointEnabled="True"</c>, Theme.xaml) deveria em tese continuar o arraste sozinho
+    /// depois do primeiro clique, mas pra garantir o comportamento pedido de forma robusta e
+    /// independente de qualquer sutileza do Thumb nativo, este handler recalcula <c>Slider.Value</c>
+    /// direto a cada movimento do mouse, sempre que o botão esquerdo estiver pressionado sobre a
+    /// barra — mesmo racional de qualquer scrubber de player de vídeo (a posição X do cursor dentro
+    /// da largura da barra vira o percentual). Reforço redundante e seguro: não substitui
+    /// <see cref="SeekSlider_PreviewMouseLeftButtonDown"/>/<see cref="SeekSlider_PreviewMouseLeftButtonUp"/>
+    /// (que continuam responsáveis por congelar/aplicar o Seek de verdade no Deck), só garante que a
+    /// barra visualmente acompanhe o mouse em tempo real durante o arraste.
+    /// </summary>
+    private void SeekSlider_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (sender is Slider { DataContext: DeckViewModel deck } slider &&
+            e.LeftButton == MouseButtonState.Pressed &&
+            deck.HasVideo &&
+            slider.ActualWidth > 0)
+        {
+            var position = e.GetPosition(slider);
+            var ratio = Math.Clamp(position.X / slider.ActualWidth, 0, 1);
+            slider.Value = slider.Minimum + ratio * (slider.Maximum - slider.Minimum);
+        }
+    }
+
+    /// <summary>
     /// Sprint Deck-Seek-Bar-Fix (2026-09-15): rede de segurança — o Slider captura o mouse durante o
     /// arraste do polegar, então <c>LostMouseCapture</c> dispara de forma confiável tanto no soltar
     /// normal do botão (mesmo instante do <see cref="SeekSlider_PreviewMouseLeftButtonUp"/> acima,

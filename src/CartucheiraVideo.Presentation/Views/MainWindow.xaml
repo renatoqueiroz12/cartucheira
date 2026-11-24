@@ -99,6 +99,8 @@
         <conv:HexColorToBrushConverter x:Key="HexColorToBrushConverter" />
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <conv:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis" />
+        <!-- Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24): ver comentário completo em ItemCountToColumnsConverter.cs. -->
+        <conv:ItemCountToColumnsConverter x:Key="ItemCountToColumns" />
 
         <!-- Botao quadrado de transporte do Deck (Play/Pause/Stop/Loop/Next/Preview) — base compartilhada; cada instancia sobrescreve Background/BorderBrush/BorderThickness/Foreground. -->
         <Style x:Key="Theme.DeckBigButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -125,22 +127,47 @@
                                 <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.25" Color="Black" Direction="270" />
                             </Border.Effect>
                             <!--
-                                Sprint Cartucheira 2, parte 2 - correção (2026-08-10): o número do
-                                cartucho (badge no canto) saiu a pedido do usuário. O canto onde ele
-                                ficava agora mostra, no lugar, um selo pequeno "LOOP" (só quando
-                                IsLoopEnabled) — o mesmo canto, indicador diferente.
+                                Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24) — pedido explícito do
+                                usuário, item 5: "Número do botão: grande e visível. Nome do áudio: destaque principal.
+                                Ícone de áudio: bem visível. Duração: informação secundária, menor." Inverte a hierarquia
+                                que existia desde a Sprint Cartucheira 2 (duração grande em cima, nome pequeno embaixo) e
+                                traz de volta o número do cartucho (VtButtonViewModel.Number — já existia, só nunca foi
+                                usado aqui) na mesma posição onde ele tinha sido removido numa sprint anterior (ver
+                                histórico abaixo), agora dividindo o canto com o selo LOOP em vez de ser substituído por
+                                ele. Ícone de onda sonora novo no canto oposto, acima — visível só quando o cartucho não
+                                está selecionado (o selo azul de SelectionNumber, mesmo canto, tem prioridade quando os
+                                dois aconteceriam ao mesmo tempo). Os nomes dos FontSize (PadDuration/PadLabel) ficaram os
+                                mesmos de antes só pra não mexer em outros lugares que os usam (ex.: Theme.ProgramCard) —
+                                o que mudou foi qual TextBlock usa qual.
+
+                                Histórico: Sprint Cartucheira 2, parte 2 - correção (2026-08-10): o número do cartucho
+                                (badge no canto) tinha saído a pedido do usuário na época, e o canto passou a mostrar só
+                                o selo "LOOP".
                             -->
                             <Grid Margin="6">
-                                <!-- Sprint Cartucheira 2, parte 2, ajuste (2026-08-10): texto de dentro do cartucho trocado de Brush.TextHi (quase branco) pra Brush.PadText (preto), pedido explícito do usuário — o selo LOOP abaixo continua branco de propósito (fundo azul próprio, fora do pedido). -->
-                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                    <TextBlock Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.PadDuration}" FontWeight="Black"
-                                               Foreground="{DynamicResource Brush.PadText}" HorizontalAlignment="Center" />
-                                    <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="Bold"
-                                               Foreground="{DynamicResource Brush.PadText}" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               TextWrapping="Wrap" TextAlignment="Center" Margin="4,2,4,0" />
-                                </StackPanel>
+                                <!-- Nome do áudio — destaque principal agora (antes era a duração). Texto em Brush.PadText (preto), pedido explícito de uma sprint anterior, mantido. -->
+                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSize.PadDuration}" FontWeight="Black"
+                                           Foreground="{DynamicResource Brush.PadText}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           TextWrapping="Wrap" TextAlignment="Center" Margin="4,16,4,16" />
+
+                                <!-- Duração — agora informação secundária, menor e discreta (opacidade reduzida). -->
+                                <TextBlock Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.PadText}" Opacity="0.7"
+                                           HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,2" />
+
+                                <!-- Ícone de áudio — bem visível, canto superior direito (some quando o selo de seleção ocupa o mesmo canto, ver visibilidade abaixo). -->
+                                <Path Data="{StaticResource Icon.Waveform}" Stroke="{DynamicResource Brush.PadText}" StrokeThickness="1.3" Opacity="0.6"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="13" Height="13" Stretch="Uniform"
+                                      HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,1,1,0"
+                                      Visibility="{Binding IsSelected, Converter={StaticResource InverseBoolToVis}}" />
+
+                                <!-- Número do cartucho — grande e visível, canto superior esquerdo. -->
+                                <TextBlock Text="{Binding Number}" FontSize="{StaticResource FontSize.PadNumber}" FontWeight="Black"
+                                           Foreground="{DynamicResource Brush.PadText}" Opacity="0.75"
+                                           HorizontalAlignment="Left" VerticalAlignment="Top" Margin="2,0,0,0" />
+
                                 <Border Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="4,1"
-                                        HorizontalAlignment="Left" VerticalAlignment="Top"
+                                        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="18,0,0,0"
                                         Visibility="{Binding IsLoopEnabled, Converter={StaticResource BoolToVis}}">
                                     <TextBlock Text="LOOP" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
                                 </Border>
@@ -148,8 +175,7 @@
                                     Sprint Cartucheira 2, parte 2 - correção (2026-08-10): selo com a
                                     posição do cartucho na fila de seleção (SelectionNumber — 1º
                                     selecionado = "1", 2º = "2"...), pedido explícito do usuário. Canto
-                                    oposto ao selo LOOP (direita, não esquerda) pra nunca sobrepor os
-                                    dois ao mesmo tempo num cartucho selecionado E em loop. Visibilidade
+                                    oposto ao número/LOOP (direita, não esquerda). Visibilidade
                                     segue IsSelected (mesmo binding do anel azul abaixo) — SelectionNumber
                                     só é não-nulo quando IsSelected é verdadeiro (garantido por
                                     VtButtonViewModel.SetSelectionState), então não precisa de conversor
@@ -448,42 +474,54 @@
                         </Grid>
                     </Border>
                     <!--
-                        Grid MinHeight="204" (mesmo valor do MaxHeight dos ScrollViewer abaixo) —
+                        Grid MinHeight="232" (mesmo valor do MaxHeight dos ScrollViewer abaixo) —
                         correção pós-entrega (2026-08-10): sem isso, o bloco colapsa pra uma tira
                         fina de texto quando a mensagem honesta é a única coisa visível, encolhendo
                         a Botoneira e desequilibrando a proporção da tela toda. Duas grades por
                         dentro, alternando por IsInsideProgram: lista de programas (raiz) e
                         cartuchos do programa aberto (Sprint Cartucheira 2, parte 1).
+
+                        Correção pós-entrega #4 (2026-11-24): 204 → 232, porque o Button do
+                        pad/card (abaixo) cresceu de Height="90" pra Height="104" — precisa de mais
+                        espaço vertical pro número/ícone novos no template (ver Theme.PadButton).
+                        Continua sendo "altura de 2 linhas com margem" (2 × (104 + 12) = 232), só
+                        que com os botões maiores.
                     -->
-                    <Grid MinHeight="204">
+                    <Grid MinHeight="232">
                         <!-- Nível raiz: lista de programas. -->
                         <Grid Visibility="{Binding IsInsideProgram, Converter={StaticResource InverseBoolToVis}}">
                             <TextBlock Text="Nenhum programa encontrado — verifique a pasta raiz em Configurações → Cartucheira."
                                        Visibility="{Binding HasPrograms, Converter={StaticResource InverseBoolToVis}}"
                                        Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
                                        TextWrapping="Wrap" VerticalAlignment="Top" />
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="204" Background="Transparent"
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="232" Background="Transparent"
                                           Visibility="{Binding HasPrograms, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl ItemsSource="{Binding Programs}"
                                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <!--
-                                                Correção pós-entrega #2, Sprint Reformulação-Visual-Neon (2026-11-23): trocado de
-                                                UniformGrid Columns="5" pra WrapPanel — pedido do usuário ("os pads precisam ocupar
-                                                melhor a área disponível, lado a lado, como no nosso mockup"). UniformGrid sempre
-                                                reservava 5 colunas IGUAIS mesmo com poucos itens (ex.: só 1 Programa cadastrado
-                                                deixava 4 colunas vazias, um vão enorme sem conteúdo nenhum); WrapPanel com Width/
-                                                Height fixos no Button (abaixo) empacota os itens lado a lado no tamanho real deles e
-                                                só quebra linha quando não cabe mais — sem colunas fantasmas vazias, preenche melhor
-                                                o espaço tanto com poucos quanto com muitos itens.
+                                                Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24): a correção #2
+                                                (WrapPanel, ver histórico abaixo) tirou as colunas fantasmas, mas não fazia os cards
+                                                crescerem pra preencher a largura — com poucos Programas eles ficavam agrupados à
+                                                esquerda, com um vão vazio à direita (exatamente o problema original, só que de outro
+                                                jeito). Voltou a ser UniformGrid, mas agora com Columns CALCULADO a partir da
+                                                quantidade de Programas (ItemCountToColumnsConverter, teto de 4 — "até quatro colunas
+                                                por linha"), em vez do Columns="5" fixo de origem. Com poucos itens, Columns fica igual
+                                                à quantidade de itens, e cada card estica pra ocupar a célula inteira (por isso o
+                                                Button, abaixo, perdeu a Width fixa — só ficou a Height). Com mais itens que o teto, o
+                                                UniformGrid cria novas linhas sozinho.
+
+                                                Histórico: correção pós-entrega #2 (2026-11-23) tinha trocado UniformGrid Columns="5"
+                                                por WrapPanel, porque o UniformGrid fixo sempre reservava 5 colunas IGUAIS mesmo com
+                                                poucos itens (1 Programa deixava 4 colunas vazias).
                                             -->
-                                            <WrapPanel />
+                                            <UniformGrid Columns="{Binding Programs.Count, Converter={StaticResource ItemCountToColumns}}" />
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Button Command="{Binding OpenCommand}" Margin="6" Width="152" Height="90" Style="{StaticResource Theme.ProgramCard}" />
+                                            <Button Command="{Binding OpenCommand}" Margin="6" Height="104" Style="{StaticResource Theme.ProgramCard}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -495,23 +533,19 @@
                                        Visibility="{Binding HasButtons, Converter={StaticResource InverseBoolToVis}}"
                                        Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
                                        TextWrapping="Wrap" VerticalAlignment="Top" />
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="204" Background="Transparent"
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="232" Background="Transparent"
                                           Visibility="{Binding HasButtons, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl ItemsSource="{Binding Buttons}"
                                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <!--
-                                                Correção pós-entrega #2, Sprint Reformulação-Visual-Neon (2026-11-23): trocado de
-                                                UniformGrid Columns="5" pra WrapPanel — pedido do usuário ("os pads precisam ocupar
-                                                melhor a área disponível, lado a lado, como no nosso mockup"). UniformGrid sempre
-                                                reservava 5 colunas IGUAIS mesmo com poucos itens (ex.: só 1 Programa cadastrado
-                                                deixava 4 colunas vazias, um vão enorme sem conteúdo nenhum); WrapPanel com Width/
-                                                Height fixos no Button (abaixo) empacota os itens lado a lado no tamanho real deles e
-                                                só quebra linha quando não cabe mais — sem colunas fantasmas vazias, preenche melhor
-                                                o espaço tanto com poucos quanto com muitos itens.
+                                                Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24) — ver comentário
+                                                completo na grade de Programas, acima (mesmo raciocínio, mesmo converter). Aqui
+                                                Columns é calculado a partir da quantidade de cartuchos (Buttons.Count) deste banco,
+                                                não de Programs.
                                             -->
-                                            <WrapPanel />
+                                            <UniformGrid Columns="{Binding Buttons.Count, Converter={StaticResource ItemCountToColumns}}" />
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
@@ -540,7 +574,7 @@
                                                 sempre que Ctrl não está pressionado naquele instante
                                                 — última trava, depois de qualquer outra lógica.
                                             -->
-                                            <Button Command="{Binding PlayAudioCommand}" Margin="6" Width="152" Height="90" Style="{StaticResource Theme.PadButton}"
+                                            <Button Command="{Binding PlayAudioCommand}" Margin="6" Height="104" Style="{StaticResource Theme.PadButton}"
                                                     PreviewMouseRightButtonDown="PadButton_PreviewMouseRightButtonDown"
                                                     ContextMenuOpening="PadButton_ContextMenuOpening">
                                                 <Button.ContextMenu>
@@ -654,34 +688,40 @@
                         </Grid>
                     </Border>
                     <!-- Mesma estrutura de duas grades (programas/cartuchos) da metade Vinhetas — ver comentário lá. -->
-                    <Grid MinHeight="204">
+                    <Grid MinHeight="232">
                         <Grid Visibility="{Binding IsInsideProgram, Converter={StaticResource InverseBoolToVis}}">
                             <TextBlock Text="Nenhum programa encontrado — verifique a pasta raiz em Configurações → Cartucheira."
                                        Visibility="{Binding HasPrograms, Converter={StaticResource InverseBoolToVis}}"
                                        Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
                                        TextWrapping="Wrap" VerticalAlignment="Top" />
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="204" Background="Transparent"
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="232" Background="Transparent"
                                           Visibility="{Binding HasPrograms, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl ItemsSource="{Binding Programs}"
                                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <!--
-                                                Correção pós-entrega #2, Sprint Reformulação-Visual-Neon (2026-11-23): trocado de
-                                                UniformGrid Columns="5" pra WrapPanel — pedido do usuário ("os pads precisam ocupar
-                                                melhor a área disponível, lado a lado, como no nosso mockup"). UniformGrid sempre
-                                                reservava 5 colunas IGUAIS mesmo com poucos itens (ex.: só 1 Programa cadastrado
-                                                deixava 4 colunas vazias, um vão enorme sem conteúdo nenhum); WrapPanel com Width/
-                                                Height fixos no Button (abaixo) empacota os itens lado a lado no tamanho real deles e
-                                                só quebra linha quando não cabe mais — sem colunas fantasmas vazias, preenche melhor
-                                                o espaço tanto com poucos quanto com muitos itens.
+                                                Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24): a correção #2
+                                                (WrapPanel, ver histórico abaixo) tirou as colunas fantasmas, mas não fazia os cards
+                                                crescerem pra preencher a largura — com poucos Programas eles ficavam agrupados à
+                                                esquerda, com um vão vazio à direita (exatamente o problema original, só que de outro
+                                                jeito). Voltou a ser UniformGrid, mas agora com Columns CALCULADO a partir da
+                                                quantidade de Programas (ItemCountToColumnsConverter, teto de 4 — "até quatro colunas
+                                                por linha"), em vez do Columns="5" fixo de origem. Com poucos itens, Columns fica igual
+                                                à quantidade de itens, e cada card estica pra ocupar a célula inteira (por isso o
+                                                Button, abaixo, perdeu a Width fixa — só ficou a Height). Com mais itens que o teto, o
+                                                UniformGrid cria novas linhas sozinho.
+
+                                                Histórico: correção pós-entrega #2 (2026-11-23) tinha trocado UniformGrid Columns="5"
+                                                por WrapPanel, porque o UniformGrid fixo sempre reservava 5 colunas IGUAIS mesmo com
+                                                poucos itens (1 Programa deixava 4 colunas vazias).
                                             -->
-                                            <WrapPanel />
+                                            <UniformGrid Columns="{Binding Programs.Count, Converter={StaticResource ItemCountToColumns}}" />
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Button Command="{Binding OpenCommand}" Margin="6" Width="152" Height="90" Style="{StaticResource Theme.ProgramCard}" />
+                                            <Button Command="{Binding OpenCommand}" Margin="6" Height="104" Style="{StaticResource Theme.ProgramCard}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -692,23 +732,19 @@
                                        Visibility="{Binding HasButtons, Converter={StaticResource InverseBoolToVis}}"
                                        Foreground="{DynamicResource Brush.TextFaint}" FontSize="{StaticResource FontSize.Small}"
                                        TextWrapping="Wrap" VerticalAlignment="Top" />
-                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="204" Background="Transparent"
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="232" Background="Transparent"
                                           Visibility="{Binding HasButtons, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl ItemsSource="{Binding Buttons}"
                                               VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <!--
-                                                Correção pós-entrega #2, Sprint Reformulação-Visual-Neon (2026-11-23): trocado de
-                                                UniformGrid Columns="5" pra WrapPanel — pedido do usuário ("os pads precisam ocupar
-                                                melhor a área disponível, lado a lado, como no nosso mockup"). UniformGrid sempre
-                                                reservava 5 colunas IGUAIS mesmo com poucos itens (ex.: só 1 Programa cadastrado
-                                                deixava 4 colunas vazias, um vão enorme sem conteúdo nenhum); WrapPanel com Width/
-                                                Height fixos no Button (abaixo) empacota os itens lado a lado no tamanho real deles e
-                                                só quebra linha quando não cabe mais — sem colunas fantasmas vazias, preenche melhor
-                                                o espaço tanto com poucos quanto com muitos itens.
+                                                Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24) — ver comentário
+                                                completo na grade de Programas, acima (mesmo raciocínio, mesmo converter). Aqui
+                                                Columns é calculado a partir da quantidade de cartuchos (Buttons.Count) deste banco,
+                                                não de Programs.
                                             -->
-                                            <WrapPanel />
+                                            <UniformGrid Columns="{Binding Buttons.Count, Converter={StaticResource ItemCountToColumns}}" />
                                         </ItemsPanelTemplate>
                                     </ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate>
@@ -737,7 +773,7 @@
                                                 sempre que Ctrl não está pressionado naquele instante
                                                 — última trava, depois de qualquer outra lógica.
                                             -->
-                                            <Button Command="{Binding PlayAudioCommand}" Margin="6" Width="152" Height="90" Style="{StaticResource Theme.PadButton}"
+                                            <Button Command="{Binding PlayAudioCommand}" Margin="6" Height="104" Style="{StaticResource Theme.PadButton}"
                                                     PreviewMouseRightButtonDown="PadButton_PreviewMouseRightButtonDown"
                                                     ContextMenuOpening="PadButton_ContextMenuOpening">
                                                 <Button.ContextMenu>

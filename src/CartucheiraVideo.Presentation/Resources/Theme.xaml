@@ -49,19 +49,29 @@
         (Effect.CardShadow), não mais o preenchimento de fundo em si — mais fiel à arquitetura
         original da especificação visual ("Bordas discretas" + "sombras sutis" fazendo esse
         trabalho, não a escala de cinza).
+
+        Correção pós-entrega #4 (2026-11-24, análise feita a partir de duas imagens novas —
+        referência + print real da v1.0.114 — a pedido do usuário): o texto desta vez foi
+        "painéis em tons de grafite, DIFERENCIADOS do fundo" (não mais "ligeiramente"), então os
+        deltas da correção #2 (contidos demais pra esse pedido mais forte) subiram de novo — mas
+        com cautela, bem abaixo do 2x da correção #1 que já tinha sido rejeitado por "cinza
+        demais": Bg2=+9, Bg3=+14, Bg4=+20, Bg5=+28 (era +6/+10/+16/+22). O canal azul (B) sobe
+        sempre um pouco mais que R/G em cada degrau, pra manter a "leve tonalidade fria" que o
+        próprio Bg1 (#17191D) já tem (B=29 > R=23/G=25) — mesma lógica da paleta original,
+        só com step maior.
     -->
     <!-- Bg0: mais fundo que "Background principal" — usado só em superfícies "afundadas" (área de preview do Deck, caixa de miniatura) que precisam ler como uma tela, não um painel. Extensão do usuário não nomeada explicitamente na paleta de 6 cores. -->
     <Color x:Key="Color.Bg0">#FF0F1115</Color>
     <!-- Bg1 = "Background principal" da especificação visual -->
     <Color x:Key="Color.Bg1">#FF17191D</Color>
     <!-- Bg2 = "Painéis" -->
-    <Color x:Key="Color.Bg2">#FF1D1F23</Color>
+    <Color x:Key="Color.Bg2">#FF20222A</Color>
     <!-- Bg3 = "Cards" (também usado como superfície de inputs — TextBox/ComboBox/miniatura) -->
-    <Color x:Key="Color.Bg3">#FF212327</Color>
+    <Color x:Key="Color.Bg3">#FF25272F</Color>
     <!-- Bg4 = "Hover" -->
-    <Color x:Key="Color.Bg4">#FF27292D</Color>
+    <Color x:Key="Color.Bg4">#FF2B2D35</Color>
     <!-- Bg5 = "Selecionado" -->
-    <Color x:Key="Color.Bg5">#FF2D2F35</Color>
+    <Color x:Key="Color.Bg5">#FF33353D</Color>
 
     <SolidColorBrush x:Key="Brush.Bg0" Color="{StaticResource Color.Bg0}" />
     <SolidColorBrush x:Key="Brush.Bg1" Color="{StaticResource Color.Bg1}" />
@@ -80,8 +90,17 @@
         Effect.CardShadow, abaixo) — moderado de #FF565A62 pra um tom um pouco menos vívido
         (#FF45484F), continua claramente mais claro que Bg5 (o mais claro da escala de fundo), mas
         sem virar um rim muito brilhante contra painéis agora bem mais escuros.
+
+        Correção pós-entrega #4 (2026-11-24): pedido explícito do usuário, item 2: "Bordas
+        discretas com acabamento azul elétrico." O #FF45484F da correção #2 é um cinza neutro (R,
+        G, B quase iguais — 69,72,79) — lia como "borda cinza", não como um acabamento azul.
+        Trocado por #FF3C4A70 (60,74,112): mesmo papel (discreto, não é um contorno vibrante), mas
+        com o azul claramente dominante no matiz — "elétrico" vem da saturação mais alta desse
+        azul, "discreto" continua vindo do valor (luminosidade) baixo, igual antes. Usado nos
+        mesmos lugares de sempre (Deck/Botoneira/Explorer, mecanismo de DataTrigger do Deck
+        inalterado — ver Theme.xaml, Style de Deck, comentário de precedência de propriedade).
     -->
-    <SolidColorBrush x:Key="Brush.Line" Color="#FF45484F" />
+    <SolidColorBrush x:Key="Brush.Line" Color="#FF3C4A70" />
     <SolidColorBrush x:Key="Brush.LineSoft" Color="#FF2E3034" />
 
     <!-- ===================== Sombra de card (novo na correção pós-entrega #2, 2026-11-23) =====================
@@ -689,7 +708,16 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type ListBoxItem}">
-                    <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="4">
+                    <!--
+                        Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24): pedido
+                        do usuário, item 6 ("destaque de mídia selecionada" no Explorer/Playlist).
+                        BorderThickness esquerda nova, só visível quando selecionado — reaproveita a
+                        mesma linguagem visual já usada pro indicador "PRÓXIMO" da Playlist (barrinha
+                        azul à esquerda), em vez de depender só da diferença de Background (que
+                        melhorou com o novo degrau de Bg5, mas sozinha ainda é sutil).
+                    -->
+                    <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="4"
+                            BorderThickness="2,0,0,0" BorderBrush="Transparent">
                         <ContentPresenter />
                     </Border>
                     <ControlTemplate.Triggers>
@@ -698,6 +726,7 @@
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Bg5}" />
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Blue}" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>

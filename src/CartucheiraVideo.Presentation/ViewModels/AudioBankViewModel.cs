@@ -935,8 +935,27 @@ public sealed class AudioBankViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Cor por banco (não por categoria de cartucho individual, diferente dos dados fictícios antigos — sem metadata de categoria vinda de um scan de pasta) — reaproveita as cores já aprovadas em Theme.xaml (Brush.Pad.*), nenhuma cor nova.</summary>
-    private static string PadColorFor(string bankName) => bankName == "Vinhetas" ? "#FF2D7DFF" : "#FF2DBE60";
+    /// <summary>
+    /// Cor PADRÃO por banco/categoria — usada só quando o cartucho não tem cor própria definida
+    /// (ver os dois chamadores: <c>Color = cartridge.Color ?? PadColorFor(Name)</c> / equivalente).
+    ///
+    /// Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24): o usuário reportou
+    /// cartuchos do MESMO banco (Vinhetas) aparecendo em cores diferentes (verde, âmbar, azul) e
+    /// pediu "cores consistentes por categoria... sem variar a cor aleatoriamente". A causa raiz NÃO
+    /// é este método — é cor CUSTOMIZADA por cartucho (gravada via dashboard ou Ctrl+clique direito,
+    /// feature pedida pelo próprio usuário na v1.0.113) tendo prioridade sobre este padrão. Perguntei
+    /// explicitamente e o usuário confirmou: manter a possibilidade de customizar por cartucho, só
+    /// corrigir o PADRÃO — por isso a única mudança aqui é Trilhas deixar de cair num verde
+    /// (#FF2DBE60, resquício de quando "Trilhas" não tinha uma cor de categoria própria definida)
+    /// e passar a usar o mesmo vermelho já aprovado em Brush.Pad.Red (#FFD84545) — pedido explícito
+    /// ("vermelho para Impactos"). Vinhetas já usava o azul certo (Brush.Pad.Blue) e não mudou.
+    ///
+    /// Isso corrige todo cartucho NOVO (sem cor própria ainda) a partir de agora. Cartuchos que já
+    /// têm uma cor customizada salva (como os que geraram o print verde/âmbar/azul) continuam com
+    /// essa cor até alguém trocar de novo pelo dashboard ou pelo menu Cor... — isso é o comportamento
+    /// que o usuário pediu pra manter, não um bug.
+    /// </summary>
+    private static string PadColorFor(string bankName) => bankName == "Vinhetas" ? "#FF2D7DFF" : "#FFD84545";
 
     private static long SafeFileSize(string path)
     {

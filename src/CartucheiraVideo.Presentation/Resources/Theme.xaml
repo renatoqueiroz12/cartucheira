@@ -243,8 +243,24 @@
     <!-- Nome do arquivo no Explorer: 16 -> 17 na Sprint 8, mesmo pedido acima; 17 -> 19 na correção
          pós-entrega #2 da Sprint Reformulação-Visual-Neon (2026-11-23), mesmo pedido de destaque. -->
     <sys:Double x:Key="FontSize.ListName">19</sys:Double>
+    <!-- FontSize.Label (14) é compartilhado com várias telas de Configurações (Deck/GC/NDI/
+         Playlist/Teleprompter/etc.) — NÃO mexer aqui pra não afetar telas fora do escopo desta
+         sprint visual. -->
     <sys:Double x:Key="FontSize.Label">14</sys:Double>
-    <sys:Double x:Key="FontSize.Title">18</sys:Double>
+    <!--
+        Correção pós-entrega #7, Sprint Reformulação-Visual-Neon (2026-11-24): pedido do usuário
+        ("atente a diferença de tamanho das fontes de tudo... as fontes sao sempre maiores, usando
+        o maximo tamanho possível de onde estao"). Recurso NOVO, usado só pelos títulos de seção da
+        tela principal (DECK 1/DECK 2, "Vinhetas > ...", "Trilhas > ...", cronômetro do NowPlaying)
+        — exatamente os 5 lugares em MainWindow.xaml que antes usavam FontSize.Label (14). Criado em
+        vez de aumentar FontSize.Label direto porque esse recurso é compartilhado com várias telas
+        de Configurações fora do escopo desta sprint (ver comentário acima) — side risco de inflar
+        telas que o usuário não pediu pra mudar.
+    -->
+    <sys:Double x:Key="FontSize.MainSectionLabel">18</sys:Double>
+    <!-- Correção pós-entrega #7 (2026-11-24): 18 -> 22. Usado só pelo título "Cartucheira Vídeo" no
+         cabeçalho (único uso no projeto inteiro) — seguro de aumentar sem efeito colateral. -->
+    <sys:Double x:Key="FontSize.Title">22</sys:Double>
     <sys:Double x:Key="FontSize.DeckFileName">20</sys:Double>
     <!-- FontSize.PadDuration: nome de 18 em diante não é mais usado por nenhum TextBlock (a duração
          virou secundária na correção #4, FontSize.Micro) — mantido só porque outro recurso (nenhum
@@ -253,8 +269,10 @@
     <!-- Correção pós-entrega #5 (2026-11-24): 10.5 -> 14. Com a imagem de referência de verdade em
          mãos (antes só tinha a descrição dela), o nome do cartucho na referência é bem mais legível
          do que 10.5px — também usado por Theme.ProgramCard (nome da pasta/programa), ganha o mesmo
-         aumento de propósito, pra manter os dois consistentes entre si. -->
-    <sys:Double x:Key="FontSize.PadLabel">14</sys:Double>
+         aumento de propósito, pra manter os dois consistentes entre si.
+         Correção pós-entrega #7 (2026-11-24): 14 -> 16, mesmo pedido de "fontes sempre maiores,
+         usando o máximo tamanho possível de onde estão". -->
+    <sys:Double x:Key="FontSize.PadLabel">16</sys:Double>
     <!-- Número do pad: 14 -> 20 na correção pós-entrega #5 (2026-11-24) — na imagem de referência
          real o número é GRANDE, claramente o maior texto do pad (maior até que o nome), não um
          badge discreto de canto como a Sprint 8 original previa. -->

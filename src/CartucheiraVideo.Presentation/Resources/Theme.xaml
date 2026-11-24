@@ -59,19 +59,29 @@
         sempre um pouco mais que R/G em cada degrau, pra manter a "leve tonalidade fria" que o
         próprio Bg1 (#17191D) já tem (B=29 > R=23/G=25) — mesma lógica da paleta original,
         só com step maior.
+
+        Correção pós-entrega #5 (2026-11-24): o usuário conseguiu anexar a imagem de referência de
+        verdade nesta rodada (até aqui eu só tinha a descrição dela, vinda do resumo da conversa).
+        Comparando de verdade: o problema não era o quanto os painéis clareiam (R/G já estavam
+        proporcionais), era o MATIZ — a referência é visivelmente mais azul-marinho do que o cinza-
+        azulado sutil que a correção #4 tinha. R/G de cada degrau continuam EXATAMENTE os mesmos de
+        antes (nenhum risco de repetir o "cinza demais" — a luminosidade não mudou); só o delta do
+        canal B (azul) aumentou bem mais forte a cada degrau (+18/+24/+32/+44, era +13/+18/+24/+32),
+        deixando o matiz claramente mais azul sem alterar o quanto cada painel "clareia" em relação
+        ao fundo.
     -->
     <!-- Bg0: mais fundo que "Background principal" — usado só em superfícies "afundadas" (área de preview do Deck, caixa de miniatura) que precisam ler como uma tela, não um painel. Extensão do usuário não nomeada explicitamente na paleta de 6 cores. -->
     <Color x:Key="Color.Bg0">#FF0F1115</Color>
     <!-- Bg1 = "Background principal" da especificação visual -->
     <Color x:Key="Color.Bg1">#FF17191D</Color>
     <!-- Bg2 = "Painéis" -->
-    <Color x:Key="Color.Bg2">#FF20222A</Color>
+    <Color x:Key="Color.Bg2">#FF20222F</Color>
     <!-- Bg3 = "Cards" (também usado como superfície de inputs — TextBox/ComboBox/miniatura) -->
-    <Color x:Key="Color.Bg3">#FF25272F</Color>
+    <Color x:Key="Color.Bg3">#FF252735</Color>
     <!-- Bg4 = "Hover" -->
-    <Color x:Key="Color.Bg4">#FF2B2D35</Color>
+    <Color x:Key="Color.Bg4">#FF2B2D3D</Color>
     <!-- Bg5 = "Selecionado" -->
-    <Color x:Key="Color.Bg5">#FF33353D</Color>
+    <Color x:Key="Color.Bg5">#FF333549</Color>
 
     <SolidColorBrush x:Key="Brush.Bg0" Color="{StaticResource Color.Bg0}" />
     <SolidColorBrush x:Key="Brush.Bg1" Color="{StaticResource Color.Bg1}" />
@@ -225,12 +235,19 @@
     <sys:Double x:Key="FontSize.Label">14</sys:Double>
     <sys:Double x:Key="FontSize.Title">18</sys:Double>
     <sys:Double x:Key="FontSize.DeckFileName">20</sys:Double>
+    <!-- FontSize.PadDuration: nome de 18 em diante não é mais usado por nenhum TextBlock (a duração
+         virou secundária na correção #4, FontSize.Micro) — mantido só porque outro recurso (nenhum
+         restante) poderia depender do x:Key; ver Theme.PadButton pra onde cada tamanho foi parar. -->
     <sys:Double x:Key="FontSize.PadDuration">18</sys:Double>
-    <sys:Double x:Key="FontSize.PadLabel">10.5</sys:Double>
-    <!-- Número do pad (badge no canto) — Sprint 8: "número grande" (especificação visual, ajustes
-         finais). Continua um badge de canto, não o elemento dominante do pad (esse papel é da
-         duração, decisão da v7 mantida), mas maior/mais legível que os 12px da Sprint 7. -->
-    <sys:Double x:Key="FontSize.PadNumber">14</sys:Double>
+    <!-- Correção pós-entrega #5 (2026-11-24): 10.5 -> 14. Com a imagem de referência de verdade em
+         mãos (antes só tinha a descrição dela), o nome do cartucho na referência é bem mais legível
+         do que 10.5px — também usado por Theme.ProgramCard (nome da pasta/programa), ganha o mesmo
+         aumento de propósito, pra manter os dois consistentes entre si. -->
+    <sys:Double x:Key="FontSize.PadLabel">14</sys:Double>
+    <!-- Número do pad: 14 -> 20 na correção pós-entrega #5 (2026-11-24) — na imagem de referência
+         real o número é GRANDE, claramente o maior texto do pad (maior até que o nome), não um
+         badge discreto de canto como a Sprint 8 original previa. -->
+    <sys:Double x:Key="FontSize.PadNumber">20</sys:Double>
 
     <!-- ===================== Tamanhos de controle ===================== -->
     <!-- 34 -> 30 na Sprint 8: Decks cedem um pouco de altura pro preview de vídeo crescer (prioridade

@@ -122,70 +122,60 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="PadBorder"
                                 Background="{Binding Color, Converter={StaticResource HexColorToBrushConverter}}"
-                                CornerRadius="6" Opacity="0.92" BorderThickness="1" BorderBrush="Transparent">
+                                CornerRadius="8" BorderThickness="1" BorderBrush="Transparent">
                             <Border.Effect>
                                 <DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.25" Color="Black" Direction="270" />
                             </Border.Effect>
                             <!--
-                                Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24) — pedido explícito do
-                                usuário, item 5: "Número do botão: grande e visível. Nome do áudio: destaque principal.
-                                Ícone de áudio: bem visível. Duração: informação secundária, menor." Inverte a hierarquia
-                                que existia desde a Sprint Cartucheira 2 (duração grande em cima, nome pequeno embaixo) e
-                                traz de volta o número do cartucho (VtButtonViewModel.Number — já existia, só nunca foi
-                                usado aqui) na mesma posição onde ele tinha sido removido numa sprint anterior (ver
-                                histórico abaixo), agora dividindo o canto com o selo LOOP em vez de ser substituído por
-                                ele. Ícone de onda sonora novo no canto oposto, acima — visível só quando o cartucho não
-                                está selecionado (o selo azul de SelectionNumber, mesmo canto, tem prioridade quando os
-                                dois aconteceriam ao mesmo tempo). Os nomes dos FontSize (PadDuration/PadLabel) ficaram os
-                                mesmos de antes só pra não mexer em outros lugares que os usam (ex.: Theme.ProgramCard) —
-                                o que mudou foi qual TextBlock usa qual.
-
-                                Histórico: Sprint Cartucheira 2, parte 2 - correção (2026-08-10): o número do cartucho
-                                (badge no canto) tinha saído a pedido do usuário na época, e o canto passou a mostrar só
-                                o selo "LOOP".
+                                Correção pós-entrega #5, Sprint Reformulação-Visual-Neon (2026-11-24) — o usuário finalmente
+                                conseguiu anexar a imagem de referência de verdade nesta rodada (antes eu só tinha a
+                                descrição dela vinda do resumo da conversa) e disse "impacto visual zero" sobre a
+                                correção #4. Comparando pixel a pixel com a referência, a causa real não era a cor do
+                                pad em si (já estava certa) — eram TRÊS coisas junto apagando o efeito: (1) Opacity="0.92"
+                                no PadBorder (removida, o pad agora usa a cor cheia, sem esmaecer nada); (2) o texto
+                                (nome/número/duração) estava em Brush.PadText (preto) por cima de uma cor já saturada —
+                                na referência é todo BRANCO, com bem mais contraste/"brilho"; (3) o conteúdo estava
+                                CENTRALIZADO — na referência, número e nome ficam alinhados à ESQUERDA (como um rótulo),
+                                não centralizados. Esta correção alinha nos três pontos: layout em 3 linhas (linha 1:
+                                número grande à esquerda + ícone de onda à direita; linha 2: nome, à esquerda, ocupando
+                                o espaço que sobra; linha 3: selo LOOP à esquerda + duração minúscula à direita — a
+                                referência nem mostra duração no pad, mas o usuário pediu explicitamente pra mantê-la,
+                                só "menor e secundária", por isso ficou num canto bem discreto). Texto trocado de
+                                Brush.PadText pra Brush.TextHi (branco quase puro, DynamicResource — ver Theme.xaml).
                             -->
-                            <Grid Margin="6">
-                                <!-- Nome do áudio — destaque principal agora (antes era a duração). Texto em Brush.PadText (preto), pedido explícito de uma sprint anterior, mantido. -->
-                                <TextBlock Text="{Binding Name}" FontSize="{StaticResource FontSize.PadDuration}" FontWeight="Black"
-                                           Foreground="{DynamicResource Brush.PadText}" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                           TextWrapping="Wrap" TextAlignment="Center" Margin="4,16,4,16" />
+                            <Grid Margin="10,8">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
 
-                                <!-- Duração — agora informação secundária, menor e discreta (opacidade reduzida). -->
-                                <TextBlock Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource Brush.PadText}" Opacity="0.7"
-                                           HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,2" />
-
-                                <!-- Ícone de áudio — bem visível, canto superior direito (some quando o selo de seleção ocupa o mesmo canto, ver visibilidade abaixo). -->
-                                <Path Data="{StaticResource Icon.Waveform}" Stroke="{DynamicResource Brush.PadText}" StrokeThickness="1.3" Opacity="0.6"
-                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="13" Height="13" Stretch="Uniform"
-                                      HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,1,1,0"
+                                <!-- Linha 1: número do cartucho (grande, à esquerda) + ícone de onda sonora (à direita, some quando o selo de seleção ocupa o mesmo canto). -->
+                                <TextBlock Grid.Row="0" Text="{Binding Number}" FontSize="{StaticResource FontSize.PadNumber}" FontWeight="Black"
+                                           Foreground="{DynamicResource Brush.TextHi}" HorizontalAlignment="Left" />
+                                <Path Grid.Row="0" Data="{StaticResource Icon.Waveform}" Stroke="{DynamicResource Brush.TextHi}" StrokeThickness="1.4" Opacity="0.85"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="14" Height="14" Stretch="Uniform"
+                                      HorizontalAlignment="Right" VerticalAlignment="Center"
                                       Visibility="{Binding IsSelected, Converter={StaticResource InverseBoolToVis}}" />
-
-                                <!-- Número do cartucho — grande e visível, canto superior esquerdo. -->
-                                <TextBlock Text="{Binding Number}" FontSize="{StaticResource FontSize.PadNumber}" FontWeight="Black"
-                                           Foreground="{DynamicResource Brush.PadText}" Opacity="0.75"
-                                           HorizontalAlignment="Left" VerticalAlignment="Top" Margin="2,0,0,0" />
-
-                                <Border Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="4,1"
-                                        HorizontalAlignment="Left" VerticalAlignment="Top" Margin="18,0,0,0"
-                                        Visibility="{Binding IsLoopEnabled, Converter={StaticResource BoolToVis}}">
-                                    <TextBlock Text="LOOP" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
-                                </Border>
-                                <!--
-                                    Sprint Cartucheira 2, parte 2 - correção (2026-08-10): selo com a
-                                    posição do cartucho na fila de seleção (SelectionNumber — 1º
-                                    selecionado = "1", 2º = "2"...), pedido explícito do usuário. Canto
-                                    oposto ao número/LOOP (direita, não esquerda). Visibilidade
-                                    segue IsSelected (mesmo binding do anel azul abaixo) — SelectionNumber
-                                    só é não-nulo quando IsSelected é verdadeiro (garantido por
-                                    VtButtonViewModel.SetSelectionState), então não precisa de conversor
-                                    próprio pro número em si.
-                                -->
-                                <Border Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="5,1"
-                                        HorizontalAlignment="Right" VerticalAlignment="Top"
+                                <Border Grid.Row="0" Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="5,1"
+                                        HorizontalAlignment="Right" VerticalAlignment="Center"
                                         Visibility="{Binding IsSelected, Converter={StaticResource BoolToVis}}">
                                     <TextBlock Text="{Binding SelectionNumber}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
                                 </Border>
+
+                                <!-- Linha 2: nome do áudio — destaque principal, alinhado à esquerda (igual à referência), branco. -->
+                                <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="Bold"
+                                           Foreground="{DynamicResource Brush.TextHi}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                           TextWrapping="Wrap" Margin="0,2,2,0" />
+
+                                <!-- Linha 3: selo LOOP (esquerda) + duração discreta (direita, bem pequena — informação secundária). -->
+                                <Border Grid.Row="2" Background="{DynamicResource Brush.Blue}" CornerRadius="3" Padding="4,1"
+                                        HorizontalAlignment="Left"
+                                        Visibility="{Binding IsLoopEnabled, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Text="LOOP" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
+                                </Border>
+                                <TextBlock Grid.Row="2" Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.Micro}" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource Brush.TextHi}" Opacity="0.65" HorizontalAlignment="Right" />
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>

@@ -65,18 +65,26 @@
             <Setter Property="Margin" Value="16,0,16,6" />
         </Style>
 
-        <!-- Aba (Explorer/Playlist): sublinhado azul quando ativa, sem caixa/fundo — mesmo padrao do mockup (.tab-btn). -->
+        <!--
+            Aba (Explorer/Playlist). Era um sublinhado azul quando ativa, sem caixa/fundo.
+
+            Correção pós-entrega #5, Sprint Reformulação-Visual-Neon (2026-11-24): comparando com a
+            imagem de referência de verdade (antes só tinha a descrição dela), a aba ativa lá é um
+            PILL preenchido de azul sólido (fundo cheio, cantos arredondados, texto branco) — não um
+            sublinhado fino. Trocado pra bater com a referência; a aba inativa continua sem fundo,
+            só texto acinzentado.
+        -->
         <Style x:Key="Theme.TabButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Foreground" Value="{DynamicResource Brush.TextLow}" />
             <Setter Property="FontSize" Value="{StaticResource FontSize.Body}" />
             <Setter Property="FontWeight" Value="Bold" />
-            <Setter Property="Padding" Value="0,0,0,8" />
+            <Setter Property="Padding" Value="16,8" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" BorderThickness="0,0,0,2" BorderBrush="Transparent" Padding="{TemplateBinding Padding}">
+                        <Border x:Name="Bd" CornerRadius="6" Background="Transparent" Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
@@ -84,8 +92,8 @@
                                 <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
                             </Trigger>
                             <Trigger Property="Tag" Value="Active">
-                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource Brush.Blue}" />
+                                <Setter Property="Foreground" Value="White" />
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource Brush.Blue}" />
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -358,8 +366,15 @@
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
                         <Style.Triggers>
+                            <!--
+                                Correção pós-entrega #5 (2026-11-24): #173257 (um azul-marinho bem
+                                escuro/dessaturado) comparado com a imagem de referência real ficava
+                                claramente mais apagado que o azul vívido do item "tocando" de lá —
+                                clareado/saturado pra #1E49A8, mesma família de cor (Brush.Blue),
+                                só mais próximo da referência.
+                            -->
                             <DataTrigger Binding="{Binding IsCurrent}" Value="True">
-                                <Setter Property="Background" Value="#173257" />
+                                <Setter Property="Background" Value="#1E49A8" />
                             </DataTrigger>
                         </Style.Triggers>
                     </Style>

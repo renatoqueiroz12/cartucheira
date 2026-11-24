@@ -84,7 +84,12 @@ public sealed class PlaylistViewModel : ViewModelBase
         // #11 o MainViewModel responde chamando ShowProgramPicker em vez de abrir uma Window.
         LoadPlaylistCommand = new RelayCommand(_ => OpenPlaylistRequested?.Invoke());
         ToggleAutoModeCommand = new RelayCommand(_ => ToggleAutoMode());
-        BackToProgramsCommand = new RelayCommand(_ => BackToPrograms());
+        // Correção pós-entrega #12 (2026-11-24): CanExecute tied a IsPickerShowingEditions — igual
+        // ao botão "voltar" de um navegador, só faz sentido clicar quando tem pra onde voltar
+        // (passo 2, Edições). WPF já desabilita o Button sozinho a partir do CanExecute, sem
+        // precisar de Visibility condicional.
+        BackToProgramsCommand = new RelayCommand(_ => BackToPrograms(), _ => IsPickerShowingEditions);
+        ForwardToEditionsCommand = new RelayCommand(_ => GoForwardToEditions(), _ => CanGoForward);
         ClosePickerCommand = new RelayCommand(_ => ClosePicker());
     }
 
@@ -119,8 +124,31 @@ public sealed class PlaylistViewModel : ViewModelBase
     public bool IsPickerShowingEditions
     {
         get => _isPickerShowingEditions;
-        private set => SetProperty(ref _isPickerShowingEditions, value);
+        private set
+        {
+            if (SetProperty(ref _isPickerShowingEditions, value))
+            {
+                OnPropertyChanged(nameof(CanGoForward));
+                // Correção pós-entrega #12 (2026-11-24): Voltar/Avançar (estilo histórico de
+                // navegador) dependem deste valor pro CanExecute — avisados aqui, num lugar só,
+                // em vez de espalhar a chamada em cada método que troca de passo.
+                ((RelayCommand)BackToProgramsCommand).RaiseCanExecuteChanged();
+                ((RelayCommand)ForwardToEditionsCommand).RaiseCanExecuteChanged();
+            }
+        }
     }
+
+    /// <summary>
+    /// Correção pós-entrega #12 (2026-11-24): "voltar/avançar, pra poder ir pra frente ou pra trás"
+    /// — pedido explícito do usuário por uma navegação tipo histórico de navegador, não só uma ida
+    /// única Programas -> Datas. True quando o operador já visitou as Datas de algum Programa nesta
+    /// abertura do seletor e voltou pros Programas (<see cref="BackToPrograms"/>) SEM escolher um
+    /// Programa diferente — nesse caso dá pra "avançar" de volta pras Datas já carregadas
+    /// (<see cref="PickerEditions"/>) sem reler o disco. Fica false de novo assim que uma Data é
+    /// escolhida de verdade (a Playlist carrega e o seletor fecha) ou quando ele é reaberto do zero
+    /// (<see cref="ShowProgramPicker"/>).
+    /// </summary>
+    public bool CanGoForward => !IsPickerShowingEditions && _pickerSelectedProgram is not null;
 
     /// <summary>Correção pós-entrega #11 (2026-11-24): mensagem de erro do seletor inline (ex.: falha ao listar Programas/Datas/Laudas do disco) — vazio quando não há erro.</summary>
     public string PickerErrorMessage
@@ -170,6 +198,9 @@ public sealed class PlaylistViewModel : ViewModelBase
     /// <summary>Correção pós-entrega #11 (2026-11-24): "← Voltar pros Programas" do passo 2 do seletor inline.</summary>
     public ICommand BackToProgramsCommand { get; }
 
+    /// <summary>Correção pós-entrega #12 (2026-11-24): "avançar" de volta pras Datas já carregadas, depois de ter usado <see cref="BackToProgramsCommand"/> sem escolher um Programa diferente — ver <see cref="CanGoForward"/>.</summary>
+    public ICommand ForwardToEditionsCommand { get; }
+
     /// <summary>Correção pós-entrega #11 (2026-11-24): fecha o seletor inline sem escolher nada (equivalente ao "Cancelar" do antigo diálogo modal).</summary>
     public ICommand ClosePickerCommand { get; }
 
@@ -190,6 +221,8 @@ public sealed class PlaylistViewModel : ViewModelBase
         PickerErrorMessage = string.Empty;
         IsPickerShowingEditions = false;
         IsPickerOpen = true;
+        OnPropertyChanged(nameof(CanGoForward));
+        ((RelayCommand)ForwardToEditionsCommand).RaiseCanExecuteChanged();
     }
 
     /// <summary>
@@ -211,6 +244,8 @@ public sealed class PlaylistViewModel : ViewModelBase
         PickerEditionsTitle = $"Datas de \"{program.Name}\"";
         PickerErrorMessage = string.Empty;
         IsPickerShowingEditions = true;
+        OnPropertyChanged(nameof(CanGoForward));
+        ((RelayCommand)ForwardToEditionsCommand).RaiseCanExecuteChanged();
     }
 
     /// <summary>
@@ -221,6 +256,18 @@ public sealed class PlaylistViewModel : ViewModelBase
     public void ShowPickerError(string message)
     {
         PickerErrorMessage = message;
+    }
+
+    /// <summary>
+    /// Correção pós-entrega #12 (2026-11-24): chamado pelo FileExplorerViewModel quando o operador
+    /// ENTRA na aba Playlist (transição Explorer -> Playlist) — pedido do usuário pra tirar o botão
+    /// "Carregar Playlist..." e a própria aba já abrir o seletor de Programas sozinha. Reaproveita o
+    /// mesmo evento que o botão antigo disparava (<see cref="OpenPlaylistRequested"/>), então o
+    /// MainViewModel não precisa saber a diferença entre "clicou no botão" e "entrou na aba".
+    /// </summary>
+    public void RequestPickerOnTabEnter()
+    {
+        OpenPlaylistRequested?.Invoke();
     }
 
     /// <summary>Chamado pela View (duplo clique numa linha de Programa, code-behind) — avisa o MainViewModel pra resolver as Edições daquele Programa.</summary>
@@ -245,12 +292,37 @@ public sealed class PlaylistViewModel : ViewModelBase
         EditionChosen?.Invoke(_pickerSelectedProgram, edition);
     }
 
-    /// <summary>"← Voltar pros Programas" (passo 2 → passo 1) — reusa a lista de Programas já carregada, sem precisar ler o disco de novo.</summary>
+    /// <summary>
+    /// "← Voltar pros Programas" (passo 2 → passo 1). Correção pós-entrega #12 (2026-11-24): NÃO
+    /// zera mais <see cref="_pickerSelectedProgram"/>/<see cref="_pickerEditionRecords"/> (só
+    /// esconde o passo 2) — assim <see cref="GoForwardToEditions"/> consegue voltar pra elas sem
+    /// reler o disco, igual um "avançar" de navegador. Só são zerados de verdade quando o usuário
+    /// escolhe um Programa DIFERENTE (<see cref="ShowEditionPicker"/> sobrescreve) ou reabre o
+    /// seletor do zero (<see cref="ShowProgramPicker"/>/<see cref="ClosePicker"/>).
+    /// </summary>
     private void BackToPrograms()
     {
-        _pickerSelectedProgram = null;
         PickerErrorMessage = string.Empty;
         IsPickerShowingEditions = false;
+        ((RelayCommand)ForwardToEditionsCommand).RaiseCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Correção pós-entrega #12 (2026-11-24): "avançar" (passo 1 → passo 2) de volta pras Datas já
+    /// carregadas na visita anterior — só habilitado quando <see cref="CanGoForward"/> é true (ver
+    /// RelayCommand no construtor), então não precisa reler <see cref="PickerEditions"/> aqui, ela
+    /// já está populada desde o <see cref="ShowEditionPicker"/> original.
+    /// </summary>
+    private void GoForwardToEditions()
+    {
+        if (_pickerSelectedProgram is null)
+        {
+            return;
+        }
+
+        PickerErrorMessage = string.Empty;
+        IsPickerShowingEditions = true;
+        ((RelayCommand)ForwardToEditionsCommand).RaiseCanExecuteChanged();
     }
 
     /// <summary>Fecha o seletor inline sem escolher nada (equivalente ao "Cancelar"/fechar o antigo diálogo modal).</summary>
@@ -259,6 +331,8 @@ public sealed class PlaylistViewModel : ViewModelBase
         IsPickerOpen = false;
         _pickerSelectedProgram = null;
         PickerErrorMessage = string.Empty;
+        OnPropertyChanged(nameof(CanGoForward));
+        ((RelayCommand)ForwardToEditionsCommand).RaiseCanExecuteChanged();
     }
 
     /// <summary>Chamado pela View (duplo clique numa linha, code-behind) — mesmo papel de FileExplorerViewModel.ActivateFile.</summary>

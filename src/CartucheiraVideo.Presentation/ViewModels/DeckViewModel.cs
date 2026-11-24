@@ -404,13 +404,23 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
         // Loop (mockup v8, nota #8): virou um botao de toggle na linha de transporte, no lugar do
         // antigo ComboBox "Sem loop"/"Loop do arquivo" — mesmo efeito real sobre o Engine, so a
         // interacao mudou (um clique liga/desliga, sem abrir lista).
-        ToggleLoopCommand = new RelayCommand(_ => ToggleLoop());
+        // Correção pós-entrega #12, Sprint Reformulação-Visual-Neon (2026-11-24): até aqui este
+        // botão NUNCA tinha CanExecute (sempre habilitado, cor cheia mesmo com o Deck vazio) —
+        // usuário reportou de novo que "ainda está o next aceso e o loop aceso" num Deck
+        // descarregado, depois de já ter confirmado a correção #10 (onde Play/Pause/Clear/Stop/
+        // Preview dimmed vazios) como correta — pediu explicitamente pra ficar "tudo sem estar
+        // aceso quando está descarregado". Ganhou a MESMA condição de HasVideo que Clear já usa.
+        ToggleLoopCommand = new RelayCommand(_ => ToggleLoop(), _ => HasVideo);
 
         // Next (mockup v8, nota #17): avanca manualmente pro proximo item da Playlist. So existe
         // de verdade quando houver uma Playlist real pra avancar — isso entra numa sprint futura
         // (roadmap, item "Integracao completa com a UI" / Playlist real). Ate la, clicavel e
         // honesto sobre nao fazer nada ainda, igual ao OpenSettingsCommand.
-        NextCommand = new RelayCommand(_ => _onStatus($"{Name}: avancar pra proxima midia da Playlist ainda nao implementado."));
+        // Correção pós-entrega #12 (2026-11-24): mesmo motivo do ToggleLoopCommand acima — ganhou
+        // CanExecute tied a HasVideo, mesmo sem o clique ainda fazer nada de fato (continua só
+        // avisando "ainda não implementado" quando clicável) — item puramente visual, não muda a
+        // lógica (ainda stub) de propósito.
+        NextCommand = new RelayCommand(_ => _onStatus($"{Name}: avancar pra proxima midia da Playlist ainda nao implementado."), _ => HasVideo);
 
         // Preview (mockup v8, notas #8/#10; reescrito na Sprint Preview-Isolado, 2026-08-15, e de
         // novo na Sprint Áudio-Unificado, 2026-09-15): usa a MESMA area de video que ja existe neste
@@ -637,6 +647,12 @@ public sealed class DeckViewModel : ViewModelBase, IDisposable
                 ((RelayCommand)PlayCommand).RaiseCanExecuteChanged();
                 ((RelayCommand)PreviewCommand).RaiseCanExecuteChanged();
                 ((RelayCommand)ClearCommand).RaiseCanExecuteChanged();
+                // Correção pós-entrega #12 (2026-11-24): Loop/Next ganharam CanExecute tied a
+                // HasVideo (ver construtor) — precisam ser avisados junto dos outros quando o Deck
+                // carrega/esvazia, senão o botão fica com cor cheia (ou apagada) desatualizada até
+                // o próximo RaiseCanExecuteChanged de qualquer outro comando.
+                ((RelayCommand)ToggleLoopCommand).RaiseCanExecuteChanged();
+                ((RelayCommand)NextCommand).RaiseCanExecuteChanged();
             }
         }
     }

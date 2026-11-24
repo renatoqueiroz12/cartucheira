@@ -40,7 +40,21 @@ public sealed class FileExplorerViewModel : ViewModelBase
         ChooseFolderCommand = new RelayCommand(_ => ChooseFolder());
         ReloadCommand = new RelayCommand(_ => Reload(), _ => SelectedFolder is not null);
         SelectExplorerTabCommand = new RelayCommand(_ => IsExplorerTabSelected = true);
-        SelectPlaylistTabCommand = new RelayCommand(_ => IsExplorerTabSelected = false);
+
+        // Correção pós-entrega #12, Sprint Reformulação-Visual-Neon (2026-11-24): "tira aquele
+        // carregar playlist e clicou em playlist aparece o menu" — o botão "Carregar Playlist..."
+        // saiu da aba (ver FileExplorerPanel.xaml); em vez disso, ENTRAR na aba Playlist (transição
+        // Explorer -> Playlist, não todo clique enquanto já está nela) já abre o seletor inline de
+        // Programas/Datas sozinho — mesmo papel que o botão antigo cumpria, só o gatilho mudou.
+        SelectPlaylistTabCommand = new RelayCommand(_ =>
+        {
+            var wasAlreadyOnPlaylistTab = IsPlaylistTabSelected;
+            IsExplorerTabSelected = false;
+            if (!wasAlreadyOnPlaylistTab)
+            {
+                Playlist.RequestPickerOnTabEnter();
+            }
+        });
         ActivateRecentCommand = new RelayCommand(parameter =>
         {
             if (parameter is FileSystemItemViewModel item)

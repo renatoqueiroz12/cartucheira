@@ -150,16 +150,20 @@
                     <Run Text="Pasta atual: " /><Run Text="{Binding FolderPath, Mode=OneWay}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" />
                 </TextBlock>
 
-                <!-- Acoes da aba Playlist (mockup v8, nota #11/#12) — sem busca (a Playlist e uma sequencia externa curta,
-                     filtro de texto nao foi implementado nesta sprint). -->
+                <!--
+                    Acoes da aba Playlist (mockup v8, nota #11/#12) — sem busca (a Playlist e uma
+                    sequencia externa curta, filtro de texto nao foi implementado nesta sprint).
+                    Correção pós-entrega #12, Sprint Reformulação-Visual-Neon (2026-11-24): botão
+                    "Carregar Playlist..." removido ("tira aquele carregar playlist") — ENTRAR na
+                    aba Playlist já abre o seletor de Programas sozinha (ver
+                    FileExplorerViewModel.SelectPlaylistTabCommand), então o botão ficou redundante.
+                -->
                 <Grid Margin="0,0,0,8" Visibility="{Binding IsPlaylistTabSelected, Converter={StaticResource BoolToVis}}">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <Button Grid.Column="0" Content="Carregar Playlist..." Command="{Binding Playlist.LoadPlaylistCommand}" Margin="0,0,8,0" />
-                    <Button Grid.Column="2" Content="⏻ Auto" Command="{Binding Playlist.ToggleAutoModeCommand}" Padding="12,7">
+                    <Button Grid.Column="1" Content="⏻ Auto" Command="{Binding Playlist.ToggleAutoModeCommand}" Padding="12,7">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
                                 <Style.Triggers>
@@ -451,13 +455,28 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <!-- Cabeçalho do seletor: título do passo atual + Cancelar sempre visível. -->
+                    <!--
+                        Cabeçalho do seletor: navegação Voltar/Avançar (correção #12, estilo
+                        "histórico de navegador" — pedido do usuário) + título do passo atual +
+                        Cancelar sempre visível. Voltar (BackToProgramsCommand) e Avançar
+                        (ForwardToEditionsCommand) ficam SEMPRE visíveis, só habilitados/
+                        desabilitados pelo próprio CanExecute de cada comando (WPF já faz isso
+                        sozinho pra Button.Command) — igual ao par voltar/avançar de qualquer
+                        navegador, em vez de aparecer/sumir.
+                    -->
                     <Grid Grid.Row="0" Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,0,10,0">
+                            <Button Content="←" FontWeight="Bold" Padding="12,6" Margin="0,0,4,0"
+                                    ToolTip="Voltar pros Programas" Command="{Binding Playlist.BackToProgramsCommand}" />
+                            <Button Content="→" FontWeight="Bold" Padding="12,6"
+                                    ToolTip="Avançar pras Datas" Command="{Binding Playlist.ForwardToEditionsCommand}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
                             <TextBlock FontSize="{StaticResource FontSize.BodyMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -472,7 +491,7 @@
                             </TextBlock>
                             <TextBlock Text="Duplo clique para escolher." Margin="0,4,0,0" FontSize="{StaticResource FontSize.MicroMain}" Foreground="{DynamicResource Brush.TextLow}" />
                         </StackPanel>
-                        <Button Grid.Column="1" Content="Cancelar" VerticalAlignment="Top" Command="{Binding Playlist.ClosePickerCommand}" />
+                        <Button Grid.Column="2" Content="Cancelar" VerticalAlignment="Top" Command="{Binding Playlist.ClosePickerCommand}" />
                     </Grid>
 
                     <!-- Passo 1: Programas. -->
@@ -482,19 +501,12 @@
                              Visibility="{Binding Playlist.IsPickerShowingEditions, Converter={StaticResource InverseBoolToVis}}"
                              MouseDoubleClick="PickerProgramsListBox_MouseDoubleClick" />
 
-                    <!-- Passo 2: Edições (Datas) do Programa escolhido. -->
-                    <Grid Grid.Row="1" Visibility="{Binding Playlist.IsPickerShowingEditions, Converter={StaticResource BoolToVis}}">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <Button Grid.Row="0" Content="← Voltar pros Programas" HorizontalAlignment="Left" Margin="0,0,0,8"
-                                Command="{Binding Playlist.BackToProgramsCommand}" />
-                        <ListBox Grid.Row="1" x:Name="PickerEditionsListBox"
-                                 ItemsSource="{Binding Playlist.PickerEditions}" DisplayMemberPath="DateIso"
-                                 FontSize="{StaticResource FontSize.SmallMain}"
-                                 MouseDoubleClick="PickerEditionsListBox_MouseDoubleClick" />
-                    </Grid>
+                    <!-- Passo 2: Edições (Datas) do Programa escolhido — navegação de volta agora é só pelo Voltar do cabeçalho. -->
+                    <ListBox Grid.Row="1" x:Name="PickerEditionsListBox"
+                             ItemsSource="{Binding Playlist.PickerEditions}" DisplayMemberPath="DateIso"
+                             FontSize="{StaticResource FontSize.SmallMain}"
+                             Visibility="{Binding Playlist.IsPickerShowingEditions, Converter={StaticResource BoolToVis}}"
+                             MouseDoubleClick="PickerEditionsListBox_MouseDoubleClick" />
 
                     <TextBlock Grid.Row="2" Text="{Binding Playlist.PickerErrorMessage}" Margin="0,12,0,0"
                                TextWrapping="Wrap" FontSize="{StaticResource FontSize.SmallMain}"

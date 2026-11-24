@@ -916,11 +916,25 @@
                                 </Style>
                             </Border.Style>
 
+                            <!--
+                                Correção pós-entrega #12, Sprint Reformulação-Visual-Neon (2026-11-24):
+                                usuário reportou, mesmo com um vídeo carregado e tocando, "não tem a
+                                barra de execução, não tem o contador de tempos" — nenhuma das duas
+                                existia faltando no XAML (slider e cronômetro já implementados desde
+                                as correções #10/#11), então a hipótese mais provável é layout: este
+                                card fica dentro de um UniformGrid Rows="2" (cada Deck recebe EXATAMENTE
+                                metade da altura disponível) e a Row 1 (preview) tem MinHeight="120"
+                                fixo — numa janela/monitor menor, isso pode deixar pouco ou nenhum
+                                espaço de sobra pra Row 2 (Auto: nome do arquivo + barra + tempos),
+                                que o Grid comprime/corta silenciosamente em vez de simplesmente
+                                encolher o preview. MinHeight="92" adicionado na Row 2 garante que ela
+                                nunca fique sem espaço nenhum, não importa o tamanho da janela.
+                            -->
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" MinHeight="120" />
-                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" MinHeight="92" />
                                 </Grid.RowDefinitions>
 
                                 <!--
@@ -1243,21 +1257,32 @@
                                         pedida. CurrentTime (decorrido) e a duração total continuam visíveis, só não
                                         competem mais pelo destaque com o countdown.
                                     -->
-                                    <Grid>
+                                    <!--
+                                        Correção pós-entrega #12 (2026-11-24): "não tem o contador de
+                                        tempos" mesmo com vídeo carregado/tocando — salto bem maior
+                                        desta vez (mesmo padrão que resolveu o caso análogo das fontes
+                                        nas correções #8/#9: duplicar o tamanho em vez de +2/+4px),
+                                        pra eliminar de vez a hipótese de "pequeno/apagado demais pra
+                                        notar". Badge do countdown 20px -> 28px com borda em volta
+                                        (BorderBrush.Blue) pra não ter como confundir com texto
+                                        decorativo; CurrentTime/DurationDisplay 16px -> 18px.
+                                    -->
+                                    <Grid Margin="0,4,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontFamily="Consolas"
-                                                   FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}"
+                                                   FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}"
                                                    VerticalAlignment="Center" />
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Border Background="{DynamicResource Brush.Bg0}" CornerRadius="4" Padding="8,3">
+                                            <Border Background="{DynamicResource Brush.Bg0}" BorderBrush="{DynamicResource Brush.Blue}"
+                                                    BorderThickness="1.5" CornerRadius="5" Padding="10,4">
                                                 <TextBlock Text="{Binding RemainingTime}" FontFamily="Consolas" FontWeight="Black"
-                                                           FontSize="20" Foreground="{DynamicResource Brush.TextHi}" />
+                                                           FontSize="28" Foreground="{DynamicResource Brush.TextHi}" />
                                             </Border>
-                                            <TextBlock Text=" / " FontFamily="Consolas" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" />
-                                            <TextBlock Text="{Binding DurationDisplay}" FontFamily="Consolas" FontSize="16" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
+                                            <TextBlock Text=" / " FontFamily="Consolas" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" Margin="6,0,6,0" />
+                                            <TextBlock Text="{Binding DurationDisplay}" FontFamily="Consolas" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
                                 </StackPanel>

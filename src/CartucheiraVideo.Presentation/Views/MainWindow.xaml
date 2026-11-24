@@ -955,12 +955,26 @@
                                 pra "130" — folga de ~23px sobre o conteúdo real, bem mais seguro que a
                                 margem de ~3px de antes. Row 1 (botões) NÃO foi tocada (continua
                                 MinHeight="120", a linha vermelha da correção #14).
+
+                                Correção pós-entrega #16 (2026-11-24): subir a Row pra 130px (correção
+                                #15) TAMBÉM não resolveu — print com zoom (pixel a pixel) confirmou que
+                                nome do arquivo + barra sempre apareceram completos e sem cortar, e é
+                                SÓ a terceira linha (o Grid do cronômetro) que nunca tem espaço nenhum
+                                sobrando, não importa o quanto esta Row cresça. Ou seja: o espaço real
+                                desta janela comporta exatamente DUAS linhas aqui (nome+barra), nunca
+                                três — aumentar o número da Row não ajuda quando o conteúdo real
+                                continua precisando de três linhas pra caber. Mudança estrutural desta
+                                vez (ver StackPanel logo abaixo): o cronômetro saiu da sua própria linha
+                                e passou a dividir a PRIMEIRA linha com o nome do arquivo (lado a lado,
+                                num Grid de 2 colunas) — voltando a exatamente 2 linhas de conteúdo no
+                                total, o mesmo tanto que já estava comprovadamente cabendo. Row baixada
+                                de "130" pra "80", compatível com esse conteúdo bem mais enxuto.
                             -->
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" MinHeight="120" />
-                                    <RowDefinition Height="130" />
+                                    <RowDefinition Height="80" />
                                 </Grid.RowDefinitions>
 
                                 <!--
@@ -1232,25 +1246,65 @@
                                     </Grid>
                                 </Grid>
 
-                                <!-- Faixa inferior: nome do arquivo, progresso, tempos (mockup v8, nota #9). -->
+                                <!--
+                                    Faixa inferior: nome do arquivo, progresso, tempos (mockup v8, nota #9).
+                                    Correção pós-entrega #16, Sprint Reformulação-Visual-Neon (2026-11-24):
+                                    print com zoom confirmou que nome do arquivo + barra JÁ cabiam
+                                    perfeitamente no espaço real disponível (os dois sempre apareceram
+                                    bem, sem cortar) — era especificamente a TERCEIRA linha (o Grid do
+                                    cronômetro, correções #10/#12/#14) que nunca tinha espaço sobrando,
+                                    não importa quanto eu aumentasse a Row (correções #13/#15 subiram
+                                    pra 130px e não mudou nada visualmente). Conclusão: o espaço real
+                                    desta janela só comporta DUAS linhas aqui, nunca três.
+                                    Reestruturado pra caber em duas linhas de verdade: o cronômetro
+                                    (RemainingTime/DurationDisplay) saiu da linha própria e entrou do
+                                    lado direito da MESMA linha do nome do arquivo (CurrentTime,
+                                    decorrido, removido — já é redundante com a própria posição da
+                                    barra). Isso devolve exatamente o mesmo total de 2 linhas
+                                    (nome+tempo / barra) que já estava comprovadamente cabendo.
+                                -->
                                 <StackPanel Grid.Row="2">
-                                    <TextBlock TextTrimming="CharacterEllipsis">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Text" Value="{Binding LoadedFileName}" />
-                                                <Setter Property="FontSize" Value="{StaticResource FontSize.DeckFileName}" />
-                                                <Setter Property="FontWeight" Value="Bold" />
-                                                <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding HasVideo}" Value="False">
-                                                        <Setter Property="Text" Value="Vazio — arraste um vídeo aqui" />
-                                                        <Setter Property="FontWeight" Value="SemiBold" />
-                                                        <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Margin="0,0,8,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Text" Value="{Binding LoadedFileName}" />
+                                                    <Setter Property="FontSize" Value="{StaticResource FontSize.DeckFileName}" />
+                                                    <Setter Property="FontWeight" Value="Bold" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource Brush.TextHi}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasVideo}" Value="False">
+                                                            <Setter Property="Text" Value="Vazio — arraste um vídeo aqui" />
+                                                            <Setter Property="FontWeight" Value="SemiBold" />
+                                                            <Setter Property="Foreground" Value="{DynamicResource Brush.TextFaint}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <!--
+                                            Cronômetro (correção #16): badge compacto com a contagem
+                                            regressiva (RemainingTime) + a duração total
+                                            (DurationDisplay) — os dois números que o usuário pediu
+                                            ("o tempo que o vídeo tem e da regressiva"). Só aparece
+                                            com vídeo carregado (Visibility tied a HasVideo) pra não
+                                            disputar espaço com o texto "Vazio" num Deck sem nada.
+                                        -->
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"
+                                                    Visibility="{Binding HasVideo, Converter={StaticResource BoolToVis}}">
+                                            <Border Background="{DynamicResource Brush.Bg0}" BorderBrush="{DynamicResource Brush.Blue}"
+                                                    BorderThickness="1.2" CornerRadius="4" Padding="7,2">
+                                                <TextBlock Text="{Binding RemainingTime}" FontFamily="Consolas" FontWeight="Black"
+                                                           FontSize="15" Foreground="{DynamicResource Brush.TextHi}" />
+                                            </Border>
+                                            <TextBlock Text=" / " FontFamily="Consolas" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" Margin="4,0,4,0" />
+                                            <TextBlock Text="{Binding DurationDisplay}" FontFamily="Consolas" FontSize="13" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Grid>
                                     <!-- Sprint Deck-Seek-Bar (2026-09-12): Slider interativo (clique ou arraste avança/retrocede
                                          o vídeo) no lugar da antiga ProgressBar só-visual — pedido explícito do usuário
                                          ("coloque a opção na barra de execução para que eu possa avançar o video"). Ver
@@ -1277,55 +1331,6 @@
                                             PreviewMouseLeftButtonDown="SeekSlider_PreviewMouseLeftButtonDown"
                                             PreviewMouseLeftButtonUp="SeekSlider_PreviewMouseLeftButtonUp"
                                             LostMouseCapture="SeekSlider_LostMouseCapture" />
-                                    <!--
-                                        Correção pós-entrega #10, Sprint Reformulação-Visual-Neon (2026-11-24): usuário
-                                        pediu "colocar o tempo do vídeo... um reloginho com regressiva, igual o mockup
-                                        tem". O countdown (RemainingTime) já existia e já era atualizado ao vivo pelo
-                                        Engine (ver DeckViewModel.UpdatePositionDisplay) — só estava pequeno (15px) e
-                                        cinza-apagado (Brush.TextLow), fácil de confundir com "não existe" numa tela
-                                        escura. Virou um "cronômetro" de verdade: badge escuro (igual ao relógio de
-                                        NowPlaying dos bancos Vinhetas/Trilhas, mesmo Brush.Bg0 + CornerRadius),
-                                        Consolas Black, branco (Brush.TextHi), bem maior — essa é a contagem regressiva
-                                        pedida. CurrentTime (decorrido) e a duração total continuam visíveis, só não
-                                        competem mais pelo destaque com o countdown.
-                                    -->
-                                    <!--
-                                        Correção pós-entrega #12 (2026-11-24): "não tem o contador de
-                                        tempos" mesmo com vídeo carregado/tocando — salto bem maior
-                                        desta vez (mesmo padrão que resolveu o caso análogo das fontes
-                                        nas correções #8/#9: duplicar o tamanho em vez de +2/+4px),
-                                        pra eliminar de vez a hipótese de "pequeno/apagado demais pra
-                                        notar". Badge do countdown 20px -> 28px com borda em volta
-                                        (BorderBrush.Blue) pra não ter como confundir com texto
-                                        decorativo; CurrentTime/DurationDisplay 16px -> 18px.
-                                        Correção pós-entrega #14 (2026-11-24): o tamanho "bem maior" acima
-                                        ajudou a confirmar que o countdown não era problema de percepção,
-                                        mas descobrimos na correção #13 que o problema real sempre foi
-                                        espaço de layout, não tamanho — e esse badge grande empurrava o
-                                        total da Faixa inferior pra cima de 120px, obrigando a roubar
-                                        espaço da grade de botões (rejeitado pelo usuário). Encolhido de
-                                        volta pra um tamanho ainda bem legível, mas que cabe sem brigar
-                                        pelo espaço dos botões: badge 28px -> 22px, CurrentTime/Duração
-                                        18px -> 15px, respiros/paddings mais enxutos.
-                                    -->
-                                    <Grid Margin="0,3,0,0">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontFamily="Consolas"
-                                                   FontSize="15" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}"
-                                                   VerticalAlignment="Center" />
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                            <Border Background="{DynamicResource Brush.Bg0}" BorderBrush="{DynamicResource Brush.Blue}"
-                                                    BorderThickness="1.5" CornerRadius="4" Padding="8,3">
-                                                <TextBlock Text="{Binding RemainingTime}" FontFamily="Consolas" FontWeight="Black"
-                                                           FontSize="22" Foreground="{DynamicResource Brush.TextHi}" />
-                                            </Border>
-                                            <TextBlock Text=" / " FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" Margin="5,0,5,0" />
-                                            <TextBlock Text="{Binding DurationDisplay}" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                    </Grid>
                                 </StackPanel>
                             </Grid>
                         </Border>

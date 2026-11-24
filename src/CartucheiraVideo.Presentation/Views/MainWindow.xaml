@@ -917,30 +917,36 @@
                             </Border.Style>
 
                             <!--
-                                Correção pós-entrega #13, Sprint Reformulação-Visual-Neon (2026-11-24):
-                                a hipótese de layout da correção #12 (MinHeight="92" numa Row Auto) NÃO
-                                resolveu — print real confirmou: na janela do usuário a barra aparecia
-                                só como uma linha azul de 1-2px colada na borda de baixo do card, e o
-                                cronômetro nem esse tanto, os dois sendo cortados pelo limite do card.
-                                Causa confirmada: Auto+MinHeight NÃO é prioridade garantida no algoritmo
-                                de Grid do WPF — quando o card (dentro do UniformGrid Rows="2", que força
-                                cada Deck a EXATAMENTE metade da altura disponível) não tem espaço pra
-                                tudo, a Row 1 (preview, MinHeight="120") consome o espaço primeiro e a
-                                Row 2 (Auto) fica com as sobras, por menores que sejam — MinHeight numa
-                                Row Auto não é um piso de verdade nesse cenário de disputa.
-                                Troca definitiva: Row 2 virou Height FIXO em pixels ("132", não Auto nem
-                                MinHeight) — no algoritmo de Grid do WPF, uma Row com tamanho FIXO em
-                                pixels tem prioridade garantida sobre Auto e Star, recebendo sempre
-                                exatamente o valor declarado, não importa o espaço disponível. Row 1
-                                (preview) reduzida de MinHeight="120" pra "88" pra sobrar mais espaço de
-                                verdade pra Row 2 ceder menos — a prioridade do usuário, repetida 3
-                                rodadas seguidas, é ver a barra/cronômetro, não maximizar o preview.
+                                Correção pós-entrega #14, Sprint Reformulação-Visual-Neon (2026-11-24):
+                                a correção #13 (Row 2 fixa em 140px) resolveu a barra sumida, mas o
+                                print seguinte do usuário mostrou um efeito colateral sério que eu não
+                                tinha previsto: reduzir o MinHeight da Row 1 (de "120" pra "88") não
+                                afetava só o preview — essa mesma Row 1 também contém a GRADE DE
+                                BOTÕES de transporte (Play/Pause/Clear/Loop/Stop/Next/Preview, ver Grid
+                                Grid.Row="1" logo abaixo), então 88px é pouco demais pra duas linhas de
+                                botão com ícone+texto cada — resultado: botões espremidos, texto
+                                colado/cortado pelo ícone ("estragou os botões... a letra comendo").
+                                Prioridade explícita do usuário: NUNCA MAIS quebrar os botões — o
+                                cronômetro/barra vêm depois disso. Correção: Row 1 volta pro
+                                MinHeight="120" original (valor comprovado — é o mesmo usado por meses
+                                antes desta sprint, não um número nosso). Pra Row 2 (barra+tempos)
+                                ainda caber sem brigar de novo pelo mesmo espaço, o conteúdo dela foi
+                                ENXUTO (não mais "bem grande" como nas correções #11/#12): badge do
+                                cronômetro 28px -> 22px, CurrentTime/Duração 18px -> 15px, barra
+                                (Slider) 34px -> 28px, margens mais apertadas — baixando a altura FIXA
+                                desta Row de 140px pra 104px. Continua sendo Height fixo em pixels (não
+                                Auto/MinHeight) porque isso é o que de fato garante espaço (ver
+                                correção #13); só o TAMANHO do conteúdo que foi reduzido desta vez, não
+                                a técnica. Se mesmo assim a janela do usuário for pequena demais pra
+                                120+104px nesta Row, o Grid agora prioriza os BOTÕES (MinHeight real
+                                numa Row Star) — o que eventualmente ceder é o fim da Row do
+                                cronômetro, nunca mais os botões.
                             -->
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" MinHeight="88" />
-                                    <RowDefinition Height="140" />
+                                    <RowDefinition Height="*" MinHeight="120" />
+                                    <RowDefinition Height="104" />
                                 </Grid.RowDefinitions>
 
                                 <!--
@@ -1244,10 +1250,16 @@
                                          "aumentar um pouco essa barra") — ver Theme.xaml (estilo global do Slider).
                                          Correção pós-entrega #11 (2026-11-24): "a barra de rolagem tá muito pequena...
                                          tá muito ruim para mexer" — Height 26 -> 34 pra acompanhar o trilho/área de
-                                         arraste maiores do estilo global (Theme.xaml). -->
+                                         arraste maiores do estilo global (Theme.xaml).
+                                         Correção pós-entrega #14 (2026-11-24): essa Faixa inferior (nome+barra+tempos)
+                                         precisou ENXUGAR — a correção #13 tinha espremido a grade de botões de
+                                         transporte pra abrir espaço aqui, o que o usuário rejeitou de forma explícita
+                                         ("não pode fazer uma modificação que estrague o que já tá bom"). Height
+                                         34 -> 28 (o trilho do Theme.xaml continua grande/fácil de arrastar, só a altura
+                                         reservada no layout encolheu um pouco) e margem mais apertada. -->
                                     <Slider Value="{Binding Progress, Mode=OneWay}" Minimum="0" Maximum="100"
                                             IsMoveToPointEnabled="True" IsEnabled="{Binding HasVideo}"
-                                            Height="34" Margin="0,10,0,6"
+                                            Height="28" Margin="0,6,0,4"
                                             PreviewMouseLeftButtonDown="SeekSlider_PreviewMouseLeftButtonDown"
                                             PreviewMouseLeftButtonUp="SeekSlider_PreviewMouseLeftButtonUp"
                                             LostMouseCapture="SeekSlider_LostMouseCapture" />
@@ -1272,23 +1284,32 @@
                                         notar". Badge do countdown 20px -> 28px com borda em volta
                                         (BorderBrush.Blue) pra não ter como confundir com texto
                                         decorativo; CurrentTime/DurationDisplay 16px -> 18px.
+                                        Correção pós-entrega #14 (2026-11-24): o tamanho "bem maior" acima
+                                        ajudou a confirmar que o countdown não era problema de percepção,
+                                        mas descobrimos na correção #13 que o problema real sempre foi
+                                        espaço de layout, não tamanho — e esse badge grande empurrava o
+                                        total da Faixa inferior pra cima de 120px, obrigando a roubar
+                                        espaço da grade de botões (rejeitado pelo usuário). Encolhido de
+                                        volta pra um tamanho ainda bem legível, mas que cabe sem brigar
+                                        pelo espaço dos botões: badge 28px -> 22px, CurrentTime/Duração
+                                        18px -> 15px, respiros/paddings mais enxutos.
                                     -->
-                                    <Grid Margin="0,4,0,0">
+                                    <Grid Margin="0,3,0,0">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{Binding CurrentTime}" FontFamily="Consolas"
-                                                   FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}"
+                                                   FontSize="15" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}"
                                                    VerticalAlignment="Center" />
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                                             <Border Background="{DynamicResource Brush.Bg0}" BorderBrush="{DynamicResource Brush.Blue}"
-                                                    BorderThickness="1.5" CornerRadius="5" Padding="10,4">
+                                                    BorderThickness="1.5" CornerRadius="4" Padding="8,3">
                                                 <TextBlock Text="{Binding RemainingTime}" FontFamily="Consolas" FontWeight="Black"
-                                                           FontSize="28" Foreground="{DynamicResource Brush.TextHi}" />
+                                                           FontSize="22" Foreground="{DynamicResource Brush.TextHi}" />
                                             </Border>
-                                            <TextBlock Text=" / " FontFamily="Consolas" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" Margin="6,0,6,0" />
-                                            <TextBlock Text="{Binding DurationDisplay}" FontFamily="Consolas" FontSize="18" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
+                                            <TextBlock Text=" / " FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource Brush.TextLow}" VerticalAlignment="Center" Margin="5,0,5,0" />
+                                            <TextBlock Text="{Binding DurationDisplay}" FontFamily="Consolas" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource Brush.TextMid}" VerticalAlignment="Center" />
                                         </StackPanel>
                                     </Grid>
                                 </StackPanel>

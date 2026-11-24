@@ -322,6 +322,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         FileExplorer.Playlist.ItemActivated += OnPlaylistItemActivated;
         // Sprint 3 (2026-11-16): ver comentário de OnOpenPlaylistRequested.
         FileExplorer.Playlist.OpenPlaylistRequested += OnOpenPlaylistRequested;
+        // Correção pós-entrega #11 (2026-11-24): passos 2 e 3 do seletor inline, ver mesmo comentário.
+        FileExplorer.Playlist.ProgramChosen += OnPlaylistProgramChosen;
+        FileExplorer.Playlist.EditionChosen += OnPlaylistEditionChosen;
 
         OpenSettingsCommand = new RelayCommand(_ => OpenSettings());
         OpenAboutCommand = new RelayCommand(_ => StatusMessage = "Cartucheira Vídeo — protótipo de interface.");
@@ -1365,8 +1368,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// "Abrir o dia" — Sprint 3 (2026-11-16, pedido do usuário "tem que ter lá a opção abrir o dia,
-    /// aí abre o programa e carrega"). Abre o diálogo de escolha Programa/Data
-    /// (<see cref="OpenPlaylistWindow"/>), lê as Laudas reais daquela Edição direto do
+    /// aí abre o programa e carrega"). Lê as Laudas reais da Edição escolhida direto do
     /// <see cref="PlaylistFileStore"/> (Infrastructure) e entrega pra
     /// <see cref="PlaylistViewModel.LoadReal"/> — o operador carrega cada item com duplo clique
     /// igual a qualquer outro item da Playlist (ver <see cref="OnPlaylistItemActivated"/>,
@@ -1383,6 +1385,18 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     /// uma mudança de configuração permanente) e manda os dois Decks reavaliar
     /// (<see cref="DeckViewModel.RefreshBackgroundArt"/>, mesmo gatilho já usado por
     /// Configurações → Arte de Fundo).
+    ///
+    /// Correção pós-entrega #11, Sprint Reformulação-Visual-Neon (2026-11-24): "Carregar Playlist..."
+    /// abria <c>OpenPlaylistWindow</c> (janela modal, <c>ShowDialog</c> bloqueante, classe deixada
+    /// no projeto sem uso por segurança) — pedido do usuário pra virar um seletor INLINE dentro da
+    /// própria aba Playlist, sem pop-up. Esta classe continua sendo a ÚNICA a ler disco
+    /// (<c>PlaylistFileStore</c>) — só a apresentação (Programas → Datas → Laudas) virou em 3
+    /// métodos encadeados por evento
+    /// (<see cref="OnOpenPlaylistRequested"/> → <see cref="OnPlaylistProgramChosen"/> →
+    /// <see cref="OnPlaylistEditionChosen"/>) em vez de um único método lendo
+    /// <c>dialog.SelectedProgram</c>/<c>SelectedEdition</c> depois de <c>ShowDialog</c> retornar.
+    /// Nenhuma lógica de leitura de disco, Arte de Fundo padrão ou GC padrão mudou — só onde ela é
+    /// disparada.
     /// </summary>
     private void OnOpenPlaylistRequested()
     {
@@ -1393,19 +1407,43 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var dialog = new OpenPlaylistWindow(rootFolder) { Owner = Application.Current?.MainWindow };
-        if (dialog.ShowDialog() != true || dialog.SelectedProgram is null || dialog.SelectedEdition is null)
+        var (ok, error, programs) = PlaylistFileStore.ListPrograms(rootFolder);
+        if (!ok)
         {
+            StatusMessage = $"Playlist: não consegui listar Programas — {error}.";
             return;
         }
 
-        var program = dialog.SelectedProgram;
-        var edition = dialog.SelectedEdition;
+        FileExplorer.Playlist.ShowProgramPicker(programs);
+    }
+
+    /// <summary>Passo 2 do seletor inline (ver comentário de <see cref="OnOpenPlaylistRequested"/>) — operador escolheu um Programa, lê as Edições (Datas) dele.</summary>
+    private void OnPlaylistProgramChosen(PlaylistProgramRecord program)
+    {
+        var rootFolder = _persistedSettings.Playlist.RootFolder;
+
+        var (ok, error, editions) = PlaylistFileStore.ListEditions(rootFolder, program.Id);
+        if (!ok)
+        {
+            FileExplorer.Playlist.ShowPickerError(error ?? "erro desconhecido ao listar Datas.");
+            return;
+        }
+
+        // Mais recente primeiro — mesma lógica de "qual Edição o produtor provavelmente quer abrir
+        // agora" já usada implicitamente pela dashboard (ver antigo OpenPlaylistWindow.LoadEditions).
+        var ordered = editions.OrderByDescending(e => e.DateIso).ToList();
+        FileExplorer.Playlist.ShowEditionPicker(program, ordered);
+    }
+
+    /// <summary>Passo 3 do seletor inline (ver comentário de <see cref="OnOpenPlaylistRequested"/>) — operador escolheu a Data, lê as Laudas reais e carrega a Playlist (mesma lógica de sempre, só não depende mais de <c>ShowDialog</c>).</summary>
+    private void OnPlaylistEditionChosen(PlaylistProgramRecord program, PlaylistEditionRecord edition)
+    {
+        var rootFolder = _persistedSettings.Playlist.RootFolder;
 
         var (ok, error, laudas) = PlaylistFileStore.ListLaudas(rootFolder, program.Id, edition.Id);
         if (!ok)
         {
-            StatusMessage = $"Playlist: não consegui ler o Espelho de \"{program.Name}\" ({edition.DateIso}) — {error}.";
+            FileExplorer.Playlist.ShowPickerError($"Playlist: não consegui ler o Espelho de \"{program.Name}\" ({edition.DateIso}) — {error}.");
             return;
         }
 

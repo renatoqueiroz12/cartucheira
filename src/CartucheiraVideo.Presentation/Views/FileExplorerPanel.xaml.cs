@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using CartucheiraVideo.Infrastructure.Playlist;
 using CartucheiraVideo.Presentation.ViewModels;
 
 namespace CartucheiraVideo.Presentation.Views;
@@ -36,6 +37,30 @@ public partial class FileExplorerPanel : UserControl
             DataContext is FileExplorerViewModel viewModel)
         {
             viewModel.Playlist.ActivateItem(item);
+        }
+    }
+
+    /// <summary>
+    /// Correção pós-entrega #11 (2026-11-24): passo 1 do seletor inline (ver comentário no overlay
+    /// em FileExplorerPanel.xaml) — duplo clique num Programa pede as Edições (Datas) dele. Mesmo
+    /// padrão dos handlers acima, só que repassando pro PlaylistViewModel.SelectProgram.
+    /// </summary>
+    private void PickerProgramsListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is FrameworkElement { DataContext: PlaylistProgramRecord program } &&
+            DataContext is FileExplorerViewModel viewModel)
+        {
+            viewModel.Playlist.SelectProgram(program);
+        }
+    }
+
+    /// <summary>Passo 2 do seletor inline (ver comentário acima) — duplo clique numa Edição (Data) carrega a Playlist de verdade.</summary>
+    private void PickerEditionsListBox_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is FrameworkElement { DataContext: PlaylistEditionRecord edition } &&
+            DataContext is FileExplorerViewModel viewModel)
+        {
+            viewModel.Playlist.SelectEdition(edition);
         }
     }
 

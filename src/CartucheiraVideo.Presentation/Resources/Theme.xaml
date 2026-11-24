@@ -604,12 +604,18 @@
          (Transparent) entrega exatamente o pedido (sem bolinha visível, arraste continua funcionando
          em qualquer ponto da barra) sem mexer no code-behind de seek (MainWindow.xaml.cs,
          inalterado). Único Slider do projeto (a barra de execução do Deck), então este estilo global
-         é seguro de ajustar sem afetar mais nada. -->
+         é seguro de ajustar sem afetar mais nada.
+         Correção pós-entrega #11 (2026-11-24): "a barra de rolagem tá muito pequena... tá muito ruim
+         para mexer" — trilho 12px -> 22px (quase o dobro) e a área invisível de arraste (Thumb)
+         16px -> 30px, bem mais fácil de acertar o clique e arrastar com precisão, principalmente em
+         tela touch. A decisão de manter o polegar INVISÍVEL (Fill Transparent) da Sprint
+         Mockup-v9-Deck-Buttons não mudou — o pedido desta vez é só sobre o TAMANHO (mais fácil de
+         pegar/mexer), não sobre reintroduzir a bolinha visível. -->
     <Style x:Key="Theme.SliderThumb" TargetType="{x:Type Thumb}">
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Thumb}">
-                    <Ellipse Width="16" Height="16" Fill="Transparent" />
+                    <Ellipse Width="30" Height="30" Fill="Transparent" />
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
@@ -621,13 +627,13 @@
             <Setter.Value>
                 <ControlTemplate TargetType="{x:Type Slider}">
                     <Grid VerticalAlignment="Center">
-                        <Border Height="12" Background="{DynamicResource Brush.Bg5}" CornerRadius="6" />
+                        <Border Height="22" Background="{DynamicResource Brush.Bg5}" CornerRadius="11" />
                         <Track x:Name="PART_Track">
                             <Track.DecreaseRepeatButton>
-                                <RepeatButton Background="{DynamicResource Brush.Blue}" Height="12">
+                                <RepeatButton Background="{DynamicResource Brush.Blue}" Height="22">
                                     <RepeatButton.Template>
                                         <ControlTemplate TargetType="{x:Type RepeatButton}">
-                                            <Border Background="{DynamicResource Brush.Blue}" Height="12" CornerRadius="6" />
+                                            <Border Background="{DynamicResource Brush.Blue}" Height="22" CornerRadius="11" />
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>
@@ -641,10 +647,10 @@
                                  registra hit-test no WPF, a AUSENCIA de Background que nao registra — deixa o Border
                                  cinza de fundo (Brush.Bg5) aparecer por baixo normalmente. -->
                             <Track.IncreaseRepeatButton>
-                                <RepeatButton Background="Transparent" Height="12">
+                                <RepeatButton Background="Transparent" Height="22">
                                     <RepeatButton.Template>
                                         <ControlTemplate TargetType="{x:Type RepeatButton}">
-                                            <Border Background="Transparent" Height="12" />
+                                            <Border Background="Transparent" Height="22" />
                                         </ControlTemplate>
                                     </RepeatButton.Template>
                                 </RepeatButton>

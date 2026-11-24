@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows.Input;
+using CartucheiraVideo.Infrastructure.Playlist;
 using CartucheiraVideo.Presentation.Mvvm;
 
 namespace CartucheiraVideo.Presentation.ViewModels;
@@ -49,6 +50,23 @@ public sealed class PlaylistViewModel : ViewModelBase
     /// </summary>
     private bool _isRealPlaylistLoaded;
 
+    /// <summary>
+    /// Correção pós-entrega #11, Sprint Reformulação-Visual-Neon (2026-11-24): "Carregar Playlist..."
+    /// abria o <c>OpenPlaylistWindow</c> (janela modal separada) — pedido do usuário pra virar um
+    /// seletor INLINE, dentro desta mesma aba Playlist, sem pop-up ("Programas, e dos programas
+    /// clica, aparece as datas... tudo dentro dessa aba aqui"). A separação de responsabilidades
+    /// continua a mesma de sempre: esta classe só guarda o ESTADO do seletor (qual passo, quais
+    /// opções, erro) e expõe <see cref="ProgramChosen"/>/<see cref="EditionChosen"/> pro
+    /// MainViewModel continuar sendo o único a ler disco (<c>PlaylistFileStore</c>) — mesmo papel
+    /// que antes cumpria via <c>OpenPlaylistWindow.xaml.cs</c>, só que sem Window nenhuma.
+    /// </summary>
+    private IReadOnlyList<PlaylistEditionRecord> _pickerEditionRecords = Array.Empty<PlaylistEditionRecord>();
+    private PlaylistProgramRecord? _pickerSelectedProgram;
+    private bool _isPickerOpen;
+    private bool _isPickerShowingEditions;
+    private string _pickerErrorMessage = string.Empty;
+    private string _pickerEditionsTitle = string.Empty;
+
     public PlaylistViewModel(Action<string> onStatus)
     {
         _onStatus = onStatus ?? throw new ArgumentNullException(nameof(onStatus));
@@ -59,12 +77,15 @@ public sealed class PlaylistViewModel : ViewModelBase
         }
 
         // Sprint 3 (2026-11-16, pedido do usuário "abrir o dia, aí abre o programa e carrega"):
-        // quem sabe ESCOLHER um Programa/Edição (abrir uma janela, ler disco via
-        // PlaylistFileStore) é o MainViewModel — a mesma camada que já faz essa ponte pro resto da
-        // Playlist-Dashboard (ver PlaylistDashboardCoordinator) — não esta classe, que fica só com
-        // a UI da aba. LoadPlaylistCommand só avisa (evento) que o operador pediu pra abrir.
+        // quem sabe ESCOLHER um Programa/Edição (ler disco via PlaylistFileStore) é o
+        // MainViewModel — a mesma camada que já faz essa ponte pro resto da Playlist-Dashboard (ver
+        // PlaylistDashboardCoordinator) — não esta classe, que fica só com a UI da aba.
+        // LoadPlaylistCommand só avisa (evento) que o operador pediu pra abrir; desde a correção
+        // #11 o MainViewModel responde chamando ShowProgramPicker em vez de abrir uma Window.
         LoadPlaylistCommand = new RelayCommand(_ => OpenPlaylistRequested?.Invoke());
         ToggleAutoModeCommand = new RelayCommand(_ => ToggleAutoMode());
+        BackToProgramsCommand = new RelayCommand(_ => BackToPrograms());
+        ClosePickerCommand = new RelayCommand(_ => ClosePicker());
     }
 
     /// <summary>Disparado quando o operador ativa (duplo clique) um item com arquivo real associado — mesmo papel do FileExplorerViewModel.FileActivated.</summary>
@@ -73,7 +94,56 @@ public sealed class PlaylistViewModel : ViewModelBase
     /// <summary>Disparado quando o operador clica "Carregar Playlist..." — Sprint 3 (2026-11-16), ver comentário do construtor.</summary>
     public event Action? OpenPlaylistRequested;
 
+    /// <summary>Disparado quando o operador escolhe um Programa no seletor inline (correção #11) — MainViewModel resolve as Edições e chama <see cref="ShowEditionPicker"/>.</summary>
+    public event Action<PlaylistProgramRecord>? ProgramChosen;
+
+    /// <summary>Disparado quando o operador escolhe uma Data/Edição no seletor inline (correção #11) — MainViewModel lê as Laudas reais e chama <see cref="LoadReal"/>, igual sempre fez.</summary>
+    public event Action<PlaylistProgramRecord, PlaylistEditionRecord>? EditionChosen;
+
     public ObservableCollection<PlaylistItemViewModel> Items { get; } = new();
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): Programas disponíveis pro seletor inline — populado por <see cref="ShowProgramPicker"/>.</summary>
+    public ObservableCollection<PlaylistProgramRecord> PickerPrograms { get; } = new();
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): Edições (Datas) do Programa escolhido — populado por <see cref="ShowEditionPicker"/>.</summary>
+    public ObservableCollection<PlaylistEditionRecord> PickerEditions { get; } = new();
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): true enquanto o seletor inline (Programas/Datas) está visível por cima da lista normal da Playlist.</summary>
+    public bool IsPickerOpen
+    {
+        get => _isPickerOpen;
+        private set => SetProperty(ref _isPickerOpen, value);
+    }
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): false = mostrando a lista de Programas (passo 1); true = mostrando a lista de Datas do Programa escolhido (passo 2).</summary>
+    public bool IsPickerShowingEditions
+    {
+        get => _isPickerShowingEditions;
+        private set => SetProperty(ref _isPickerShowingEditions, value);
+    }
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): mensagem de erro do seletor inline (ex.: falha ao listar Programas/Datas/Laudas do disco) — vazio quando não há erro.</summary>
+    public string PickerErrorMessage
+    {
+        get => _pickerErrorMessage;
+        private set
+        {
+            if (SetProperty(ref _pickerErrorMessage, value))
+            {
+                OnPropertyChanged(nameof(HasPickerError));
+            }
+        }
+    }
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): true quando <see cref="PickerErrorMessage"/> tem algum texto — evita precisar de um converter string→Visibility só pra isso.</summary>
+    public bool HasPickerError => !string.IsNullOrEmpty(PickerErrorMessage);
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): título do passo 2 ("Datas de "X""), igual ao antigo <c>EditionsTitle</c> do diálogo modal.</summary>
+    public string PickerEditionsTitle
+    {
+        get => _pickerEditionsTitle;
+        private set => SetProperty(ref _pickerEditionsTitle, value);
+    }
 
     public string Name
     {
@@ -96,6 +166,100 @@ public sealed class PlaylistViewModel : ViewModelBase
     public ICommand LoadPlaylistCommand { get; }
 
     public ICommand ToggleAutoModeCommand { get; }
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): "← Voltar pros Programas" do passo 2 do seletor inline.</summary>
+    public ICommand BackToProgramsCommand { get; }
+
+    /// <summary>Correção pós-entrega #11 (2026-11-24): fecha o seletor inline sem escolher nada (equivalente ao "Cancelar" do antigo diálogo modal).</summary>
+    public ICommand ClosePickerCommand { get; }
+
+    /// <summary>
+    /// Correção pós-entrega #11 (2026-11-24): chamado pelo MainViewModel (em resposta a
+    /// <see cref="OpenPlaylistRequested"/>) com a lista de Programas já lida do disco — abre o
+    /// seletor inline no passo 1 (Programas). Equivalente ao antigo <c>OpenPlaylistWindow.LoadPrograms</c>.
+    /// </summary>
+    public void ShowProgramPicker(IReadOnlyList<PlaylistProgramRecord> programs)
+    {
+        PickerPrograms.Clear();
+        foreach (var program in programs)
+        {
+            PickerPrograms.Add(program);
+        }
+
+        _pickerSelectedProgram = null;
+        PickerErrorMessage = string.Empty;
+        IsPickerShowingEditions = false;
+        IsPickerOpen = true;
+    }
+
+    /// <summary>
+    /// Correção pós-entrega #11 (2026-11-24): chamado pelo MainViewModel com as Edições (Datas) do
+    /// Programa escolhido — avança o seletor inline pro passo 2. Equivalente ao antigo
+    /// <c>OpenPlaylistWindow.LoadEditions</c>.
+    /// </summary>
+    public void ShowEditionPicker(PlaylistProgramRecord program, IReadOnlyList<PlaylistEditionRecord> editions)
+    {
+        _pickerSelectedProgram = program;
+        _pickerEditionRecords = editions;
+
+        PickerEditions.Clear();
+        foreach (var edition in editions)
+        {
+            PickerEditions.Add(edition);
+        }
+
+        PickerEditionsTitle = $"Datas de \"{program.Name}\"";
+        PickerErrorMessage = string.Empty;
+        IsPickerShowingEditions = true;
+    }
+
+    /// <summary>
+    /// Correção pós-entrega #11 (2026-11-24): MainViewModel chama isto quando ler Programas/Datas/
+    /// Laudas do disco falha — mesmo texto que antes ia pro <c>ErrorText</c> do diálogo modal, agora
+    /// mostrado dentro do próprio seletor inline (que continua aberto, no passo em que já estava).
+    /// </summary>
+    public void ShowPickerError(string message)
+    {
+        PickerErrorMessage = message;
+    }
+
+    /// <summary>Chamado pela View (duplo clique numa linha de Programa, code-behind) — avisa o MainViewModel pra resolver as Edições daquele Programa.</summary>
+    public void SelectProgram(PlaylistProgramRecord? program)
+    {
+        if (program is null)
+        {
+            return;
+        }
+
+        ProgramChosen?.Invoke(program);
+    }
+
+    /// <summary>Chamado pela View (duplo clique numa linha de Data, code-behind) — avisa o MainViewModel pra ler as Laudas reais daquela Edição e carregar a Playlist.</summary>
+    public void SelectEdition(PlaylistEditionRecord? edition)
+    {
+        if (edition is null || _pickerSelectedProgram is null)
+        {
+            return;
+        }
+
+        EditionChosen?.Invoke(_pickerSelectedProgram, edition);
+    }
+
+    /// <summary>"← Voltar pros Programas" (passo 2 → passo 1) — reusa a lista de Programas já carregada, sem precisar ler o disco de novo.</summary>
+    private void BackToPrograms()
+    {
+        _pickerSelectedProgram = null;
+        PickerErrorMessage = string.Empty;
+        IsPickerShowingEditions = false;
+    }
+
+    /// <summary>Fecha o seletor inline sem escolher nada (equivalente ao "Cancelar"/fechar o antigo diálogo modal).</summary>
+    private void ClosePicker()
+    {
+        IsPickerOpen = false;
+        _pickerSelectedProgram = null;
+        PickerErrorMessage = string.Empty;
+    }
 
     /// <summary>Chamado pela View (duplo clique numa linha, code-behind) — mesmo papel de FileExplorerViewModel.ActivateFile.</summary>
     public void ActivateItem(PlaylistItemViewModel? item)
@@ -144,6 +308,11 @@ public sealed class PlaylistViewModel : ViewModelBase
         _onStatus(items.Count == 0
             ? $"Playlist de \"{programName}\" ({editionDateIso}) carregada — Espelho ainda sem nenhuma Lauda."
             : $"Playlist de \"{programName}\" ({editionDateIso}) carregada — {items.Count} Lauda(s).");
+
+        // Correção pós-entrega #11 (2026-11-24): LoadReal só é chamado depois de uma Edição
+        // escolhida no seletor inline (ver EditionChosen/MainViewModel) — fecha o seletor de volta
+        // pra lista normal da Playlist, equivalente a DialogResult=true fechar o antigo diálogo modal.
+        IsPickerOpen = false;
     }
 
     /// <summary>

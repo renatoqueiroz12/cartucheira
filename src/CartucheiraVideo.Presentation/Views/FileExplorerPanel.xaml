@@ -427,6 +427,81 @@
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
+
+            <!--
+                Correção pós-entrega #11, Sprint Reformulação-Visual-Neon (2026-11-24): "Carregar
+                Playlist..." abria uma janela separada (OpenPlaylistWindow, modal, ShowDialog) —
+                pedido do usuário pra virar um seletor INLINE dentro da própria aba Playlist, sem
+                pop-up nenhum ("Precisaria inventar um sistema aqui de aba para que fique tudo
+                dentro dessa aba playlist aqui... tudo dentro dessa aba aqui, sem ficar abrindo um
+                pop-up"). Este overlay cobre as duas linhas da aba (cabeçalho + lista,
+                Grid.RowSpan="2") só quando Playlist.IsPickerOpen = true; dentro dele, dois
+                "passos" (Programas / Edições-Datas) alternam via
+                Playlist.IsPickerShowingEditions — mesma dupla Programa→Data que o antigo
+                OpenPlaylistWindow fazia em duas telas separadas, só que sem Window nenhuma. Duplo
+                clique no item (ver code-behind) avança de passo / carrega a Playlist, igual ao
+                padrão já usado em FilesListBox/PlaylistListBox desta mesma tela.
+            -->
+            <Border Grid.Row="0" Grid.RowSpan="2" Background="{DynamicResource Brush.Bg2}"
+                    Visibility="{Binding Playlist.IsPickerOpen, Converter={StaticResource BoolToVis}}">
+                <Grid Margin="18">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- Cabeçalho do seletor: título do passo atual + Cancelar sempre visível. -->
+                    <Grid Grid.Row="0" Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock FontSize="{StaticResource FontSize.BodyMain}" FontWeight="Bold" Foreground="{DynamicResource Brush.TextHi}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Text" Value="Carregar Playlist — escolha o Programa" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Playlist.IsPickerShowingEditions}" Value="True">
+                                                <Setter Property="Text" Value="{Binding Playlist.PickerEditionsTitle}" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <TextBlock Text="Duplo clique para escolher." Margin="0,4,0,0" FontSize="{StaticResource FontSize.MicroMain}" Foreground="{DynamicResource Brush.TextLow}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Cancelar" VerticalAlignment="Top" Command="{Binding Playlist.ClosePickerCommand}" />
+                    </Grid>
+
+                    <!-- Passo 1: Programas. -->
+                    <ListBox Grid.Row="1" x:Name="PickerProgramsListBox"
+                             ItemsSource="{Binding Playlist.PickerPrograms}" DisplayMemberPath="Name"
+                             FontSize="{StaticResource FontSize.SmallMain}"
+                             Visibility="{Binding Playlist.IsPickerShowingEditions, Converter={StaticResource InverseBoolToVis}}"
+                             MouseDoubleClick="PickerProgramsListBox_MouseDoubleClick" />
+
+                    <!-- Passo 2: Edições (Datas) do Programa escolhido. -->
+                    <Grid Grid.Row="1" Visibility="{Binding Playlist.IsPickerShowingEditions, Converter={StaticResource BoolToVis}}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Button Grid.Row="0" Content="← Voltar pros Programas" HorizontalAlignment="Left" Margin="0,0,0,8"
+                                Command="{Binding Playlist.BackToProgramsCommand}" />
+                        <ListBox Grid.Row="1" x:Name="PickerEditionsListBox"
+                                 ItemsSource="{Binding Playlist.PickerEditions}" DisplayMemberPath="DateIso"
+                                 FontSize="{StaticResource FontSize.SmallMain}"
+                                 MouseDoubleClick="PickerEditionsListBox_MouseDoubleClick" />
+                    </Grid>
+
+                    <TextBlock Grid.Row="2" Text="{Binding Playlist.PickerErrorMessage}" Margin="0,12,0,0"
+                               TextWrapping="Wrap" FontSize="{StaticResource FontSize.SmallMain}"
+                               Foreground="{DynamicResource Brush.Red}"
+                               Visibility="{Binding Playlist.HasPickerError, Converter={StaticResource BoolToVis}}" />
+                </Grid>
+            </Border>
         </Grid>
         </Grid>
 

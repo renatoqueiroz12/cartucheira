@@ -941,12 +941,26 @@
                                 120+104px nesta Row, o Grid agora prioriza os BOTÕES (MinHeight real
                                 numa Row Star) — o que eventualmente ceder é o fim da Row do
                                 cronômetro, nunca mais os botões.
+
+                                Correção pós-entrega #15 (2026-11-24): print confirmou os botões OK
+                                (correção #14 funcionou), a barra visível, MAS o cronômetro continuou
+                                zero visível — 104px era insuficiente de verdade. Reconta mais realista
+                                do conteúdo ENXUTO da correção #14 (considerando altura de linha ~1.35x
+                                o FontSize, não 1.2x): nome do arquivo ~27px + barra (6+28+4) ~38px +
+                                linha de tempo (badge com padding+borda+fonte 22px) ~42px ≈ 107px — ou
+                                seja, 104px cortava bem na margem o cronômetro, o último elemento da
+                                pilha, explicando por que sumiu por completo (não "ficou pequeno": WPF
+                                aplica um clip automático quando o conteúdo arranjado não cabe no
+                                espaço dado, mesmo sem ClipToBounds explícito). Row 2 subiu de "104"
+                                pra "130" — folga de ~23px sobre o conteúdo real, bem mais seguro que a
+                                margem de ~3px de antes. Row 1 (botões) NÃO foi tocada (continua
+                                MinHeight="120", a linha vermelha da correção #14).
                             -->
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="*" MinHeight="120" />
-                                    <RowDefinition Height="104" />
+                                    <RowDefinition Height="130" />
                                 </Grid.RowDefinitions>
 
                                 <!--

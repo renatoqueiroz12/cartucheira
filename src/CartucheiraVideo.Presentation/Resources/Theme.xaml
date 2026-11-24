@@ -120,8 +120,19 @@
          "descolar" visualmente o card do fundo sem precisar clarear o preenchimento — efeito
          elevação, igual software de playout profissional. Compartilhado como recurso (em vez de
          repetir o DropShadowEffect em cada Border de MainWindow.xaml) pra manter um único lugar de
-         ajuste. -->
-    <DropShadowEffect x:Key="Effect.CardShadow" BlurRadius="14" ShadowDepth="3" Opacity="0.4" Color="Black" Direction="270" />
+         ajuste.
+
+         Correção pós-entrega #6 (2026-11-24): usuário testou de verdade e pediu "se vc olhar as
+         linhas tem algum efeito neon" — comparando com a referência, as bordas (Brush.Line) por si
+         só não davam esse efeito de brilho. Era uma sombra PRETA direcional (só embaixo,
+         ShadowDepth="3" Direction="270") — virou um BRILHO colorido (a mesma cor do Brush.Line,
+         azul elétrico) em volta de todo o card: ShadowDepth="0" faz o DropShadowEffect do WPF
+         espalhar a sombra igualmente em todas as direções (sem precisar de Direction) em vez de só
+         pra baixo — isso, mais BlurRadius maior, é o jeito padrão de simular um "glow" neon em WPF
+         sem precisar de pixel shader customizado. Ainda é usado só nos mesmos cards de sempre
+         (Deck/Botoneira/Explorer) — não nos pads individuais, que já são blocos de cor vívida e não
+         precisavam de mais um elemento chamando atenção. -->
+    <DropShadowEffect x:Key="Effect.CardShadow" BlurRadius="20" ShadowDepth="0" Opacity="0.65" Color="#2F6BFF" />
 
     <!-- ===================== Texto ===================== -->
     <!-- TextHi = "Texto principal" e TextMid = "Texto secundário" da especificação visual (valores exatos). TextLow/TextFaint são uma extensão pra hierarquia mais fina (rótulos pequenos, textos quase invisíveis) — mesma família de cinza, não uma cor nova. -->

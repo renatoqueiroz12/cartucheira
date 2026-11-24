@@ -97,6 +97,8 @@
 
     <Window.Resources>
         <conv:HexColorToBrushConverter x:Key="HexColorToBrushConverter" />
+        <!-- Correção pós-entrega #6, Sprint Reformulação-Visual-Neon (2026-11-24): ver comentário completo em HexColorToContrastBrushConverter.cs. -->
+        <conv:HexColorToContrastBrushConverter x:Key="HexColorToContrastBrush" />
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <conv:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVis" />
         <!-- Correção pós-entrega #4, Sprint Reformulação-Visual-Neon (2026-11-24): ver comentário completo em ItemCountToColumnsConverter.cs. -->
@@ -140,8 +142,20 @@
                                 número grande à esquerda + ícone de onda à direita; linha 2: nome, à esquerda, ocupando
                                 o espaço que sobra; linha 3: selo LOOP à esquerda + duração minúscula à direita — a
                                 referência nem mostra duração no pad, mas o usuário pediu explicitamente pra mantê-la,
-                                só "menor e secundária", por isso ficou num canto bem discreto). Texto trocado de
-                                Brush.PadText pra Brush.TextHi (branco quase puro, DynamicResource — ver Theme.xaml).
+                                só "menor e secundária", por isso ficou num canto bem discreto).
+
+                                Correção pós-entrega #6 (2026-11-24): o usuário testou de verdade e reportou "a fonte
+                                branca ta sumindo dos botoes" — branco fixo (decisão da correção #5) lê bem nos
+                                azul/vermelho saturados da referência, mas cada cartucho pode ter uma cor PRÓPRIA
+                                escolhida pelo operador (dashboard/"Cor...", mantida desde a correção #4), incluindo
+                                cores claras (amarelo, verde-claro) onde branco quase some — exatamente o que apareceu
+                                no print real dele. Em vez de voltar pro preto fixo (reintroduziria o problema original
+                                nos pads saturados), todo o texto do pad (número/nome/duração) e o ícone agora usam
+                                HexColorToContrastBrushConverter — calcula a luminância da cor de CADA cartucho e
+                                escolhe texto escuro/negrito OU quase branco automaticamente (ver comentário completo
+                                em HexColorToContrastBrushConverter.cs). Nome também ganhou FontWeight="Black" (era
+                                "Bold") — "negrito" mais forte, pedido explícito do usuário, nos dois casos (claro ou
+                                escuro).
                             -->
                             <Grid Margin="10,8">
                                 <Grid.RowDefinitions>
@@ -152,8 +166,8 @@
 
                                 <!-- Linha 1: número do cartucho (grande, à esquerda) + ícone de onda sonora (à direita, some quando o selo de seleção ocupa o mesmo canto). -->
                                 <TextBlock Grid.Row="0" Text="{Binding Number}" FontSize="{StaticResource FontSize.PadNumber}" FontWeight="Black"
-                                           Foreground="{DynamicResource Brush.TextHi}" HorizontalAlignment="Left" />
-                                <Path Grid.Row="0" Data="{StaticResource Icon.Waveform}" Stroke="{DynamicResource Brush.TextHi}" StrokeThickness="1.4" Opacity="0.85"
+                                           Foreground="{Binding Color, Converter={StaticResource HexColorToContrastBrush}}" HorizontalAlignment="Left" />
+                                <Path Grid.Row="0" Data="{StaticResource Icon.Waveform}" Stroke="{Binding Color, Converter={StaticResource HexColorToContrastBrush}}" StrokeThickness="1.6" Opacity="0.9"
                                       StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="14" Height="14" Stretch="Uniform"
                                       HorizontalAlignment="Right" VerticalAlignment="Center"
                                       Visibility="{Binding IsSelected, Converter={StaticResource InverseBoolToVis}}" />
@@ -163,9 +177,9 @@
                                     <TextBlock Text="{Binding SelectionNumber}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
                                 </Border>
 
-                                <!-- Linha 2: nome do áudio — destaque principal, alinhado à esquerda (igual à referência), branco. -->
-                                <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="Bold"
-                                           Foreground="{DynamicResource Brush.TextHi}" HorizontalAlignment="Left" VerticalAlignment="Center"
+                                <!-- Linha 2: nome do áudio — destaque principal, alinhado à esquerda (igual à referência), negrito, contraste automático pela cor do cartucho. -->
+                                <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="{StaticResource FontSize.PadLabel}" FontWeight="Black"
+                                           Foreground="{Binding Color, Converter={StaticResource HexColorToContrastBrush}}" HorizontalAlignment="Left" VerticalAlignment="Center"
                                            TextWrapping="Wrap" Margin="0,2,2,0" />
 
                                 <!-- Linha 3: selo LOOP (esquerda) + duração discreta (direita, bem pequena — informação secundária). -->
@@ -174,8 +188,8 @@
                                         Visibility="{Binding IsLoopEnabled, Converter={StaticResource BoolToVis}}">
                                     <TextBlock Text="LOOP" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold" Foreground="White" />
                                 </Border>
-                                <TextBlock Grid.Row="2" Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.Micro}" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource Brush.TextHi}" Opacity="0.65" HorizontalAlignment="Right" />
+                                <TextBlock Grid.Row="2" Text="{Binding DurationDisplay}" FontSize="{StaticResource FontSize.Micro}" FontWeight="Bold"
+                                           Foreground="{Binding Color, Converter={StaticResource HexColorToContrastBrush}}" Opacity="0.75" HorizontalAlignment="Right" />
                             </Grid>
                         </Border>
                         <ControlTemplate.Triggers>

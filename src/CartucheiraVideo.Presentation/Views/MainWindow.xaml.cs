@@ -226,7 +226,16 @@ public partial class MainWindow : Window
         using var dialog = new System.Windows.Forms.ColorDialog
         {
             FullOpen = false,
-            AnyColor = true
+            AnyColor = true,
+            // Correção pós-entrega #6, Sprint Reformulação-Visual-Neon (2026-11-24): usuário reportou
+            // cartuchos de teste com cor "apagada" (amarelo/verde esmaecidos) comparado à imagem de
+            // referência — causa raiz: esses cartuchos tinham cor customizada escolhida nas "cores
+            // básicas" padrão do Windows aqui neste ColorDialog, que são tons meio sem graça (não têm
+            // nenhuma relação com a paleta vívida do app). Pré-popula as 16 células de "cores
+            // personalizadas" do diálogo com a MESMA paleta vívida já aprovada em Theme.xaml
+            // (Brush.Pad.*) — assim, quando o operador for escolher uma cor própria pra um cartucho,
+            // as opções vívidas aparecem logo de cara em vez de ele ter que digitar o hex na mão.
+            CustomColors = BuildVividCustomColors()
         };
 
         if (TryParseHexColor(pad.Color, out var current))
@@ -242,6 +251,28 @@ public partial class MainWindow : Window
             pad.SetColorCommand.Execute(hex);
         }
     }
+
+    /// <summary>
+    /// Correção pós-entrega #6, Sprint Reformulação-Visual-Neon (2026-11-24) — as mesmas 7 cores
+    /// vívidas já aprovadas em Theme.xaml (Brush.Pad.Blue/Red/Green/Amber/Purple/Pink/Cyan),
+    /// convertidas pro formato COLORREF (0x00BBGGRR, não é RGB normal) que
+    /// System.Windows.Forms.ColorDialog.CustomColors espera. Hardcoded aqui de propósito (em vez de
+    /// ler de Theme.xaml em runtime) — são só 7 valores, e esse ColorDialog é Windows Forms puro, sem
+    /// acesso fácil a DynamicResource do WPF.
+    /// </summary>
+    private static int[] BuildVividCustomColors() =>
+        new[]
+        {
+            ToColorRef(0x2D, 0x7D, 0xFF), // Brush.Pad.Blue
+            ToColorRef(0xD8, 0x45, 0x45), // Brush.Pad.Red
+            ToColorRef(0x2D, 0xBE, 0x60), // Brush.Pad.Green
+            ToColorRef(0xE3, 0xB3, 0x41), // Brush.Pad.Amber
+            ToColorRef(0x8B, 0x5C, 0xF6), // Brush.Pad.Purple
+            ToColorRef(0xEC, 0x48, 0x99), // Brush.Pad.Pink
+            ToColorRef(0x06, 0xB6, 0xD4), // Brush.Pad.Cyan
+        };
+
+    private static int ToColorRef(byte r, byte g, byte b) => r | (g << 8) | (b << 16);
 
     /// <summary>Converte o hex do cartucho (ex.: "#FF2D7DFF") pra System.Drawing.Color, pra pré-selecionar a cor atual quando o ColorDialog abre. Retorna falso (sem pré-seleção, o ColorDialog abre na cor padrão dele) se o hex não for válido — nunca lança.</summary>
     private static bool TryParseHexColor(string hex, out System.Drawing.Color color)

@@ -307,7 +307,8 @@
                                                FontSize="{StaticResource FontSize.ListName}" FontWeight="Bold" VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <TextBlock Grid.Column="1" Text="{Binding DurationDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
+                                <!-- Correção pós-entrega #2 (2026-11-23): duração com peso/cor própria (Bold + TextMid, em vez de TextLow) — pedido explícito do usuário de dar mais destaque a essa informação especificamente. -->
+                                <TextBlock Grid.Column="1" Text="{Binding DurationDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" FontWeight="SemiBold" Foreground="{DynamicResource Brush.TextMid}" />
                                 <TextBlock Grid.Column="2" Text="{Binding ResolutionDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
                                 <TextBlock Grid.Column="3" Text="{Binding CodecDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />
                                 <TextBlock Grid.Column="4" Text="{Binding SizeDisplay}" Margin="4,0" VerticalAlignment="Center" FontSize="{StaticResource FontSize.Meta}" Foreground="{DynamicResource Brush.TextLow}" />

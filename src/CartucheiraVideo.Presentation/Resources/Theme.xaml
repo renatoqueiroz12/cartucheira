@@ -33,30 +33,35 @@
         "Interface_Cartucheira_Vídeo_Neon.png" — decisão confirmada por pergunta direta,
         "usar o hex exato").
 
-        Correção pós-entrega, mesmo dia: o usuário testou de verdade no Windows e reportou
-        ("FICOU QUASE IGUAL JÁ ESTAVA, NÃO FICOU COMO O PNG QUE MANDEI") — comparação lado a lado
-        confirmou que a primeira versão desta escala (deltas +9/+17/+26/+31 a partir do Bg1,
-        copiados 1:1 do esquema cinza antigo) era sutil demais pra ler como a imagem: a diferença
-        entre janela/painel/card ficava praticamente imperceptível (ex.: Brush.Line em #3A3A3A
-        quase se confundia com o novo Bg3), bem menor que o salto visível de contraste entre as
-        camadas na imagem de referência. Os deltas foram ampliados (~2x: Bg0=-10, Bg2=+16, Bg3=+30,
-        Bg4=+44, Bg5=+54), mantendo Bg1 exatamente no hex pedido e o MESMO viés de azul em toda a
-        escala (delta igual nos 3 canais R/G/B, preservando a proporção de matiz) — agora a
-        profundidade entre fundo/painel/card/hover/selecionado fica claramente visível, muito mais
-        perto do que a imagem mostra.
+        Correção pós-entrega #1 (mesmo dia): a primeira versão desta escala (deltas +9/+17/+26/+31,
+        copiados 1:1 do esquema cinza antigo) era sutil demais pra ler como a imagem — ampliada
+        pra ~2x (Bg0=-10, Bg2=+16, Bg3=+30, Bg4=+44, Bg5=+54).
+
+        Correção pós-entrega #2 (mesmo dia, novo feedback do usuário depois de testar a correção
+        #1): "Fundo: está cinza demais. Eu usaria grafite quase preto (#17191D), com painéis
+        ligeiramente mais claros." — a ampliação da correção #1 foi longe demais na direção
+        oposta: Bg3 (cards)/Bg4/Bg5 ficaram claros o suficiente pra ler como um cinza médio, não
+        mais como "grafite quase preto com painéis ligeiramente mais claros". Voltado pra deltas
+        BEM mais contidos que os dois exemplos anteriores (Bg0=-8, Bg2=+6, Bg3=+10, Bg4=+16,
+        Bg5=+22) — o fundo e os painéis agora ficam visualmente quase no mesmo tom escuro (pedido
+        explícito: "painéis LIGEIRAMENTE mais claros", não um salto grande); quem dá a definição
+        visível entre eles agora é a borda (Brush.Line, ver abaixo) e a sombra nova dos cards
+        (Effect.CardShadow), não mais o preenchimento de fundo em si — mais fiel à arquitetura
+        original da especificação visual ("Bordas discretas" + "sombras sutis" fazendo esse
+        trabalho, não a escala de cinza).
     -->
     <!-- Bg0: mais fundo que "Background principal" — usado só em superfícies "afundadas" (área de preview do Deck, caixa de miniatura) que precisam ler como uma tela, não um painel. Extensão do usuário não nomeada explicitamente na paleta de 6 cores. -->
-    <Color x:Key="Color.Bg0">#FF0D0F13</Color>
+    <Color x:Key="Color.Bg0">#FF0F1115</Color>
     <!-- Bg1 = "Background principal" da especificação visual -->
     <Color x:Key="Color.Bg1">#FF17191D</Color>
     <!-- Bg2 = "Painéis" -->
-    <Color x:Key="Color.Bg2">#FF27292D</Color>
+    <Color x:Key="Color.Bg2">#FF1D1F23</Color>
     <!-- Bg3 = "Cards" (também usado como superfície de inputs — TextBox/ComboBox/miniatura) -->
-    <Color x:Key="Color.Bg3">#FF35373B</Color>
+    <Color x:Key="Color.Bg3">#FF212327</Color>
     <!-- Bg4 = "Hover" -->
-    <Color x:Key="Color.Bg4">#FF434549</Color>
+    <Color x:Key="Color.Bg4">#FF27292D</Color>
     <!-- Bg5 = "Selecionado" -->
-    <Color x:Key="Color.Bg5">#FF4D4F53</Color>
+    <Color x:Key="Color.Bg5">#FF2D2F35</Color>
 
     <SolidColorBrush x:Key="Brush.Bg0" Color="{StaticResource Color.Bg0}" />
     <SolidColorBrush x:Key="Brush.Bg1" Color="{StaticResource Color.Bg1}" />
@@ -67,15 +72,27 @@
 
     <!-- ===================== Linhas/bordas ===================== -->
     <!--
-        Correção pós-entrega da Sprint Reformulação-Visual-Neon (2026-11-23): Brush.Line (#FF3A3A3A)
-        ficava quase idêntico ao novo Bg3/Bg4 (cards/hover) depois do ajuste de contraste acima —
-        a borda sutil reintroduzida nos cards de Deck/Botoneira/Explorer praticamente sumia de
-        novo. Clareado pra um tom visivelmente mais claro que Bg5 (o mais claro da escala de fundo),
-        mesmo viés de azul da paleta — fica discreto mas visível, sem repetir o problema da "linha
-        clara" da Sprint Mockup-v9 (aquele era bem mais claro/alto contraste que este tom).
+        Correção pós-entrega #1: Brush.Line (#FF3A3A3A) ficava quase idêntico ao Bg3/Bg4 daquela
+        versão — clareado pra #FF565A62.
+        Correção pós-entrega #2: com a escala de fundo voltando a ficar mais escura/contida (ver
+        comentário acima — painéis "ligeiramente mais claros", não um salto grande), o trabalho de
+        dar definição visível aos cards passa a ser principalmente desta borda (mais a sombra nova,
+        Effect.CardShadow, abaixo) — moderado de #FF565A62 pra um tom um pouco menos vívido
+        (#FF45484F), continua claramente mais claro que Bg5 (o mais claro da escala de fundo), mas
+        sem virar um rim muito brilhante contra painéis agora bem mais escuros.
     -->
-    <SolidColorBrush x:Key="Brush.Line" Color="#FF565A62" />
-    <SolidColorBrush x:Key="Brush.LineSoft" Color="#FF3A3C41" />
+    <SolidColorBrush x:Key="Brush.Line" Color="#FF45484F" />
+    <SolidColorBrush x:Key="Brush.LineSoft" Color="#FF2E3034" />
+
+    <!-- ===================== Sombra de card (novo na correção pós-entrega #2, 2026-11-23) =====================
+         Pedido do usuário: "Acabamento: melhoraria sombras, bordas e contraste para dar uma
+         aparência mais premium." Com os painéis voltando a ficar bem próximos do fundo em tom
+         (pedido #2 acima), uma sombra sutil embaixo de cada card (Deck/Botoneira/Explorer) ajuda a
+         "descolar" visualmente o card do fundo sem precisar clarear o preenchimento — efeito
+         elevação, igual software de playout profissional. Compartilhado como recurso (em vez de
+         repetir o DropShadowEffect em cada Border de MainWindow.xaml) pra manter um único lugar de
+         ajuste. -->
+    <DropShadowEffect x:Key="Effect.CardShadow" BlurRadius="14" ShadowDepth="3" Opacity="0.4" Color="Black" Direction="270" />
 
     <!-- ===================== Texto ===================== -->
     <!-- TextHi = "Texto principal" e TextMid = "Texto secundário" da especificação visual (valores exatos). TextLow/TextFaint são uma extensão pra hierarquia mais fina (rótulos pequenos, textos quase invisíveis) — mesma família de cinza, não uma cor nova. -->
@@ -177,10 +194,15 @@
     <sys:Double x:Key="FontSize.Small">11</sys:Double>
     <sys:Double x:Key="FontSize.Body">12</sys:Double>
     <!-- Meta (segunda linha do Explorer): 12 -> 13 na Sprint 8, pedido explícito de legibilidade a
-         maior distância ("nome dos arquivos deve ser facilmente legível"). -->
-    <sys:Double x:Key="FontSize.Meta">13</sys:Double>
-    <!-- Nome do arquivo no Explorer: 16 -> 17 na Sprint 8, mesmo pedido acima. -->
-    <sys:Double x:Key="FontSize.ListName">17</sys:Double>
+         maior distância ("nome dos arquivos deve ser facilmente legível"). 13 -> 15 na correção
+         pós-entrega #2 da Sprint Reformulação-Visual-Neon (2026-11-23), pedido do usuário "mais
+         destaque aos nomes dos arquivos e às informações de duração" — usado só pela lista do
+         Explorer (a Playlist usa tamanhos inline próprios desde 2026-11-19, ver comentário em
+         FileExplorerPanel.xaml), então não afeta mais nada. -->
+    <sys:Double x:Key="FontSize.Meta">15</sys:Double>
+    <!-- Nome do arquivo no Explorer: 16 -> 17 na Sprint 8, mesmo pedido acima; 17 -> 19 na correção
+         pós-entrega #2 da Sprint Reformulação-Visual-Neon (2026-11-23), mesmo pedido de destaque. -->
+    <sys:Double x:Key="FontSize.ListName">19</sys:Double>
     <sys:Double x:Key="FontSize.Label">14</sys:Double>
     <sys:Double x:Key="FontSize.Title">18</sys:Double>
     <sys:Double x:Key="FontSize.DeckFileName">20</sys:Double>
